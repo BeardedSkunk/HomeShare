@@ -7,6 +7,8 @@ import de.beardedskunk.clipsharing.core.Hlc
 import de.beardedskunk.clipsharing.core.Post
 import de.beardedskunk.clipsharing.core.PostContent
 import de.beardedskunk.clipsharing.core.PostVersion
+import de.beardedskunk.clipsharing.sync.OpDto
+import de.beardedskunk.clipsharing.sync.OpSource
 import java.util.UUID
 
 /**
@@ -20,7 +22,7 @@ import java.util.UUID
 class FeedRepository(
     private val db: SQLiteDatabase,
     private val identity: DeviceIdentity,
-) {
+) : OpSource {
 
     // ---------------------------------------------------------------- Feeds
 
@@ -105,12 +107,48 @@ class FeedRepository(
     }
 
     /** Versions-Vektor dieses Geraets: hoechste bekannte Seq je Autor-Geraet. */
-    fun versionVector(): Map<String, Long> {
+    override fun versionVector(): Map<String, Long> {
         val out = HashMap<String, Long>()
         db.rawQuery("SELECT device_id, MAX(seq) FROM ops GROUP BY device_id", null).use { c ->
             while (c.moveToNext()) out[c.getString(0)] = c.getLong(1)
         }
         return out
+    }
+
+    /** Alle lokalen Ops, die der Gegenseite (gegeben deren VV) fehlen. */
+    override fun missingFor(remote: Map<String, Long>): List<OpDto> {
+        val out = ArrayList<OpDto>()
+        db.rawQuery(
+            "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes " +
+                "FROM ops ORDER BY device_id, seq",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                val device = c.getString(3)
+                val seq = c.getLong(4)
+                if (seq <= (remote[device] ?: 0L)) continue
+                out += OpDto(
+                    versionId = c.getString(0),
+                    feedId = c.getString(1),
+                    postId = c.getString(2),
+                    deviceId = device,
+                    seq = seq,
+                    hlcWall = c.getLong(5),
+                    hlcCounter = c.getInt(6),
+                    deleted = c.getInt(8) != 0,
+                    text = c.getString(9),
+                    parents = splitCsv(c.getString(7)),
+                    imageHashes = splitCsv(c.getString(10)),
+                )
+            }
+        }
+        return out
+    }
+
+    /** Speist eine beim Sync empfangene Op (Wire-DTO) ein; verwirft inkonsistente. */
+    override fun ingestOp(op: OpDto): Boolean {
+        if (!op.isConsistent()) return false
+        return ingest(op.toVersion(), op.feedId, op.seq)
     }
 
     // -------------------------------------------------------------- Reading
