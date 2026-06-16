@@ -8,6 +8,7 @@ import de.beardedskunk.clipsharing.data.DeviceIdentity
 import de.beardedskunk.clipsharing.data.FeedRepository
 import de.beardedskunk.clipsharing.data.androidThumbnailer
 import de.beardedskunk.clipsharing.sync.SyncManager
+import de.beardedskunk.clipsharing.web.WebServerController
 
 /**
  * Sehr schlanker Service-Locator. Haelt die langlebigen Objekte (DB, Identitaet,
@@ -21,6 +22,7 @@ class AppGraph(context: Context) {
     val repo: FeedRepository by lazy { FeedRepository(db, identity) }
     val blobStore: BlobStore by lazy { BlobStore(appContext.filesDir, ::androidThumbnailer) }
     val sync: SyncManager by lazy { SyncManager(appContext, repo, identity) }
+    val web: WebServerController by lazy { WebServerController(repo, blobStore) }
 }
 
 class ClipApplication : Application() {

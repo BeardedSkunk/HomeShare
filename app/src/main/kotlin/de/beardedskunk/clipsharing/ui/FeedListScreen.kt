@@ -43,7 +43,13 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedListScreen(repo: FeedRepository, statusText: String = "", onOpenFeed: (Feed) -> Unit) {
+fun FeedListScreen(
+    repo: FeedRepository,
+    statusText: String = "",
+    webUrl: String? = null,
+    onToggleWeb: () -> Unit = {},
+    onOpenFeed: (Feed) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var showCreate by remember { mutableStateOf(false) }
@@ -55,14 +61,21 @@ fun FeedListScreen(repo: FeedRepository, statusText: String = "", onOpenFeed: (F
 
     Scaffold(
         topBar = {
-            TopAppBar(title = {
-                Column {
-                    Text("Feeds")
-                    if (statusText.isNotBlank()) {
-                        Text(statusText, style = MaterialTheme.typography.labelSmall)
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("Feeds")
+                        if (statusText.isNotBlank()) {
+                            Text(statusText, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
-                }
-            })
+                },
+                actions = {
+                    TextButton(onClick = onToggleWeb) {
+                        Text(if (webUrl == null) "Web starten" else "Web stoppen")
+                    }
+                },
+            )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = { showCreate = true }) {
@@ -70,12 +83,21 @@ fun FeedListScreen(repo: FeedRepository, statusText: String = "", onOpenFeed: (F
             }
         },
     ) { padding ->
-        if (feeds.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("Noch keine Feeds. Mit + einen anlegen.")
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (webUrl != null) {
+                Text(
+                    "Webserver läuft: $webUrl",
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                )
             }
-        } else {
-            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            if (feeds.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Noch keine Feeds. Mit + einen anlegen.")
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
                 items(feeds, key = { it.id }) { feed ->
                     Card(
                         Modifier
@@ -90,6 +112,7 @@ fun FeedListScreen(repo: FeedRepository, statusText: String = "", onOpenFeed: (F
                         )
                     }
                 }
+            }
             }
         }
     }

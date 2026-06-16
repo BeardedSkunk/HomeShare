@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             ClipTheme {
                 Surface {
-                    AppRoot(graph.repo, graph.blobStore, graph.sync, shared)
+                    AppRoot(graph.repo, graph.blobStore, graph.sync, graph.web, shared)
                 }
             }
         }
@@ -58,10 +58,17 @@ fun ClipTheme(content: @Composable () -> Unit) {
 
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
-fun AppRoot(repo: FeedRepository, blobStore: BlobStore, sync: SyncManager, initialShare: SharedContent?) {
+fun AppRoot(
+    repo: FeedRepository,
+    blobStore: BlobStore,
+    sync: SyncManager,
+    web: de.beardedskunk.clipsharing.web.WebServerController,
+    initialShare: SharedContent?,
+) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
     val status by sync.status.collectAsState()
+    val webUrl by web.url.collectAsState()
 
     val share = pendingShare
     if (share != null) {
@@ -77,7 +84,13 @@ fun AppRoot(repo: FeedRepository, blobStore: BlobStore, sync: SyncManager, initi
 
     val feed = openFeed
     if (feed == null) {
-        FeedListScreen(repo = repo, statusText = status.lastMessage, onOpenFeed = { openFeed = it })
+        FeedListScreen(
+            repo = repo,
+            statusText = status.lastMessage,
+            webUrl = webUrl,
+            onToggleWeb = { web.toggle() },
+            onOpenFeed = { openFeed = it },
+        )
     } else {
         FeedScreen(repo = repo, blobStore = blobStore, feed = feed, onBack = { openFeed = null })
     }

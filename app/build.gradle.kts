@@ -45,6 +45,7 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.core)
     implementation(libs.activity.compose)
+    implementation(libs.nanohttpd)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

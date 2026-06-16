@@ -6,6 +6,7 @@ material3 = "1.4.0"
 activityCompose = "1.13.0"
 # material-icons wurde von Google bei 1.7.8 eingefroren (letzte verfuegbare Version).
 materialIcons = "1.7.8"
+nanohttpd = "2.3.1"
 
 [libraries]
 compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "composeUi" }
@@ -14,6 +15,7 @@ compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling", versi
 compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core", version.ref = "materialIcons" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+nanohttpd = { group = "org.nanohttpd", name = "nanohttpd", version.ref = "nanohttpd" }
 junit = { group = "junit", name = "junit", version = "4.13.2" }
 
 [plugins]
