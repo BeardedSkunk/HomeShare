@@ -13,12 +13,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Feed
-import de.beardedskunk.clipsharing.data.FeedRepository
-import de.beardedskunk.clipsharing.sync.SyncManager
 import de.beardedskunk.clipsharing.ui.FeedListScreen
 import de.beardedskunk.clipsharing.ui.FeedScreen
+import de.beardedskunk.clipsharing.ui.SettingsScreen
 import de.beardedskunk.clipsharing.ui.SharePickerScreen
 import de.beardedskunk.clipsharing.ui.SharedContent
 
@@ -31,7 +29,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             ClipTheme {
                 Surface {
-                    AppRoot(graph.repo, graph.blobStore, graph.sync, graph.web, shared)
+                    AppRoot(graph, shared)
                 }
             }
         }
@@ -58,23 +56,18 @@ fun ClipTheme(content: @Composable () -> Unit) {
 
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
-fun AppRoot(
-    repo: FeedRepository,
-    blobStore: BlobStore,
-    sync: SyncManager,
-    web: de.beardedskunk.clipsharing.web.WebServerController,
-    initialShare: SharedContent?,
-) {
+fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
-    val status by sync.status.collectAsState()
-    val webUrl by web.url.collectAsState()
+    var showSettings by remember { mutableStateOf(false) }
+    val status by graph.sync.status.collectAsState()
+    val webUrl by graph.web.url.collectAsState()
 
     val share = pendingShare
     if (share != null) {
         SharePickerScreen(
-            repo = repo,
-            blobStore = blobStore,
+            repo = graph.repo,
+            blobStore = graph.blobStore,
             shared = share,
             onShared = { feed -> pendingShare = null; openFeed = feed },
             onCancel = { pendingShare = null },
@@ -82,16 +75,22 @@ fun AppRoot(
         return
     }
 
+    if (showSettings) {
+        SettingsScreen(settings = graph.settings, fritz = graph.fritz, onBack = { showSettings = false })
+        return
+    }
+
     val feed = openFeed
     if (feed == null) {
         FeedListScreen(
-            repo = repo,
+            repo = graph.repo,
             statusText = status.lastMessage,
             webUrl = webUrl,
-            onToggleWeb = { web.toggle() },
+            onToggleWeb = { graph.web.toggle() },
+            onOpenSettings = { showSettings = true },
             onOpenFeed = { openFeed = it },
         )
     } else {
-        FeedScreen(repo = repo, blobStore = blobStore, feed = feed, onBack = { openFeed = null })
+        FeedScreen(repo = graph.repo, blobStore = graph.blobStore, feed = feed, onBack = { openFeed = null })
     }
 }

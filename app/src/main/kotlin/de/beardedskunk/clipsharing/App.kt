@@ -6,7 +6,9 @@ import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Db
 import de.beardedskunk.clipsharing.data.DeviceIdentity
 import de.beardedskunk.clipsharing.data.FeedRepository
+import de.beardedskunk.clipsharing.data.Settings
 import de.beardedskunk.clipsharing.data.androidThumbnailer
+import de.beardedskunk.clipsharing.backup.FritzController
 import de.beardedskunk.clipsharing.sync.SyncManager
 import de.beardedskunk.clipsharing.web.WebServerController
 
@@ -23,6 +25,8 @@ class AppGraph(context: Context) {
     val blobStore: BlobStore by lazy { BlobStore(appContext.filesDir, ::androidThumbnailer) }
     val sync: SyncManager by lazy { SyncManager(appContext, repo, identity) }
     val web: WebServerController by lazy { WebServerController(repo, blobStore) }
+    val settings: Settings by lazy { Settings(appContext) }
+    val fritz: FritzController by lazy { FritzController(settings, identity, repo, blobStore) }
 }
 
 class ClipApplication : Application() {
