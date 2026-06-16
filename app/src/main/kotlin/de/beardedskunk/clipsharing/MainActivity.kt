@@ -1,5 +1,7 @@
 package de.beardedskunk.clipsharing
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,16 +19,19 @@ import de.beardedskunk.clipsharing.data.FeedRepository
 import de.beardedskunk.clipsharing.sync.SyncManager
 import de.beardedskunk.clipsharing.ui.FeedListScreen
 import de.beardedskunk.clipsharing.ui.FeedScreen
+import de.beardedskunk.clipsharing.ui.SharePickerScreen
+import de.beardedskunk.clipsharing.ui.SharedContent
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val graph = appGraph
         graph.sync.start()
+        val shared = parseShared(intent)
         setContent {
             ClipTheme {
                 Surface {
-                    AppRoot(graph.repo, graph.blobStore, graph.sync)
+                    AppRoot(graph.repo, graph.blobStore, graph.sync, shared)
                 }
             }
         }
@@ -35,6 +40,14 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         if (isFinishing) appGraph.sync.stop()
+    }
+
+    private fun parseShared(intent: Intent?): SharedContent? {
+        if (intent?.action != Intent.ACTION_SEND) return null
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+        @Suppress("DEPRECATION")
+        val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        return if (text != null || uri != null) SharedContent(text, uri) else null
     }
 }
 
@@ -45,9 +58,23 @@ fun ClipTheme(content: @Composable () -> Unit) {
 
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
-fun AppRoot(repo: FeedRepository, blobStore: BlobStore, sync: SyncManager) {
+fun AppRoot(repo: FeedRepository, blobStore: BlobStore, sync: SyncManager, initialShare: SharedContent?) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
+    var pendingShare by remember { mutableStateOf(initialShare) }
     val status by sync.status.collectAsState()
+
+    val share = pendingShare
+    if (share != null) {
+        SharePickerScreen(
+            repo = repo,
+            blobStore = blobStore,
+            shared = share,
+            onShared = { feed -> pendingShare = null; openFeed = feed },
+            onCancel = { pendingShare = null },
+        )
+        return
+    }
+
     val feed = openFeed
     if (feed == null) {
         FeedListScreen(repo = repo, statusText = status.lastMessage, onOpenFeed = { openFeed = it })
