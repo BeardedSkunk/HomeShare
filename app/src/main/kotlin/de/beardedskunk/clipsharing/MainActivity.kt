@@ -76,7 +76,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     }
 
     if (showSettings) {
-        SettingsScreen(settings = graph.settings, fritz = graph.fritz, onBack = { showSettings = false })
+        SettingsScreen(settings = graph.settings, identity = graph.identity, fritz = graph.fritz, onBack = { showSettings = false })
         return
     }
 

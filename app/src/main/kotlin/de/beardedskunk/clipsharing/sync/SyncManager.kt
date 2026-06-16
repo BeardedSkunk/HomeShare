@@ -5,7 +5,9 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
+import de.beardedskunk.clipsharing.crypto.GroupCrypto
 import de.beardedskunk.clipsharing.data.DeviceIdentity
+import de.beardedskunk.clipsharing.data.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +37,7 @@ class SyncManager(
     context: Context,
     private val source: OpSource,
     private val identity: DeviceIdentity,
+    private val settings: Settings,
 ) {
     private val appContext = context.applicationContext
     private val nsd = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -94,12 +97,15 @@ class SyncManager(
             runCatching {
                 socket.use {
                     it.soTimeout = SOCKET_TIMEOUT_MS
-                    val reader = it.getInputStream().bufferedReader()
-                    val writer = it.getOutputStream().bufferedWriter()
+                    val key = GroupCrypto.deriveKey(
+                        settings.groupPassphrase.ifBlank { DEFAULT_PASSPHRASE },
+                        identity.groupName.toByteArray(Charsets.UTF_8),
+                    )
+                    val channel = SecureChannel(it.getInputStream(), it.getOutputStream(), key)
                     val result = if (initiator) {
-                        PeerProtocol.runInitiator(source, reader, writer)
+                        PeerProtocol.runInitiator(source, channel)
                     } else {
-                        PeerProtocol.runResponder(source, reader, writer)
+                        PeerProtocol.runResponder(source, channel)
                     }
                     status.value = status.value.copy(
                         lastMessage = "Sync ok: +${result.pulled} empfangen, ${result.pushed} gesendet",
@@ -172,6 +178,7 @@ class SyncManager(
 
     companion object {
         private const val TAG = "SyncManager"
+        private const val DEFAULT_PASSPHRASE = "clipsharing-default"
         private const val SERVICE_TYPE = "_clipfeed._tcp."
         private const val ATTR_GROUP = "grp"
         private const val ATTR_DEVICE = "dev"

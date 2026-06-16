@@ -23,7 +23,7 @@ class AppGraph(context: Context) {
     private val db by lazy { Db(appContext).writableDatabase }
     val repo: FeedRepository by lazy { FeedRepository(db, identity) }
     val blobStore: BlobStore by lazy { BlobStore(appContext.filesDir, ::androidThumbnailer) }
-    val sync: SyncManager by lazy { SyncManager(appContext, repo, identity) }
+    val sync: SyncManager by lazy { SyncManager(appContext, repo, identity, settings) }
     val web: WebServerController by lazy { WebServerController(repo, blobStore) }
     val settings: Settings by lazy { Settings(appContext) }
     val fritz: FritzController by lazy { FritzController(settings, identity, repo, blobStore) }
