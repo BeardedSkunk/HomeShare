@@ -67,6 +67,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<PostState?>(null) }
+    var resolving by remember { mutableStateOf<PostState?>(null) }
     val listState = rememberLazyListState()
 
     fun reload() {
@@ -99,6 +100,18 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
             withContext(Dispatchers.IO) { repo.createPost(feed.id, text, images) }
             reload()
         }
+    }
+
+    val conflict = resolving
+    if (conflict != null) {
+        ConflictScreen(
+            repo = repo,
+            feed = feed,
+            post = conflict,
+            onResolved = { resolving = null; reload() },
+            onCancel = { resolving = null },
+        )
+        return
     }
 
     val current = editing
@@ -192,7 +205,11 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
                 items(posts, key = { it.postId }) { post ->
-                    PostBubble(post = post, blobStore = blobStore, onClick = { editing = post })
+                    PostBubble(
+                        post = post,
+                        blobStore = blobStore,
+                        onClick = { if (post.conflicted) resolving = post else editing = post },
+                    )
                 }
             }
             LaunchedEffect(posts.size) {
