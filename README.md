@@ -50,6 +50,8 @@ Implementiert und (wo ohne Gerät möglich) per Unit-Test verifiziert:
 - Beliebig viele benannte Feeds; Text- und Bild-Beiträge; Editieren/Löschen.
 - Git-artige Versionierung, Konflikterkennung, manuelle Auflösung mit Wort-Diff (Auflösung gilt für alle).
 - LAN-Sync per NSD + Versions-Vektoren; funktioniert in jedem gemeinsamen WLAN.
+- **Verschlüsselte Übertragung** (AES-GCM, Schlüssel via PBKDF2 aus der Gruppen-Passphrase);
+  nur Geräte mit gleicher Passphrase koppeln (Gruppen-Authentifizierung, auch in fremden WLANs).
 - Bilder content-adressiert + Thumbnails; Eviction-Strategie (Budget) als Logik vorhanden.
 - Webbrowser-Zugriff (manuell startbar, IP-Anzeige) inkl. Einfügen aus der Zwischenablage.
 - Share-to-App (Text/Bild) mit Feed-Auswahl.
@@ -61,9 +63,11 @@ Implementiert und (wo ohne Gerät möglich) per Unit-Test verifiziert:
   FTP-Verbindungen (FTPS)“ aktivieren, Benutzer mit NAS-Recht).
 
 ### Offen / nächste Schritte
-- **Transportverschlüsselung (TLS) + Gruppen-Passphrase** (Task 10): Sync-Sockets per TLS
-  (selbstsigniertes Zertifikat aus einem Gruppen-Secret), Gruppen-Authentifizierung,
-  QR-Pairing später. Aktuell ist eine feste Standardgruppe gesetzt; Transport unverschlüsselt.
+- **Peer-zu-Peer-Bildübertragung:** zwischen Handys werden derzeit nur Beiträge/Metadaten
+  (inkl. Bild-Hashes) synchronisiert, die Bild-Bytes selbst laufen über die FRITZ!Box. Direktes
+  On-Demand-Holen eines Voll-Bildes von einem anderen Handy fehlt noch.
+- **QR-Pairing + Forward Secrecy:** Gruppenbeitritt per QR-Code; aktuell statischer, aus der
+  Passphrase abgeleiteter Schlüssel (kein per-Session-Schlüssel). Für ein privates LAN ausreichend.
 - Foreground-Service für dauerhaften Hintergrundbetrieb von Sync/Webserver.
 - Automatisches Auslösen der Bild-Eviction inkl. „anderswo gesichert?“-Prüfung + Warnung.
 

@@ -7,6 +7,11 @@ class Settings(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("clip_settings", Context.MODE_PRIVATE)
 
+    /** Gruppen-Passphrase: verschluesselt den Sync und authentifiziert die Gruppe. */
+    var groupPassphrase: String
+        get() = prefs.getString(K_PASSPHRASE, "") ?: ""
+        set(v) = prefs.edit().putString(K_PASSPHRASE, v).apply()
+
     var fritzHost: String
         get() = prefs.getString(K_HOST, "fritz.box") ?: "fritz.box"
         set(v) = prefs.edit().putString(K_HOST, v).apply()
@@ -38,6 +43,7 @@ class Settings(context: Context) {
     fun fritzConfigured(): Boolean = fritzUser.isNotBlank() && fritzHost.isNotBlank()
 
     companion object {
+        private const val K_PASSPHRASE = "group_passphrase"
         private const val K_HOST = "fritz_host"
         private const val K_PORT = "fritz_port"
         private const val K_USER = "fritz_user"

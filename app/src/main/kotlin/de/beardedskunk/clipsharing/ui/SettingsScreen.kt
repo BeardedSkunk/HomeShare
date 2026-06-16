@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.clipsharing.backup.FritzController
+import de.beardedskunk.clipsharing.data.DeviceIdentity
 import de.beardedskunk.clipsharing.data.Settings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,8 +43,10 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(settings: Settings, fritz: FritzController, onBack: () -> Unit) {
+fun SettingsScreen(settings: Settings, identity: DeviceIdentity, fritz: FritzController, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    var groupName by remember { mutableStateOf(identity.groupName) }
+    var passphrase by remember { mutableStateOf(settings.groupPassphrase) }
     var host by remember { mutableStateOf(settings.fritzHost) }
     var port by remember { mutableStateOf(settings.fritzPort.toString()) }
     var user by remember { mutableStateOf(settings.fritzUser) }
@@ -54,6 +57,8 @@ fun SettingsScreen(settings: Settings, fritz: FritzController, onBack: () -> Uni
     var busy by remember { mutableStateOf(false) }
 
     fun save() {
+        identity.groupName = groupName.trim().ifBlank { identity.groupName }
+        settings.groupPassphrase = passphrase
         settings.fritzHost = host.trim()
         settings.fritzPort = port.toIntOrNull() ?: 21
         settings.fritzUser = user.trim()
@@ -78,6 +83,14 @@ fun SettingsScreen(settings: Settings, fritz: FritzController, onBack: () -> Uni
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Text("Gruppe (nur Geräte mit gleicher Passphrase syncen)", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(groupName, { groupName = it }, label = { Text("Gruppenname") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                passphrase, { passphrase = it }, label = { Text("Gruppen-Passphrase (Verschlüsselung)") },
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Text("FRITZ!Box-Backup (FTPES)", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
