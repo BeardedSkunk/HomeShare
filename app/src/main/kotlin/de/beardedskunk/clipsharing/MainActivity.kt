@@ -1,21 +1,47 @@
 package de.beardedskunk.clipsharing
 
-import android.app.Activity
 import android.os.Bundle
-import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import de.beardedskunk.clipsharing.data.Feed
+import de.beardedskunk.clipsharing.data.FeedRepository
+import de.beardedskunk.clipsharing.ui.FeedListScreen
+import de.beardedskunk.clipsharing.ui.FeedScreen
 
-/**
- * Platzhalter-Einstieg, nur zur Verifikation der Toolchain.
- * Wird in Phase 1 durch die Compose-UI (Feed-Liste) ersetzt.
- */
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val tv = TextView(this).apply {
-            text = "ClipSharing — Setup OK"
-            textSize = 20f
-            setPadding(48, 48, 48, 48)
+        val repo = appGraph.repo
+        setContent {
+            ClipTheme {
+                Surface {
+                    AppRoot(repo)
+                }
+            }
         }
-        setContentView(tv)
+    }
+}
+
+@Composable
+fun ClipTheme(content: @Composable () -> Unit) {
+    MaterialTheme(content = content)
+}
+
+/** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
+@Composable
+fun AppRoot(repo: FeedRepository) {
+    var openFeed by remember { mutableStateOf<Feed?>(null) }
+    val feed = openFeed
+    if (feed == null) {
+        FeedListScreen(repo = repo, onOpenFeed = { openFeed = it })
+    } else {
+        FeedScreen(repo = repo, feed = feed, onBack = { openFeed = null })
     }
 }
