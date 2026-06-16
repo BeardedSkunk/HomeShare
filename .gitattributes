@@ -1,0 +1,9 @@
+# Shell-Skripte (gradlew) muessen LF behalten, sonst bricht der Interpreter.
+*.sh    text eol=lf
+gradlew text eol=lf
+# Windows-Batch braucht CRLF.
+*.bat   text eol=crlf
+# Binaerdateien nicht anfassen.
+*.jar   binary
+*.png   binary
+*.keystore binary
