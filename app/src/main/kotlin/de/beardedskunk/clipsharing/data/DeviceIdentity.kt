@@ -22,6 +22,14 @@ class DeviceIdentity(context: Context) {
             prefs.edit().putString(KEY_DEVICE_ID, it).apply()
         }
 
+    /**
+     * Name der Geraetegruppe. Aktuell eine feste Standardgruppe; spaeter per
+     * QR-/Passphrase-Pairing (siehe Plan). Nur Geraete derselben Gruppe syncen.
+     */
+    var groupName: String
+        get() = prefs.getString(KEY_GROUP, DEFAULT_GROUP) ?: DEFAULT_GROUP
+        set(value) { prefs.edit().putString(KEY_GROUP, value).apply() }
+
     @Synchronized
     fun nextSeq(): Long {
         val next = prefs.getLong(KEY_SEQ, 0L) + 1L
@@ -60,7 +68,9 @@ class DeviceIdentity(context: Context) {
     }
 
     companion object {
+        private const val DEFAULT_GROUP = "meine-gruppe"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_GROUP = "group_name"
         private const val KEY_SEQ = "seq"
         private const val KEY_HLC_WALL = "hlc_wall"
         private const val KEY_HLC_COUNTER = "hlc_counter"

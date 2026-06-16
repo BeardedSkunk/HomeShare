@@ -17,6 +17,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -42,7 +43,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedListScreen(repo: FeedRepository, onOpenFeed: (Feed) -> Unit) {
+fun FeedListScreen(repo: FeedRepository, statusText: String = "", onOpenFeed: (Feed) -> Unit) {
     val scope = rememberCoroutineScope()
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var showCreate by remember { mutableStateOf(false) }
@@ -53,7 +54,16 @@ fun FeedListScreen(repo: FeedRepository, onOpenFeed: (Feed) -> Unit) {
     LaunchedEffect(Unit) { reload() }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Feeds") }) },
+        topBar = {
+            TopAppBar(title = {
+                Column {
+                    Text("Feeds")
+                    if (statusText.isNotBlank()) {
+                        Text(statusText, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            })
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = { showCreate = true }) {
                 Icon(Icons.Filled.Add, contentDescription = "Feed anlegen")

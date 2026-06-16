@@ -91,6 +91,10 @@ object OpCodec {
         )
     }
 
+    /** Ganze Op als eine einzelne (base64-)Zeile -> bequem fuers Stream-Protokoll. */
+    fun encodeOpLine(op: OpDto): String = b64(encodeOp(op))
+    fun decodeOpLine(line: String): OpDto = decodeOp(unb64(line))
+
     /** Versions-Vektor: je Zeile "deviceId seq". */
     fun encodeVv(vv: Map<String, Long>): String =
         vv.entries.joinToString("\n") { "${it.key} ${it.value}" }
