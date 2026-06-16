@@ -1,7 +1,5 @@
 package de.beardedskunk.clipsharing.core
 
-import java.security.MessageDigest
-
 /**
  * Kern-Datenmodell des geteilten Feeds.
  *
@@ -49,7 +47,7 @@ class PostVersion(
     val hlc: Hlc,
     val content: PostContent,
 ) {
-    val versionId: String = sha256Hex(canonical())
+    val versionId: String = Hashing.sha256Hex(canonical())
 
     private fun canonical(): String = buildString {
         append("post:").append(postId).append('\n')
@@ -69,15 +67,4 @@ class PostVersion(
     override fun equals(other: Any?): Boolean = other is PostVersion && other.versionId == versionId
     override fun hashCode(): Int = versionId.hashCode()
     override fun toString(): String = "PostVersion(${versionId.take(8)}, parents=${parents.map { it.take(8) }}, ${content})"
-}
-
-internal fun sha256Hex(input: String): String {
-    val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
-    val sb = StringBuilder(bytes.size * 2)
-    for (b in bytes) {
-        val v = b.toInt() and 0xff
-        sb.append(Character.forDigit(v ushr 4, 16))
-        sb.append(Character.forDigit(v and 0x0f, 16))
-    }
-    return sb.toString()
 }

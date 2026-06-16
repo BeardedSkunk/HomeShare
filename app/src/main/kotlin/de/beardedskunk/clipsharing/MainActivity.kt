@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.data.FeedRepository
 import de.beardedskunk.clipsharing.ui.FeedListScreen
@@ -18,11 +19,11 @@ import de.beardedskunk.clipsharing.ui.FeedScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val repo = appGraph.repo
+        val graph = appGraph
         setContent {
             ClipTheme {
                 Surface {
-                    AppRoot(repo)
+                    AppRoot(graph.repo, graph.blobStore)
                 }
             }
         }
@@ -36,12 +37,12 @@ fun ClipTheme(content: @Composable () -> Unit) {
 
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
-fun AppRoot(repo: FeedRepository) {
+fun AppRoot(repo: FeedRepository, blobStore: BlobStore) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
     val feed = openFeed
     if (feed == null) {
         FeedListScreen(repo = repo, onOpenFeed = { openFeed = it })
     } else {
-        FeedScreen(repo = repo, feed = feed, onBack = { openFeed = null })
+        FeedScreen(repo = repo, blobStore = blobStore, feed = feed, onBack = { openFeed = null })
     }
 }
