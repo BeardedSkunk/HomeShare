@@ -78,9 +78,11 @@ class SyncManager(
             runCatching { acquire() }
         }
         startServer()
-        startBeacon()
-        registerService()
-        startDiscovery()
+        if (AUTO_DISCOVERY) {
+            startBeacon()
+            registerService()
+            startDiscovery()
+        }
         startManualPeerLoop()
         status.value = SyncStatus(running = true, lastMessage = "Sync aktiv")
     }
@@ -363,6 +365,9 @@ class SyncManager(
 
     companion object {
         private const val TAG = "SyncManager"
+        // Normalbetrieb: true (Broadcast-Beacon + NSD aktiv). Nur zum isolierten Testen
+        // des manuellen IP-Fallbacks vorübergehend auf false setzen.
+        private const val AUTO_DISCOVERY = true
         private const val NO_WIFI = "Kein WLAN – Sync pausiert"
         private const val DEFAULT_PASSPHRASE = "clipsharing-default"
         private const val SERVICE_TYPE = "_clipfeed._tcp."
