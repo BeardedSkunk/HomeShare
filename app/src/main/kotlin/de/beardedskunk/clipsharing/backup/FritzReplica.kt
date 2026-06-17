@@ -4,6 +4,7 @@ import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.sync.OpCodec
 import de.beardedskunk.clipsharing.sync.OpSource
 import org.apache.commons.net.ftp.FTP
+import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import java.io.ByteArrayInputStream
@@ -16,6 +17,8 @@ data class FritzConfig(
     val password: String,
     val baseDir: String,
     val group: String,
+    /** true = FTPES (verschluesselt); false = Klartext-FTP (Standard im Heimnetz). */
+    val useFtps: Boolean = false,
 )
 
 data class ReplicaResult(val pulledOps: Int, val pushedOps: Int, val pushedBlobs: Int)
@@ -71,7 +74,7 @@ class FritzReplica(
 
     // -------------------------------------------------------------- Schritte
 
-    private fun pullOps(ftps: FTPSClient): Int {
+    private fun pullOps(ftps: FTPClient): Int {
         val localVv = source.versionVector()
         var pulled = 0
         val deviceDirs = ftps.listFiles("$root/log").filter { it.isDirectory }.map { it.name }
@@ -90,7 +93,7 @@ class FritzReplica(
         return pulled
     }
 
-    private fun pushOps(ftps: FTPSClient): Int {
+    private fun pushOps(ftps: FTPClient): Int {
         val remoteVv = remoteVersionVector(ftps)
         var pushed = 0
         for (op in source.missingFor(remoteVv)) {
@@ -101,7 +104,7 @@ class FritzReplica(
         return pushed
     }
 
-    private fun pushBlobs(ftps: FTPSClient): Int {
+    private fun pushBlobs(ftps: FTPClient): Int {
         val remote = (ftps.listNames("$root/blobs") ?: emptyArray())
             .map { it.substringAfterLast('/') }.toHashSet()
         var pushed = 0
@@ -113,7 +116,7 @@ class FritzReplica(
         return pushed
     }
 
-    private fun remoteVersionVector(ftps: FTPSClient): Map<String, Long> {
+    private fun remoteVersionVector(ftps: FTPClient): Map<String, Long> {
         val vv = HashMap<String, Long>()
         val deviceDirs = ftps.listFiles("$root/log").filter { it.isDirectory }.map { it.name }
         for (device in deviceDirs) {
@@ -126,29 +129,53 @@ class FritzReplica(
 
     // -------------------------------------------------------------- FTP-Helfer
 
-    private fun connect(): FTPSClient {
-        val c = FTPSClient(false) // explicit FTPS (FTPES)
+    /** Verbindet die Box (FTPES nur, wenn [FritzConfig.useFtps]); sonst Klartext-FTP. */
+    fun connect(): FTPClient {
+        val c: FTPClient = if (cfg.useFtps) {
+            FTPSClient(false).also { runCatching { it.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.1", "TLSv1") } }
+        } else {
+            FTPClient()
+        }
         c.connectTimeout = 8000
-        // Aeltere Protokolle erlauben (FRITZ!Box-Kompatibilitaet).
-        runCatching { c.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.1", "TLSv1") }
         c.connect(cfg.host, cfg.port)
         if (!FTPReply.isPositiveCompletion(c.replyCode)) {
             c.disconnect()
-            error("FTP-Verbindung abgelehnt (${c.replyCode})")
+            error("FTP-Verbindung abgelehnt (Code ${c.replyCode})")
         }
         if (!c.login(cfg.user, cfg.password)) {
             c.disconnect()
-            error("FTP-Login fehlgeschlagen")
+            error("FTP-Login fehlgeschlagen – Benutzer/Passwort prüfen")
         }
-        c.execPBSZ(0)
-        c.execPROT("P") // Datenkanal verschluesseln
+        if (c is FTPSClient) {
+            c.execPBSZ(0)
+            c.execPROT("P") // Datenkanal verschluesseln
+        }
         c.enterLocalPassiveMode()
         c.setFileType(FTP.BINARY_FILE_TYPE)
         c.controlEncoding = "UTF-8"
         return c
     }
 
-    private fun retrieveBytes(ftps: FTPSClient, path: String): ByteArray? {
+    /**
+     * Testet die Verbindung und legt die Ordnerstruktur an. Wirft mit aussagekraeftiger
+     * Meldung, wenn etwas schiefgeht; liefert sonst eine Erfolgsmeldung.
+     */
+    fun testAndPrepare(): String {
+        val c = connect()
+        try {
+            for (dir in listOf(cfg.baseDir.trimEnd('/'), root, "$root/log", "$root/blobs")) {
+                c.makeDirectory(dir)
+            }
+            val names = c.listNames(root)
+                ?: error("Ordner '$root' nicht lesbar – Schreibrecht/Pfad prüfen")
+            return "Verbunden mit ${cfg.host}. Ordner '$root' bereit (${names.size} Einträge)."
+        } finally {
+            runCatching { c.logout() }
+            runCatching { c.disconnect() }
+        }
+    }
+
+    private fun retrieveBytes(ftps: FTPClient, path: String): ByteArray? {
         val stream = ftps.retrieveFileStream(path) ?: return null
         return try {
             val out = ByteArrayOutputStream()
@@ -160,9 +187,9 @@ class FritzReplica(
         }
     }
 
-    private fun retrieveText(ftps: FTPSClient, path: String): String? =
+    private fun retrieveText(ftps: FTPClient, path: String): String? =
         retrieveBytes(ftps, path)?.let { String(it, Charsets.UTF_8) }
 
-    private fun storeBytes(ftps: FTPSClient, path: String, bytes: ByteArray): Boolean =
+    private fun storeBytes(ftps: FTPClient, path: String, bytes: ByteArray): Boolean =
         ByteArrayInputStream(bytes).use { ftps.storeFile(path, it) }
 }

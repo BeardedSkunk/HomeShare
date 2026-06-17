@@ -33,12 +33,17 @@ class Settings(context: Context) {
         get() = prefs.getString(K_BASE, "/clipsharing") ?: "/clipsharing"
         set(v) = prefs.edit().putString(K_BASE, v).apply()
 
-    /** Lokales Speicherbudget fuer Voll-Bilder in MB (0 = unbegrenzt). */
-    var imageBudgetMb: Int
-        get() = prefs.getInt(K_BUDGET_MB, 0)
-        set(v) = prefs.edit().putInt(K_BUDGET_MB, v).apply()
+    /** FTPES (verschluesselt) statt Klartext-FTP. Standard aus (FRITZ!Box-Heimnetz nutzt Klartext). */
+    var fritzUseFtps: Boolean
+        get() = prefs.getBoolean(K_FTPS, false)
+        set(v) = prefs.edit().putBoolean(K_FTPS, v).apply()
 
-    val imageBudgetBytes: Long get() = imageBudgetMb.toLong() * 1024L * 1024L
+    /** Lokales Speicherbudget fuer Voll-Bilder in GB (0 = unbegrenzt). */
+    var imageBudgetGb: Float
+        get() = prefs.getFloat(K_BUDGET_GB, 0f)
+        set(v) = prefs.edit().putFloat(K_BUDGET_GB, v).apply()
+
+    val imageBudgetBytes: Long get() = (imageBudgetGb.toDouble() * 1024.0 * 1024.0 * 1024.0).toLong()
 
     fun fritzConfigured(): Boolean = fritzUser.isNotBlank() && fritzHost.isNotBlank()
 
@@ -49,6 +54,7 @@ class Settings(context: Context) {
         private const val K_USER = "fritz_user"
         private const val K_PASS = "fritz_pass"
         private const val K_BASE = "fritz_base"
-        private const val K_BUDGET_MB = "image_budget_mb"
+        private const val K_FTPS = "fritz_use_ftps"
+        private const val K_BUDGET_GB = "image_budget_gb"
     }
 }
