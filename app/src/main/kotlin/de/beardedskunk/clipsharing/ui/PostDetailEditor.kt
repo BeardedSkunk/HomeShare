@@ -81,6 +81,13 @@ fun PostDetailEditor(
     var imageTitles by remember {
         mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> post?.imageTitles?.getOrNull(i) ?: "" })
     }
+    // Gespeicherter Stand (fuer gruener/grauer Haken) + aktuelle Post-Id (fuer Folge-Speicherungen).
+    var currentPostId by remember { mutableStateOf(post?.postId) }
+    var savedText by remember { mutableStateOf(post?.text ?: "") }
+    var savedImages by remember { mutableStateOf(post?.imageHashes ?: emptyList()) }
+    var savedTitles by remember {
+        mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> post?.imageTitles?.getOrNull(i) ?: "" })
+    }
     var findOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var matchIdx by remember { mutableStateOf(0) }
@@ -113,19 +120,29 @@ fun PostDetailEditor(
         }
     }
 
+    // Speichert, bleibt aber in der Ansicht (Haken wird gruen, da Stand = gespeichert).
     fun save() {
         val text = tfv.text
+        val imgs = images
+        val titles = imageTitles
         scope.launch {
-            withContext(Dispatchers.IO) {
-                if (post == null) {
-                    repo.createPost(feed.id, text, images, imageTitles)
+            val pid = currentPostId
+            val newId = withContext(Dispatchers.IO) {
+                if (pid == null) {
+                    repo.createPost(feed.id, text, imgs, titles).postId
                 } else {
-                    repo.editPost(feed.id, post.postId, text, images, imageTitles)
+                    repo.editPost(feed.id, pid, text, imgs, titles)
+                    pid
                 }
             }
-            onClose()
+            currentPostId = newId
+            savedText = text
+            savedImages = imgs
+            savedTitles = titles
         }
     }
+
+    val dirty = tfv.text != savedText || images != savedImages || imageTitles != savedTitles
 
     fun delete() {
         if (post == null) { onClose(); return }
@@ -138,7 +155,7 @@ fun PostDetailEditor(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (post == null) "Neuer Eintrag" else "Bearbeiten") },
+                title = {},
                 navigationIcon = {
                     IconButton(onClick = onClose) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Abbrechen")
@@ -159,7 +176,11 @@ fun PostDetailEditor(
                         }
                     }
                     IconButton(onClick = { save() }) {
-                        Icon(Icons.Filled.Check, contentDescription = "Speichern")
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = "Speichern",
+                            tint = if (dirty) androidx.compose.ui.graphics.Color.Gray else androidx.compose.ui.graphics.Color(0xFF2E7D32),
+                        )
                     }
                 },
             )

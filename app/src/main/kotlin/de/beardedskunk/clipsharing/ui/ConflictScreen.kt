@@ -131,6 +131,10 @@ fun ConflictScreen(
                             Text(diffAnnotated(baseText, head.content.text))
                             if (head.content.imageHashes.isNotEmpty()) {
                                 Text("(${head.content.imageHashes.size} Bild(er))", style = MaterialTheme.typography.labelSmall)
+                                val titles = head.content.imageTitles.filter { it.isNotBlank() }
+                                if (titles.isNotEmpty()) {
+                                    Text("Bildtitel: " + titles.joinToString(", "), style = MaterialTheme.typography.labelMedium)
+                                }
                             }
                         }
                         Button(onClick = { resolve(head.content) }, modifier = Modifier.fillMaxWidth()) {
