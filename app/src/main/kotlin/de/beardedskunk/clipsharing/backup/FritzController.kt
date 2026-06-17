@@ -34,12 +34,16 @@ class FritzController(
         status.value = "FRITZ!Box-Fehler: ${it.message}"
     }
 
-    /** Verbindung testen + Ordner anlegen. Blockierend – auf IO-Thread aufrufen. */
-    fun test(): Result<String> = runCatching {
-        FritzReplica(config(), source, blobStore).testAndPrepare()
-    }.onSuccess {
-        status.value = "Erfolgreich – Backup ist eingerichtet und läuft ab jetzt automatisch.\n$it"
-    }.onFailure {
-        status.value = "FRITZ!Box-Test fehlgeschlagen: ${it.message}"
+    /**
+     * Verbindung testen, Ordner anlegen UND sofort einmal synchronisieren – damit
+     * man direkt sieht, ob Daten zur Box und zurueck wandern. Liefert eine
+     * menschenlesbare Erfolgs-/Fehlermeldung (fuer einen Toast).
+     * Blockierend – auf IO-Thread aufrufen.
+     */
+    fun testAndSync(): Result<String> = runCatching {
+        val replica = FritzReplica(config(), source, blobStore)
+        replica.testAndPrepare()
+        val r = replica.sync()
+        "Backup läuft. Gesendet: ${r.pushedOps} Einträge / ${r.pushedBlobs} Bilder · Empfangen: ${r.pulledOps} Einträge."
     }
 }

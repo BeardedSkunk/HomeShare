@@ -21,9 +21,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,7 +73,6 @@ fun SettingsScreen(
     var budget by remember {
         mutableStateOf(if (settings.imageBudgetGb > 0f) settings.imageBudgetGb.toString().replace('.', ',') else "")
     }
-    val status by fritz.status.collectAsState()
     var busy by remember { mutableStateOf(false) }
 
     var usedBytes by remember { mutableStateOf(0L) }
@@ -143,14 +142,14 @@ fun SettingsScreen(
                     save()
                     busy = true
                     scope.launch {
-                        withContext(Dispatchers.IO) { fritz.test() }
+                        val result = withContext(Dispatchers.IO) { fritz.testAndSync() }
                         busy = false
+                        val msg = result.getOrElse { "FRITZ!Box-Fehler: ${it.message}" }
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (busy) "Teste…" else "Verbindung testen & Backup einrichten") }
-
-            if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
+            ) { Text(if (busy) "Teste & synchronisiere…" else "Verbindung testen & jetzt sichern") }
 
             Text("Speicher", style = MaterialTheme.typography.titleMedium)
             Text("Bilder lokal belegt: ${gb(usedBytes)} · Frei auf Gerät: ${gb(freeBytes)}")
