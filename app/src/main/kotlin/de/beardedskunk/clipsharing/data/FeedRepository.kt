@@ -335,6 +335,12 @@ class FeedRepository(
         db.rawQuery("SELECT image_hashes FROM post_current WHERE deleted = 0", null).use { c ->
             while (c.moveToNext()) out += splitCsv(c.getString(0))
         }
+        // Bei Konflikten ALLE Bilder aller Fassungen holen, damit die Konflikt-Ansicht
+        // beide Bilder anzeigen kann (nicht nur die des materialisierten Heads).
+        db.rawQuery(
+            "SELECT image_hashes FROM ops WHERE post_id IN (SELECT post_id FROM post_current WHERE conflicted = 1)",
+            null,
+        ).use { c -> while (c.moveToNext()) out += splitCsv(c.getString(0)) }
         return out
     }
 
