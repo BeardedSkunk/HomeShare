@@ -15,7 +15,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,7 +30,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,11 +54,18 @@ import de.beardedskunk.clipsharing.data.Recurrence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+
+private val DATE_UI = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+private val HM = DateTimeFormatter.ofPattern("HH:mm")
 
 private val reminderOptions: List<Pair<String, Int?>> = listOf(
     "Keine" to null,
@@ -63,10 +77,8 @@ private val reminderOptions: List<Pair<String, Int?>> = listOf(
 )
 
 /**
- * Editor für einen Kalendereintrag mit FESTEN Feldern (im Hintergrund Markdown via
- * [EventCodec]). Deckt alle Felder ab, die der Android-Kalender annehmen kann:
- * Titel, ganztägig, Start/Ende (Datum+Zeit), Ort, Erinnerung, Wiederholung,
- * Verfügbarkeit (gebucht/frei) und freie Beschreibung.
+ * Editor für einen Kalendereintrag mit FESTEN Feldern (Hintergrund: Markdown via [EventCodec],
+ * Zeiten als ISO-8601 inkl. Zeitzone). Datum/Zeit über grafische Picker; Anzeige dd.MM.yyyy / HH:mm.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,15 +92,15 @@ fun CalendarEntryEditor(
     val context = LocalContext.current
 
     val existing = remember(post?.headVersionId) { post?.text?.let { EventCodec.parse(it) } }
-    val nowDate = remember { LocalDate.now() }
-    val nextHour = remember { LocalTime.now().plusHours(1).withMinute(0) }
+    val now = remember { LocalDateTime.now() }
+    val defStart = remember { now.toLocalTime().plusHours(1).withMinute(0).withSecond(0).withNano(0) }
 
     var title by remember { mutableStateOf(existing?.title ?: "") }
     var allDay by remember { mutableStateOf(existing?.allDay ?: false) }
-    var startDate by remember { mutableStateOf(existing?.start?.substringBefore('T')?.takeIf { it.isNotBlank() } ?: nowDate.toString()) }
-    var startTime by remember { mutableStateOf(existing?.start?.substringAfter('T', "")?.takeIf { it.isNotBlank() } ?: nextHour.format(HM)) }
-    var endDate by remember { mutableStateOf(existing?.end?.substringBefore('T')?.takeIf { it.isNotBlank() } ?: nowDate.toString()) }
-    var endTime by remember { mutableStateOf(existing?.end?.substringAfter('T', "")?.takeIf { it.isNotBlank() } ?: nextHour.plusHours(1).format(HM)) }
+    var startDate by remember { mutableStateOf(existing?.let { dateOf(it.start) } ?: now.toLocalDate()) }
+    var startTime by remember { mutableStateOf(existing?.takeIf { !it.allDay }?.let { timeOf(it.start) } ?: defStart) }
+    var endDate by remember { mutableStateOf(existing?.let { dateOf(it.end) } ?: now.toLocalDate()) }
+    var endTime by remember { mutableStateOf(existing?.takeIf { !it.allDay }?.let { timeOf(it.end) } ?: defStart.plusHours(1)) }
     var location by remember { mutableStateOf(existing?.location ?: "") }
     var description by remember { mutableStateOf(existing?.description ?: "") }
     var reminder by remember { mutableStateOf(existing?.reminderMinutes) }
@@ -97,16 +109,23 @@ fun CalendarEntryEditor(
 
     fun save() {
         if (title.isBlank()) { toast(context, "Titel fehlt"); return }
-        if (!validDate(startDate) || (!allDay && !validTime(startTime))) { toast(context, "Start ungültig (Datum JJJJ-MM-TT, Zeit HH:MM)"); return }
-        if (!validDate(endDate) || (!allDay && !validTime(endTime))) { toast(context, "Ende ungültig"); return }
-        val start = if (allDay) startDate else "${startDate}T$startTime"
-        val end = if (allDay) endDate else "${endDate}T$endTime"
+        val zone = ZoneId.systemDefault()
+        val start: String
+        val end: String
+        if (allDay) {
+            start = startDate.toString()
+            end = (if (endDate.isBefore(startDate)) startDate else endDate).toString()
+        } else {
+            start = ZonedDateTime.of(startDate, startTime, zone).toString()
+            val endZdt = ZonedDateTime.of(endDate, endTime, zone)
+            val startZdt = ZonedDateTime.of(startDate, startTime, zone)
+            end = (if (endZdt.isBefore(startZdt)) startZdt else endZdt).toString()
+        }
         val ev = EventData(
             title = title.trim(),
             start = start,
             end = end,
             allDay = allDay,
-            tz = ZoneId.systemDefault().id,
             location = location.trim(),
             description = description.trim(),
             reminderMinutes = reminder,
@@ -162,14 +181,14 @@ fun CalendarEntryEditor(
 
             Text("Start", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(startDate, { startDate = it }, label = { Text("Datum (JJJJ-MM-TT)") }, singleLine = true, modifier = Modifier.weight(1f))
-                if (!allDay) OutlinedTextField(startTime, { startTime = it }, label = { Text("Zeit (HH:MM)") }, singleLine = true, modifier = Modifier.weight(1f))
+                DateField("Datum", startDate, Modifier.weight(1f)) { startDate = it; if (endDate.isBefore(it)) endDate = it }
+                if (!allDay) TimeField("Zeit", startTime, Modifier.weight(1f)) { startTime = it }
             }
 
             Text("Ende", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(endDate, { endDate = it }, label = { Text("Datum (JJJJ-MM-TT)") }, singleLine = true, modifier = Modifier.weight(1f))
-                if (!allDay) OutlinedTextField(endTime, { endTime = it }, label = { Text("Zeit (HH:MM)") }, singleLine = true, modifier = Modifier.weight(1f))
+                DateField("Datum", endDate, Modifier.weight(1f)) { endDate = it }
+                if (!allDay) TimeField("Zeit", endTime, Modifier.weight(1f)) { endTime = it }
             }
 
             OutlinedTextField(location, { location = it }, label = { Text("Ort") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -203,7 +222,49 @@ fun CalendarEntryEditor(
     }
 }
 
-/** Aufklappbares Auswahlfeld (einfacher als ExposedDropdownMenuBox, reicht hier). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateField(label: String, date: LocalDate, modifier: Modifier = Modifier, onPick: (LocalDate) -> Unit) {
+    var show by remember { mutableStateOf(false) }
+    OutlinedButton(onClick = { show = true }, modifier = modifier) {
+        Text("$label: ${date.format(DATE_UI)}")
+    }
+    if (show) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { show = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { onPick(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }
+                    show = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { show = false }) { Text("Abbrechen") } },
+        ) { DatePicker(state = state) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeField(label: String, time: LocalTime, modifier: Modifier = Modifier, onPick: (LocalTime) -> Unit) {
+    var show by remember { mutableStateOf(false) }
+    OutlinedButton(onClick = { show = true }, modifier = modifier) {
+        Text("$label: ${time.format(HM)}")
+    }
+    if (show) {
+        val state = rememberTimePickerState(initialHour = time.hour, initialMinute = time.minute, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { show = false },
+            confirmButton = { TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute)); show = false }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { show = false }) { Text("Abbrechen") } },
+            text = { TimePicker(state = state) },
+        )
+    }
+}
+
+/** Aufklappbares Auswahlfeld. */
 @Composable
 private fun LabeledDropdown(label: String, current: String, options: List<String>, onSelect: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -223,7 +284,7 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
     }
 }
 
-/** Kompakte Listenzeile für einen Kalendereintrag: Datum/Zeit + Titel + Ort. */
+/** Kompakte Listenzeile für einen Kalendereintrag: Titel + Datum/Zeit + Ort. */
 @Composable
 fun CalendarRow(post: PostState, onClick: () -> Unit) {
     val ev = remember(post.headVersionId) { EventCodec.parse(post.text) }
@@ -237,7 +298,8 @@ fun CalendarRow(post: PostState, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Text(
-                (if (post.conflicted) "⚠ " else "") + (ev?.title?.ifBlank { "(ohne Titel)" } ?: post.text.lineSequence().firstOrNull().orEmpty()),
+                (if (post.conflicted) "⚠ " else "") +
+                    (ev?.title?.ifBlank { "(ohne Titel)" } ?: post.text.lineSequence().firstOrNull().orEmpty()),
                 style = MaterialTheme.typography.titleMedium,
             )
             if (ev != null) {
@@ -249,25 +311,34 @@ fun CalendarRow(post: PostState, onClick: () -> Unit) {
     }
 }
 
-private val HM = DateTimeFormatter.ofPattern("HH:mm")
-private val DATE_DE = DateTimeFormatter.ofPattern("EEE dd.MM.yyyy")
-
-private fun formatWhen(ev: EventData): String {
-    return try {
-        if (ev.allDay) {
-            val d = LocalDate.parse(ev.start.substringBefore('T'))
-            "${d.format(DATE_DE)} · ganztägig"
-        } else {
-            val s = LocalDateTime.parse(ev.start)
-            val e = runCatching { LocalDateTime.parse(ev.end) }.getOrNull()
-            val base = "${s.format(DATE_DE)} ${s.format(HM)}"
-            if (e != null) "$base – ${e.format(HM)}" else base
-        }
-    } catch (_: Exception) {
-        ev.start
+private fun formatWhen(ev: EventData): String = try {
+    if (ev.allDay) {
+        val d = LocalDate.parse(ev.start.substringBefore('T'))
+        val e = LocalDate.parse(ev.end.substringBefore('T'))
+        if (e.isAfter(d)) "${d.format(DATE_UI)} – ${e.format(DATE_UI)} · ganztägig"
+        else "${d.format(DATE_UI)} · ganztägig"
+    } else {
+        val s = parseZoned(ev.start)
+        val e = parseZoned(ev.end)
+        val sameDay = s.toLocalDate() == e.toLocalDate()
+        if (sameDay) "${s.format(DATE_UI)} ${s.format(HM)} – ${e.format(HM)}"
+        else "${s.format(DATE_UI)} ${s.format(HM)} – ${e.format(DATE_UI)} ${e.format(HM)}"
     }
+} catch (_: Exception) {
+    ev.start
 }
 
-private fun validDate(s: String): Boolean = runCatching { LocalDate.parse(s.trim()) }.isSuccess
-private fun validTime(s: String): Boolean = runCatching { LocalTime.parse(s.trim()) }.isSuccess
+private fun parseZoned(s: String): ZonedDateTime {
+    val t = s.trim()
+    runCatching { return ZonedDateTime.parse(t) }
+    runCatching { return OffsetDateTime.parse(t).toZonedDateTime() }
+    return LocalDateTime.parse(t).atZone(ZoneId.systemDefault())
+}
+
+private fun dateOf(s: String): LocalDate = runCatching { parseZoned(s).toLocalDate() }
+    .getOrElse { runCatching { LocalDate.parse(s.substringBefore('T')) }.getOrDefault(LocalDate.now()) }
+
+private fun timeOf(s: String): LocalTime = runCatching { parseZoned(s).toLocalTime() }
+    .getOrDefault(LocalTime.of(9, 0))
+
 private fun toast(ctx: android.content.Context, msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()

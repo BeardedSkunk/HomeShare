@@ -11,10 +11,9 @@ class CalendarEventTest {
     @Test fun event_roundTrips_timedWithEverything() {
         val e = EventData(
             title = "Zahnarzt",
-            start = "2026-06-20T14:00",
-            end = "2026-06-20T15:00",
+            start = "2026-06-20T14:00:00+02:00[Europe/Berlin]",
+            end = "2026-06-20T15:00:00+02:00[Europe/Berlin]",
             allDay = false,
-            tz = "Europe/Berlin",
             location = "Praxis Dr. Müller",
             description = "Bitte Versichertenkarte\n- [ ] Karte einstecken",
             reminderMinutes = 30,
@@ -26,7 +25,7 @@ class CalendarEventTest {
     }
 
     @Test fun event_roundTrips_allDayMinimal() {
-        val e = EventData(title = "Urlaub", start = "2026-07-01", end = "2026-07-14", allDay = true, tz = "UTC")
+        val e = EventData(title = "Urlaub", start = "2026-07-01", end = "2026-07-14", allDay = true)
         assertEquals(e, EventCodec.parse(EventCodec.encode(e)))
     }
 
