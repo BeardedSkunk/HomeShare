@@ -22,6 +22,7 @@ class FritzController(
         password = settings.fritzPassword,
         baseDir = settings.fritzBaseDir,
         group = identity.groupName,
+        useFtps = settings.fritzUseFtps,
     )
 
     /** Blockierend – vom Aufrufer auf einem IO-Thread ausfuehren. */
@@ -31,5 +32,14 @@ class FritzController(
         status.value = "FRITZ!Box ok: +${it.pulledOps} empfangen, ${it.pushedOps} Ops / ${it.pushedBlobs} Bilder gesendet"
     }.onFailure {
         status.value = "FRITZ!Box-Fehler: ${it.message}"
+    }
+
+    /** Verbindung testen + Ordner anlegen. Blockierend – auf IO-Thread aufrufen. */
+    fun test(): Result<String> = runCatching {
+        FritzReplica(config(), source, blobStore).testAndPrepare()
+    }.onSuccess {
+        status.value = "Erfolgreich – Backup ist eingerichtet und läuft ab jetzt automatisch.\n$it"
+    }.onFailure {
+        status.value = "FRITZ!Box-Test fehlgeschlagen: ${it.message}"
     }
 }
