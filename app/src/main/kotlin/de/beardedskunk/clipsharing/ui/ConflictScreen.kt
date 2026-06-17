@@ -1,10 +1,15 @@
 package de.beardedskunk.clipsharing.ui
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
@@ -26,8 +31,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -39,31 +46,40 @@ import de.beardedskunk.clipsharing.core.DiffOp
 import de.beardedskunk.clipsharing.core.PostContent
 import de.beardedskunk.clipsharing.core.PostVersion
 import de.beardedskunk.clipsharing.core.TextDiff
+import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.data.FeedRepository
 import de.beardedskunk.clipsharing.data.PostState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * Loest einen nebenlaeufigen Bearbeitungskonflikt auf: zeigt die gemeinsame Basis
- * und je konkurrierender Version einen farbigen Wort-Diff gegen die Basis. Der
- * Nutzer waehlt eine Version (oder schreibt eine eigene). Die Auswahl erzeugt eine
- * Merge-Version, wodurch der Konflikt fuer alle Geraete erledigt ist.
+ * Loest einen nebenlaeufigen Bearbeitungskonflikt auf. Zeigt die gemeinsame Basis,
+ * pro konkurrierender Fassung einen verstaendlichen Vergleich (Wort-Diff beim Text,
+ * Bilder als anklickbare Thumbnails) und – falls beide Fassungen dasselbe Bild
+ * teilen – dieses einmal als Referenz oben. Der Nutzer waehlt eine Fassung (oder
+ * schreibt eine eigene). Die Auswahl erzeugt eine Merge-Version, womit der Konflikt
+ * fuer alle Geraete erledigt ist.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConflictScreen(
     repo: FeedRepository,
+    blobStore: BlobStore,
     feed: Feed,
     post: PostState,
+    onOpenImage: (String) -> Unit,
     onResolved: () -> Unit,
     onCancel: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var heads by remember { mutableStateOf<List<PostVersion>>(emptyList()) }
     var baseText by remember { mutableStateOf("") }
+    var deviceNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var manualInitial by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(post.postId) {
@@ -73,6 +89,7 @@ fun ConflictScreen(
             val base = if (h.size >= 2) p.lowestCommonAncestor(h[0].versionId, h[1].versionId) else null
             heads = h
             baseText = base?.content?.text ?: ""
+            deviceNames = repo.deviceNames()
         }
     }
 
@@ -94,6 +111,18 @@ fun ConflictScreen(
         return
     }
 
+    // Bilder, die in ALLEN Fassungen vorkommen -> einmal als Referenz oben zeigen.
+    val liveHeads = heads.filter { !it.content.deleted }
+    val commonImages: List<String> =
+        if (liveHeads.size >= 2) {
+            liveHeads.map { it.content.imageHashes.toSet() }
+                .reduce { a, b -> a.intersect(b) }
+                .toList()
+        } else {
+            emptyList()
+        }
+    val newestId = heads.lastOrNull()?.versionId
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -111,30 +140,64 @@ fun ConflictScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Gemeinsame Basis", fontWeight = FontWeight.Bold)
-                Text(baseText.ifBlank { "(leer)" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "Wähle, welche Fassung gelten soll. Deine Wahl gilt danach für alle Geräte.",
-                    style = MaterialTheme.typography.labelMedium,
+                    "Dieser Beitrag wurde auf mehreren Geräten gleichzeitig geändert. " +
+                        "Wähle, welche Fassung gelten soll – deine Wahl gilt danach für alle Geräte.",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
+            item {
+                Text("Gemeinsame Basis (vor den Änderungen)", fontWeight = FontWeight.Bold)
+                Text(baseText.ifBlank { "(leer)" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (commonImages.isNotEmpty()) {
+                item {
+                    Text("Gemeinsames Bild (in beiden Fassungen gleich)", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Zum Vergrößern antippen.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    ThumbRow(blobStore, commonImages, onOpenImage)
+                }
+            }
             itemsIndexed(heads) { index, head ->
+                val name = deviceNames[head.deviceId]?.takeIf { it.isNotBlank() } ?: "Gerät ${head.deviceId.take(6)}"
+                val newest = head.versionId == newestId
+                val ownImages = head.content.imageHashes.filter { it !in commonImages }
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "Version ${'A' + index} · Gerät ${head.deviceId.take(6)}",
+                            "Fassung ${'A' + index} · $name" + if (newest) "  (neueste)" else "",
                             fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Geändert: " + formatWhen(head.hlc.wallMillis),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (head.content.deleted) {
                             Text("Diese Fassung löscht den Beitrag.", color = MaterialTheme.colorScheme.error)
                         } else {
-                            Text(diffAnnotated(baseText, head.content.text))
-                            if (head.content.imageHashes.isNotEmpty()) {
-                                Text("(${head.content.imageHashes.size} Bild(er))", style = MaterialTheme.typography.labelSmall)
-                                val titles = head.content.imageTitles.filter { it.isNotBlank() }
-                                if (titles.isNotEmpty()) {
-                                    Text("Bildtitel: " + titles.joinToString(", "), style = MaterialTheme.typography.labelMedium)
-                                }
+                            // Text: unveraendert -> klar benennen; sonst Wort-Diff gegen die Basis.
+                            if (head.content.text == baseText) {
+                                Text("Text unverändert.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                Text(diffAnnotated(baseText, head.content.text))
+                            }
+                            val titles = head.content.imageTitles.filter { it.isNotBlank() }
+                            if (titles.isNotEmpty()) {
+                                Text("Bildtitel: " + titles.joinToString(", "), style = MaterialTheme.typography.labelMedium)
+                            }
+                            if (ownImages.isNotEmpty()) {
+                                Text(
+                                    if (commonImages.isEmpty()) "Bild dieser Fassung (antippen für groß):"
+                                    else "Nur in dieser Fassung (antippen für groß):",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                ThumbRow(blobStore, ownImages, onOpenImage)
+                            } else if (head.content.imageHashes.isEmpty()) {
+                                Text("Kein Bild.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         Button(onClick = { resolve(head.content) }, modifier = Modifier.fillMaxWidth()) {
@@ -148,12 +211,35 @@ fun ConflictScreen(
                     onClick = { manualInitial = heads.firstOrNull { !it.content.deleted }?.content?.text ?: "" },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Eigene Fassung schreiben")
+                    Text("Eigene Text-Fassung schreiben")
                 }
             }
         }
     }
 }
+
+/** Reihe anklickbarer Bild-Thumbnails; Tippen oeffnet die Vollbild-Ansicht. */
+@Composable
+private fun ThumbRow(blobStore: BlobStore, hashes: List<String>, onOpenImage: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (sha in hashes) {
+            val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
+            Box(
+                Modifier.size(72.dp).clickable { onOpenImage(sha) },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (bmp != null) {
+                    Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                } else {
+                    Text("🖼")
+                }
+            }
+        }
+    }
+}
+
+private fun formatWhen(wallMillis: Long): String =
+    SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.GERMANY).format(Date(wallMillis))
 
 /** Baut aus dem Wort-Diff (Basis -> Ziel) eingefaerbten Text: grün = neu, rot durchgestrichen = entfernt. */
 private fun diffAnnotated(base: String, target: String): AnnotatedString = buildAnnotatedString {

@@ -85,8 +85,10 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
         BackHandler { resolving = null }
         ConflictScreen(
             repo = repo,
+            blobStore = blobStore,
             feed = feed,
             post = conflict,
+            onOpenImage = { viewingImage = it },
             onResolved = { resolving = null; reload() },
             onCancel = { resolving = null },
         )
