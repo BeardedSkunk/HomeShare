@@ -135,7 +135,7 @@ class FeedRepository(
     override fun missingFor(remote: Map<String, Long>): List<OpDto> {
         val out = ArrayList<OpDto>()
         db.rawQuery(
-            "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes " +
+            "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles " +
                 "FROM ops ORDER BY device_id, seq",
             null,
         ).use { c ->
@@ -155,6 +155,7 @@ class FeedRepository(
                     text = c.getString(9),
                     parents = splitCsv(c.getString(7)),
                     imageHashes = splitCsv(c.getString(10)),
+                    imageTitles = OpCodec.decodeTitles(c.getString(11)),
                 )
             }
         }
