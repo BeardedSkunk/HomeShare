@@ -33,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.clipsharing.backup.FritzController
@@ -115,8 +114,7 @@ fun SettingsScreen(
             Text("Gruppe (nur Geräte mit gleicher Passphrase syncen)", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(groupName, { groupName = it }, label = { Text("Gruppenname") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
-                passphrase, { passphrase = it }, label = { Text("Gruppen-Passphrase (Verschlüsselung)") },
-                visualTransformation = PasswordVisualTransformation(),
+                passphrase, { passphrase = it }, label = { Text("Gruppen-Passphrase (Klartext)") },
                 modifier = Modifier.fillMaxWidth(),
             )
 
