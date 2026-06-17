@@ -58,6 +58,27 @@ class SyncTest {
     }
 
     @Test
+    fun titles_roundTrip_includingSingleEmptyTitle() {
+        // Regression: ein einzelner leerer Bildtitel (Bild ohne Titel) muss erhalten
+        // bleiben, sonst aendert sich die versionId nach dem DB-Roundtrip (Phantom-Konflikt).
+        for (titles in listOf(emptyList(), listOf(""), listOf("a"), listOf("", ""), listOf("x", "", "y"))) {
+            assertEquals(titles, OpCodec.decodeTitles(OpCodec.encodeTitles(titles)))
+        }
+    }
+
+    @Test
+    fun opCodec_roundTrips_withImageAndEmptyTitle() {
+        val v = PostVersion(
+            "p1", emptySet(), "devA", Hlc(1, 0),
+            PostContent(text = "Logo", imageHashes = listOf("sha1"), imageTitles = listOf("")),
+        )
+        val dto = OpDto.from(v, feedId = "feed1", seq = 1)
+        val back = OpCodec.decodeOp(OpCodec.encodeOp(dto))
+        assertEquals(dto, back)
+        assertTrue(back.isConsistent())
+    }
+
+    @Test
     fun vvCodec_roundTrips() {
         val vv = mapOf("devA" to 5L, "devB" to 2L)
         assertEquals(vv, OpCodec.decodeVv(OpCodec.encodeVv(vv)))
