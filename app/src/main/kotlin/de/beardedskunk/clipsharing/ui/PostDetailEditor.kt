@@ -1,10 +1,16 @@
 package de.beardedskunk.clipsharing.ui
 
+import android.content.ComponentName
+import android.content.Intent
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +32,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,9 +61,11 @@ import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.data.FeedRepository
 import de.beardedskunk.clipsharing.data.PostState
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * Detail-/Editier-Ansicht eines Beitrags: langer Text (mit In-Post-Suche) plus die
@@ -63,7 +73,7 @@ import kotlinx.coroutines.withContext
  * der Bildschirmhöhe begrenzt. Bilder lassen sich antippen (Vollansicht) und über
  * das ×-Symbol aus dem Beitrag entfernen. [post] == null erzeugt einen neuen Beitrag.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PostDetailEditor(
     repo: FeedRepository,
@@ -138,6 +148,94 @@ fun PostDetailEditor(
                 }
             }
         }
+    }
+
+    // --- Bild-Aktionen (Long-Press-Menü pro Bild) ---
+    val editTargets = remember { imageEditTargets(context) }
+    var imageMenuFor by remember { mutableStateOf<Int?>(null) }
+    var pendingEdit by remember { mutableStateOf<PendingEdit?>(null) }
+    val authority = remember { context.packageName + ".fileprovider" }
+
+    // Ergebnis eines externen Editors: bevorzugt die zurückgegebene URI, sonst die
+    // (ggf. überschriebene) Temp-Datei. Weicht das Bild ab, ersetzt es unser Bild.
+    val editLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pe = pendingEdit ?: return@rememberLauncherForActivityResult
+        pendingEdit = null
+        scope.launch {
+            val newSha = withContext(Dispatchers.IO) {
+                val candidates = buildList {
+                    result.data?.data?.let { u ->
+                        runCatching { context.contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull()?.let { add(it) }
+                    }
+                    runCatching { if (pe.tempFile.exists()) pe.tempFile.readBytes() else null }.getOrNull()?.let { add(it) }
+                }
+                var picked: String? = null
+                for (b in candidates) if (b.isNotEmpty()) {
+                    val s = blobStore.put(b)
+                    if (s != pe.originalSha) { picked = s; break }
+                }
+                runCatching { pe.tempFile.delete() }
+                picked
+            }
+            if (newSha != null && pe.index < images.size) {
+                images = images.toMutableList().also { it[pe.index] = newSha }
+                Toast.makeText(context, "Bild aktualisiert – zum Sichern speichern (✓).", Toast.LENGTH_SHORT).show()
+            } else if (newSha == null) {
+                Toast.makeText(context, "Keine Änderung übernommen.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // target == null -> impliziter Intent (System-Default bzw. Resolver); forceChooser
+    // erzwingt den Auswahldialog trotz gesetztem Default.
+    fun launchEdit(index: Int, sha: String, target: EditTarget?, forceChooser: Boolean) {
+        val full = blobStore.readFull(sha)
+        if (full == null) {
+            Toast.makeText(context, "Vollbild nicht lokal – erst antippen zum Laden.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // Editierbare Kopie unter thumbs/ (vom FileProvider freigegeben, wird nicht gesynct).
+        val tmp = blobStore.thumbFile("_edit_${System.currentTimeMillis()}_$index.png")
+        runCatching { tmp.writeBytes(full) }.onFailure {
+            Toast.makeText(context, "Konnte Bild nicht vorbereiten.", Toast.LENGTH_SHORT).show(); return
+        }
+        val uri = FileProvider.getUriForFile(context, authority, tmp)
+        val base = Intent(Intent.ACTION_EDIT).apply {
+            setDataAndType(uri, "image/png")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+        }
+        val toLaunch = when {
+            target != null -> Intent(base).setComponent(ComponentName(target.pkg, target.cls))
+            forceChooser -> Intent.createChooser(base, "Bearbeiten mit…").apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+            else -> base
+        }
+        pendingEdit = PendingEdit(index, tmp, sha)
+        runCatching { editLauncher.launch(toLaunch) }.onFailure {
+            pendingEdit = null
+            runCatching { tmp.delete() }
+            Toast.makeText(context, "Keine App zum Bearbeiten gefunden.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun shareImage(sha: String) {
+        val file: File? = when {
+            blobStore.hasFull(sha) -> blobStore.fullFile(sha)
+            blobStore.hasThumb(sha) -> blobStore.thumbFile(sha)
+            else -> null
+        }
+        if (file == null) {
+            Toast.makeText(context, "Bild nicht lokal.", Toast.LENGTH_SHORT).show(); return
+        }
+        val uri = FileProvider.getUriForFile(context, authority, file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
     }
 
     // Speichert, bleibt aber in der Ansicht (Haken wird gruen, da Stand = gespeichert).
@@ -252,18 +350,23 @@ fun PostDetailEditor(
                 Column(Modifier.fillMaxWidth().padding(8.dp)) {
                     Box(Modifier.fillMaxWidth()) {
                         val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
+                        // Tippen = groß ansehen; lang drücken = Aktionsmenü (ansehen/bearbeiten/teilen/löschen).
+                        val imgModifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = maxImageHeight)
+                            .combinedClickable(
+                                onClick = { onOpenImage(sha) },
+                                onLongClick = { imageMenuFor = index },
+                            )
                         if (bmp != null) {
                             Image(
                                 bitmap = bmp,
                                 contentDescription = imageTitles.getOrNull(index)?.text,
                                 contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = maxImageHeight)
-                                    .clickable { onOpenImage(sha) },
+                                modifier = imgModifier,
                             )
                         } else {
-                            Text("🖼 (Bild nicht lokal)")
+                            Text("🖼 (Bild nicht lokal)", modifier = imgModifier)
                         }
                         IconButton(
                             onClick = {
@@ -273,6 +376,40 @@ fun PostDetailEditor(
                             modifier = Modifier.align(Alignment.TopEnd),
                         ) {
                             Icon(Icons.Filled.Close, contentDescription = "Bild entfernen")
+                        }
+                        DropdownMenu(expanded = imageMenuFor == index, onDismissRequest = { imageMenuFor = null }) {
+                            DropdownMenuItem(
+                                text = { Text("Öffnen zum Anschauen") },
+                                onClick = { imageMenuFor = null; onOpenImage(sha) },
+                            )
+                            if (editTargets.size in 1..3) {
+                                // Bis zu drei Editoren direkt anbieten.
+                                editTargets.forEach { t ->
+                                    DropdownMenuItem(
+                                        text = { Text("Bearbeiten mit ${t.label}") },
+                                        onClick = { imageMenuFor = null; launchEdit(index, sha, t, forceChooser = false) },
+                                    )
+                                }
+                            } else {
+                                // 0 oder >3 Editoren: ein Knopf – Tippen = Default/Chooser,
+                                // lang drücken = Chooser erzwingen.
+                                EditMenuItem(
+                                    onTap = { imageMenuFor = null; launchEdit(index, sha, null, forceChooser = false) },
+                                    onLongPress = { imageMenuFor = null; launchEdit(index, sha, null, forceChooser = true) },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Teilen") },
+                                onClick = { imageMenuFor = null; shareImage(sha) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Löschen") },
+                                onClick = {
+                                    imageMenuFor = null
+                                    images = images.toMutableList().also { if (index < it.size) it.removeAt(index) }
+                                    imageTitles = imageTitles.toMutableList().also { if (index < it.size) it.removeAt(index) }
+                                },
+                            )
                         }
                     }
                     OutlinedTextField(
@@ -297,6 +434,32 @@ fun PostDetailEditor(
 
 /** Ein Suchtreffer: [target] == -1 -> Haupttext, sonst Index des Bildtitel-Felds. */
 private data class FindHit(val target: Int, val start: Int)
+
+/** Laufende externe Bearbeitung: welches Bild, Temp-Datei und Original-SHA (für Vergleich). */
+private data class PendingEdit(val index: Int, val tempFile: File, val originalSha: String)
+
+/**
+ * Menüeintrag „Bearbeiten" mit Doppelfunktion: Tippen öffnet den Standard-Editor
+ * (bzw. den System-Chooser, wenn kein Default gesetzt ist), langes Drücken erzwingt
+ * den Chooser. Eigene Zeile, da [DropdownMenuItem] kein Long-Press unterstützt.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun EditMenuItem(onTap: () -> Unit, onLongPress: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onTap, onLongClick = onLongPress)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Text("Bearbeiten")
+        Text(
+            "lang drücken: App wählen",
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 /** Alle Start-Indizes von [needle] in [haystack] (case-insensitive, ueberlappungsfrei). */
 private fun findAllMatches(haystack: String, needle: String): List<Int> {
