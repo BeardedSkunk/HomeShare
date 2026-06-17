@@ -145,13 +145,22 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     val current = editing
     if (current != null || creatingNew) {
         BackHandler { editing = null; creatingNew = false; reload() }
-        PostDetailEditor(
-            repo = repo,
-            blobStore = blobStore,
-            feed = feed,
-            post = current,
-            onClose = { editing = null; creatingNew = false; reload() },
-        )
+        if (feed.calendar) {
+            CalendarEntryEditor(
+                repo = repo,
+                feed = feed,
+                post = current,
+                onClose = { editing = null; creatingNew = false; reload() },
+            )
+        } else {
+            PostDetailEditor(
+                repo = repo,
+                blobStore = blobStore,
+                feed = feed,
+                post = current,
+                onClose = { editing = null; creatingNew = false; reload() },
+            )
+        }
         return
     }
 
@@ -209,14 +218,21 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
         } else {
             LazyColumn(Modifier.fillMaxSize().padding(padding)) {
                 items(posts, key = { it.postId }) { post ->
-                    PostRow(
-                        post = post,
-                        blobStore = blobStore,
-                        onClick = { if (post.conflicted) resolving = post else editing = post },
-                        onResolveWhole = { resolving = post },
-                        onResolveDetailed = { resolvingDetailed = post },
-                        onOpenImage = { viewingImage = it },
-                    )
+                    if (feed.calendar) {
+                        CalendarRow(
+                            post = post,
+                            onClick = { if (post.conflicted) resolving = post else editing = post },
+                        )
+                    } else {
+                        PostRow(
+                            post = post,
+                            blobStore = blobStore,
+                            onClick = { if (post.conflicted) resolving = post else editing = post },
+                            onResolveWhole = { resolving = post },
+                            onResolveDetailed = { resolvingDetailed = post },
+                            onOpenImage = { viewingImage = it },
+                        )
+                    }
                 }
             }
         }

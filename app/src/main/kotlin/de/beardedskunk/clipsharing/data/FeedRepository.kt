@@ -28,6 +28,9 @@ class FeedRepository(
     /** Wird nach jeder LOKALEN Aenderung aufgerufen (nicht beim Sync-Ingest) -> Auto-Sync. */
     var onLocalChange: (() -> Unit)? = null
 
+    /** Wird nach JEDER Aenderung aufgerufen (lokal UND Sync-Ingest) -> Kalender-Sync. */
+    var onAnyChange: (() -> Unit)? = null
+
     @Volatile
     private var migrated = false
 
@@ -42,15 +45,17 @@ class FeedRepository(
     // Feed-Id, text == Feed-Name) -> sie synchronisieren ueber Box UND Peers ohne
     // zusaetzliche Transport-Logik.
 
-    fun createFeed(name: String): Feed {
+    fun createFeed(name: String, calendar: Boolean = false): Feed {
         ensureMigrated()
         val feedId = UUID.randomUUID().toString()
-        val v = author(FEEDS_FEED, feedId, emptySet(), PostContent(text = name.trim()))
-        return Feed(feedId, name.trim(), v.hlc, deleted = false)
+        val v = author(FEEDS_FEED, feedId, emptySet(), PostContent(text = FeedMeta.encode(name, calendar)))
+        return Feed(feedId, name.trim(), v.hlc, deleted = false, calendar = calendar)
     }
 
     fun renameFeed(feedId: String, name: String) {
-        author(FEEDS_FEED, feedId, currentHeads(feedId), PostContent(text = name.trim()))
+        // Kalender-Flag beim Umbenennen erhalten.
+        val cal = listFeeds().firstOrNull { it.id == feedId }?.calendar ?: false
+        author(FEEDS_FEED, feedId, currentHeads(feedId), PostContent(text = FeedMeta.encode(name, cal)))
     }
 
     fun deleteFeed(feedId: String) {
@@ -61,11 +66,11 @@ class FeedRepository(
         ensureMigrated()
         val out = ArrayList<Feed>()
         db.rawQuery(
-            "SELECT feed_id, name, created_wall, created_counter, deleted FROM feeds WHERE deleted = 0 ORDER BY created_wall, created_counter",
+            "SELECT feed_id, name, created_wall, created_counter, deleted, calendar FROM feeds WHERE deleted = 0 ORDER BY created_wall, created_counter",
             null,
         ).use { c ->
             while (c.moveToNext()) {
-                out += Feed(c.getString(0), c.getString(1), Hlc(c.getLong(2), c.getInt(3)), c.getInt(4) != 0)
+                out += Feed(c.getString(0), c.getString(1), Hlc(c.getLong(2), c.getInt(3)), c.getInt(4) != 0, c.getInt(5) != 0)
             }
         }
         return out
@@ -108,6 +113,7 @@ class FeedRepository(
             db.endTransaction()
         }
         onLocalChange?.invoke()
+        onAnyChange?.invoke()
         return version
     }
 
@@ -125,6 +131,7 @@ class FeedRepository(
         } finally {
             db.endTransaction()
         }
+        onAnyChange?.invoke()
         return true
     }
 
@@ -181,6 +188,13 @@ class FeedRepository(
 
     fun listPosts(feedId: String): List<PostState> =
         queryPostStates("feed_id = ? AND (deleted = 0 OR conflicted = 1)", arrayOf(feedId))
+
+    /**
+     * Alle Einträge in Kalender-Feeds – inkl. gelöschter (damit der Kalender-Sync sie
+     * im Android-Kalender wieder entfernen kann). Für [de.beardedskunk.clipsharing.calendar.CalendarSync].
+     */
+    fun calendarEntries(): List<PostState> =
+        queryPostStates("feed_id IN (SELECT feed_id FROM feeds WHERE calendar = 1)", emptyArray())
 
     fun getPostState(postId: String): PostState? =
         queryPostStates("post_id = ?", arrayOf(postId)).firstOrNull()
@@ -306,10 +320,11 @@ class FeedRepository(
         val root = post.allVersions().firstOrNull { it.parents.isEmpty() } ?: shown
         val cv = ContentValues().apply {
             put("feed_id", feedId)
-            put("name", shown.content.text)
+            put("name", FeedMeta.decodeName(shown.content.text))
             put("created_wall", root.hlc.wallMillis)
             put("created_counter", root.hlc.counter)
             put("deleted", if (shown.content.deleted) 1 else 0)
+            put("calendar", if (FeedMeta.decodeCalendar(shown.content.text)) 1 else 0)
         }
         db.insertWithOnConflict("feeds", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }

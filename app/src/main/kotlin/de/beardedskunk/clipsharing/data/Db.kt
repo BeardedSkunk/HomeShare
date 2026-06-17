@@ -26,7 +26,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
               name TEXT NOT NULL,
               created_wall INTEGER NOT NULL,
               created_counter INTEGER NOT NULL,
-              deleted INTEGER NOT NULL DEFAULT 0
+              deleted INTEGER NOT NULL DEFAULT 0,
+              calendar INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
@@ -72,19 +73,43 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
         )
         db.execSQL("CREATE INDEX idx_post_current_feed ON post_current(feed_id)")
         db.execSQL("CREATE VIRTUAL TABLE post_fts USING fts4(post_id, text, notindexed=post_id)")
+        createCalendarLink(db)
+    }
+
+    /** Lokale Verknüpfung App-Post -> Android-Kalender-Event (geräte-lokal, synct NICHT). */
+    private fun createCalendarLink(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS calendar_link(
+              post_id TEXT PRIMARY KEY NOT NULL,
+              event_id INTEGER NOT NULL,
+              calendar_id INTEGER NOT NULL,
+              synced_hash TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Vor Release 1.0 noch keine Migrationen -> bei Schemaaenderung neu aufbauen.
-        db.execSQL("DROP TABLE IF EXISTS post_fts")
-        db.execSQL("DROP TABLE IF EXISTS post_current")
-        db.execSQL("DROP TABLE IF EXISTS ops")
-        db.execSQL("DROP TABLE IF EXISTS feeds")
-        onCreate(db)
+        // Inkrementelle, nicht-destruktive Migrationen (der Op-Log bleibt erhalten).
+        if (oldVersion < 3) {
+            // Vor v3: altes Schema -> einmalig neu aufbauen (Daten re-syncen via Peers/Box).
+            db.execSQL("DROP TABLE IF EXISTS post_fts")
+            db.execSQL("DROP TABLE IF EXISTS post_current")
+            db.execSQL("DROP TABLE IF EXISTS ops")
+            db.execSQL("DROP TABLE IF EXISTS feeds")
+            onCreate(db)
+            return
+        }
+        if (oldVersion < 4) {
+            // v3 -> v4: Kalender-Feature. Spalte + lokale Verknüpfungstabelle ergänzen.
+            db.execSQL("ALTER TABLE feeds ADD COLUMN calendar INTEGER NOT NULL DEFAULT 0")
+            createCalendarLink(db)
+        }
     }
 
     companion object {
         const val DB_NAME = "clipsharing.db"
-        const val DB_VERSION = 3
+        const val DB_VERSION = 4
     }
 }
