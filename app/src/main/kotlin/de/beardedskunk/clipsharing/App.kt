@@ -9,6 +9,7 @@ import de.beardedskunk.clipsharing.data.FeedRepository
 import de.beardedskunk.clipsharing.data.Settings
 import de.beardedskunk.clipsharing.data.androidThumbnailer
 import de.beardedskunk.clipsharing.backup.FritzController
+import de.beardedskunk.clipsharing.calendar.CalendarSync
 import de.beardedskunk.clipsharing.sync.AutoSync
 import de.beardedskunk.clipsharing.sync.SyncManager
 import de.beardedskunk.clipsharing.web.WebServerController
@@ -29,6 +30,7 @@ class AppGraph(context: Context) {
     val settings: Settings by lazy { Settings(appContext) }
     val fritz: FritzController by lazy { FritzController(settings, identity, repo, blobStore) }
     val autoSync: AutoSync by lazy { AutoSync(appContext, settings, fritz, sync) }
+    val calendarSync: CalendarSync by lazy { CalendarSync(appContext, db, repo, settings) }
 }
 
 class ClipApplication : Application() {

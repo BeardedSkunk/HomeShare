@@ -1,5 +1,6 @@
 package de.beardedskunk.clipsharing
 
+import android.Manifest
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -7,11 +8,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,7 +40,10 @@ class MainActivity : ComponentActivity() {
         val graph = appGraph
         // AutoSync besitzt den SyncManager-Lebenszyklus: NSD/Sync laufen nur bei WLAN.
         graph.repo.onLocalChange = { graph.autoSync.trigger() }
+        // JEDE Aenderung (lokal + Sync-Ingest) -> Kalender-Sync in den Android-Kalender.
+        graph.repo.onAnyChange = { graph.calendarSync.requestSync() }
         graph.autoSync.start()
+        graph.calendarSync.requestSync()
         val shared = parseShared(intent)
         setContent {
             ClipTheme {
@@ -82,6 +89,17 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     var showSettings by remember { mutableStateOf(false) }
     val status by graph.sync.status.collectAsState()
     val webUrl by graph.web.url.collectAsState()
+
+    // Kalender-Berechtigung anfordern, sobald ein Kalender-Feed geöffnet wird.
+    val calPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result -> if (result.values.any { it }) graph.calendarSync.requestSync() }
+    LaunchedEffect(openFeed?.id) {
+        val f = openFeed
+        if (f != null && f.calendar && !graph.calendarSync.hasPermission()) {
+            calPermLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
+        }
+    }
 
     val share = pendingShare
     if (share != null) {

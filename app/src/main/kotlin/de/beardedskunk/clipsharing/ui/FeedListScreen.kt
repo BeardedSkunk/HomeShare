@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -112,7 +113,7 @@ fun FeedListScreen(
                             .clickable { onOpenFeed(feed) },
                     ) {
                         Text(
-                            feed.name.ifBlank { "(ohne Namen)" },
+                            (if (feed.calendar) "📅 " else "") + feed.name.ifBlank { "(ohne Namen)" },
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.padding(16.dp),
                         )
@@ -124,21 +125,44 @@ fun FeedListScreen(
     }
 
     if (showCreate) {
-        TextPromptDialog(
-            title = "Neuer Feed",
-            label = "Name",
-            confirmText = "Anlegen",
-            onConfirm = { name ->
+        CreateFeedDialog(
+            onConfirm = { name, calendar ->
                 showCreate = false
                 if (name.isNotBlank()) {
                     scope.launch {
-                        withContext(Dispatchers.IO) { repo.createFeed(name) }
+                        withContext(Dispatchers.IO) { repo.createFeed(name, calendar) }
                         reload()
                     }
                 }
             },
             onDismiss = { showCreate = false },
         )
+    }
+}
+
+/** Anlege-Dialog für einen Feed: Name + Option „nur Kalender-Einträge". */
+@Composable
+fun CreateFeedDialog(
+    onConfirm: (name: String, calendar: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var calendar by remember { mutableStateOf(false) }
+    Dialog(onDismissRequest = onDismiss) {
+        Card {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Neuer Feed", fontWeight = FontWeight.Bold)
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") })
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Checkbox(checked = calendar, onCheckedChange = { calendar = it })
+                    Text("Nur Kalender-Einträge (Sync in den Android-Kalender)")
+                }
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Abbrechen") }
+                    Button(onClick = { onConfirm(name, calendar) }) { Text("Anlegen") }
+                }
+            }
+        }
     }
 }
 

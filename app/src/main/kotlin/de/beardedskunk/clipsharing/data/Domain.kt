@@ -2,12 +2,13 @@ package de.beardedskunk.clipsharing.data
 
 import de.beardedskunk.clipsharing.core.Hlc
 
-/** Ein benannter Feed. */
+/** Ein benannter Feed. [calendar] = Feed enthält ausschließlich Kalendereinträge. */
 data class Feed(
     val id: String,
     val name: String,
     val created: Hlc,
     val deleted: Boolean = false,
+    val calendar: Boolean = false,
 )
 
 /**

@@ -48,6 +48,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(K_FTPS, false)
         set(v) = prefs.edit().putBoolean(K_FTPS, v).apply()
 
+    /** Ziel-Kalender (Android CalendarContract _ID) für den Kalender-Sync; 0 = automatisch (primärer). */
+    var calendarId: Long
+        get() = prefs.getLong(K_CALENDAR_ID, 0L)
+        set(v) = prefs.edit().putLong(K_CALENDAR_ID, v).apply()
+
     /** Lokales Speicherbudget fuer Voll-Bilder in GB (0 = unbegrenzt). */
     var imageBudgetGb: Float
         get() = prefs.getFloat(K_BUDGET_GB, 0f)
@@ -67,5 +72,6 @@ class Settings(context: Context) {
         private const val K_BASE = "fritz_base"
         private const val K_FTPS = "fritz_use_ftps"
         private const val K_BUDGET_GB = "image_budget_gb"
+        private const val K_CALENDAR_ID = "calendar_id"
     }
 }
