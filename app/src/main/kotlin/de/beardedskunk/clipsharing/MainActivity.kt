@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         val graph = appGraph
-        graph.sync.start()
+        // AutoSync besitzt den SyncManager-Lebenszyklus: NSD/Sync laufen nur bei WLAN.
         graph.repo.onLocalChange = { graph.autoSync.trigger() }
         graph.autoSync.start()
         val shared = parseShared(intent)
@@ -56,8 +56,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         if (isFinishing) {
-            appGraph.sync.stop()
-            appGraph.autoSync.stop()
+            appGraph.autoSync.stop() // stoppt auch den SyncManager
         }
     }
 
