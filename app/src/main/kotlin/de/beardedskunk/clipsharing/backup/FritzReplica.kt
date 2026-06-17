@@ -262,7 +262,7 @@ class FritzReplica(
         // Mit Retry gegen sporadische FTPS-Datenkanal-Abbrüche (z. B. Reply 426).
         repeat(MAX_TRIES) { attempt ->
             val result = runCatching {
-                val stream = c.retrieveFileStream(path) ?: return null // Datei existiert nicht
+                val stream = c.retrieveFileStream(path) ?: return@runCatching null
                 val out = ByteArrayOutputStream()
                 stream.copyTo(out)
                 stream.close()
@@ -270,6 +270,7 @@ class FritzReplica(
             }.getOrNull()
             if (result != null) return result
             Log.w(TAG, "retrieve Versuch ${attempt + 1} fehlgeschlagen für $path (Reply ${c.replyCode})")
+            runCatching { c.completePendingCommand() } // Steuerkanal nach Fehlversuch resynchronisieren
         }
         return null
     }
