@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 
 data class SyncStatus(
     val running: Boolean = false,
@@ -49,6 +50,7 @@ class SyncManager(
     private var regListener: NsdManager.RegistrationListener? = null
     private var discListener: NsdManager.DiscoveryListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private val knownPeers = ConcurrentHashMap<String, InetSocketAddress>()
 
     val status = MutableStateFlow(SyncStatus())
 
@@ -158,22 +160,37 @@ class SyncManager(
                 val group = resolved.attributes[ATTR_GROUP]?.toString(Charsets.UTF_8)
                 if (device == identity.deviceId) return // eigenes Gerät
                 if (group != identity.groupName) return // andere Gruppe
-                connect(resolved)
+                val host = resolved.host ?: return
+                knownPeers[device] = InetSocketAddress(host, resolved.port)
+                connectAndSync(InetSocketAddress(host, resolved.port))
             }
         }
         runCatching { nsd.resolveService(info, listener) }
             .onFailure { Log.w(TAG, "NSD-Resolve fehlgeschlagen", it) }
     }
 
-    private fun connect(resolved: NsdServiceInfo) {
-        val host = resolved.host ?: return
-        val port = resolved.port
+    private fun connectAndSync(addr: InetSocketAddress) {
         scope.launch {
             val socket = runCatching {
-                Socket().apply { connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS) }
+                Socket().apply { connect(addr, CONNECT_TIMEOUT_MS) }
             }.getOrNull() ?: return@launch
             handle(socket, initiator = true)
         }
+    }
+
+    /** Aktiv mit allen bisher entdeckten Peers synchronisieren (fuer Auto-Sync). */
+    fun syncNow() {
+        for (addr in knownPeers.values) connectAndSync(addr)
+    }
+
+    /** Discovery neu starten (z. B. nach WLAN-Wechsel). */
+    @Synchronized
+    fun refresh() {
+        if (!status.value.running) return
+        runCatching { discListener?.let { nsd.stopServiceDiscovery(it) } }
+        discListener = null
+        knownPeers.clear()
+        startDiscovery()
     }
 
     companion object {
