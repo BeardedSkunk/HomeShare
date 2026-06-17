@@ -156,8 +156,10 @@ fun PostDetailEditor(
     var pendingEdit by remember { mutableStateOf<PendingEdit?>(null) }
     val authority = remember { context.packageName + ".fileprovider" }
 
-    // Ergebnis eines externen Editors: bevorzugt die zurückgegebene URI, sonst die
-    // (ggf. überschriebene) Temp-Datei. Weicht das Bild ab, ersetzt es unser Bild.
+    // Ergebnis eines externen Editors: Editoren, die eine Result-URI liefern (z. B.
+    // Fotos „Kopie speichern"), werden zuerst geprüft; sonst der Galerie-Eintrag selbst,
+    // den In-place-Editoren wie Markup überschrieben haben. Weicht das Bild vom Original
+    // ab, ersetzt es unser Bild. Danach wird der temporäre Galerie-Eintrag gelöscht.
     val editLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val pe = pendingEdit ?: return@rememberLauncherForActivityResult
         pendingEdit = null
@@ -167,14 +169,14 @@ fun PostDetailEditor(
                     result.data?.data?.let { u ->
                         runCatching { context.contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull()?.let { add(it) }
                     }
-                    runCatching { if (pe.tempFile.exists()) pe.tempFile.readBytes() else null }.getOrNull()?.let { add(it) }
+                    MediaStoreEdit.read(context, pe.galleryUri)?.let { add(it) }
                 }
                 var picked: String? = null
                 for (b in candidates) if (b.isNotEmpty()) {
                     val s = blobStore.put(b)
                     if (s != pe.originalSha) { picked = s; break }
                 }
-                runCatching { pe.tempFile.delete() }
+                MediaStoreEdit.delete(context, pe.galleryUri)
                 picked
             }
             if (newSha != null && pe.index < images.size) {
@@ -194,19 +196,17 @@ fun PostDetailEditor(
             Toast.makeText(context, "Vollbild nicht lokal – erst antippen zum Laden.", Toast.LENGTH_SHORT).show()
             return
         }
-        // Editierbare Kopie unter thumbs/ (vom FileProvider freigegeben, wird nicht gesynct).
-        val tmp = blobStore.thumbFile("_edit_${System.currentTimeMillis()}_$index.png")
-        runCatching { tmp.writeBytes(full) }.onFailure {
+        // Bild als vorläufigen Galerie-Eintrag bereitstellen. Nur über den MediaStore
+        // speichern In-place-Editoren (Markup) zuverlässig zurück; FileProvider-URIs
+        // würden von ihnen beim Öffnen auf 0 Byte gekürzt. Der Eintrag wird nach der
+        // Bearbeitung wieder gelöscht (siehe editLauncher).
+        val uri = MediaStoreEdit.createPending(context, full, "clipsharing_edit_${System.currentTimeMillis()}.png")
+        if (uri == null) {
             Toast.makeText(context, "Konnte Bild nicht vorbereiten.", Toast.LENGTH_SHORT).show(); return
         }
-        val uri = FileProvider.getUriForFile(context, authority, tmp)
-        // Eingabe NUR lesbar freigeben. Sonst öffnen manche Editoren (Markup) die
-        // Quelle beim Start im Schreib-/Truncate-Modus und löschen damit das Bild
-        // (0 Byte -> leerer Canvas). Read-only verhindert das; das Ergebnis kommt über
-        // die Result-URI zurück (Foto-Editor: „Kopie speichern" liefert die neue URI).
         val base = Intent(Intent.ACTION_EDIT).apply {
-            setDataAndType(uri, "image/png")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            setDataAndType(uri, "image/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
         val toLaunch = when {
             target != null -> Intent(base).setComponent(ComponentName(target.pkg, target.cls))
@@ -215,10 +215,10 @@ fun PostDetailEditor(
             }
             else -> base
         }
-        pendingEdit = PendingEdit(index, tmp, sha)
+        pendingEdit = PendingEdit(index, uri, sha)
         runCatching { editLauncher.launch(toLaunch) }.onFailure {
             pendingEdit = null
-            runCatching { tmp.delete() }
+            MediaStoreEdit.delete(context, uri)
             Toast.makeText(context, "Keine App zum Bearbeiten gefunden.", Toast.LENGTH_SHORT).show()
         }
     }
@@ -282,7 +282,8 @@ fun PostDetailEditor(
         ImageViewerScreen(
             blobStore = blobStore,
             sha = sha,
-            title = imageTitles.getOrNull(vi)?.text,
+            // Nur die erste Zeile ist der Titel; Notizen darunter bleiben außen vor.
+            title = imageTitles.getOrNull(vi)?.text?.substringBefore('\n'),
             onShare = { shareImage(sha) },
             onEdit = { force -> launchEdit(vi, images[vi], null, force) },
             onDelete = {
@@ -437,6 +438,9 @@ fun PostDetailEditor(
                             )
                         }
                     }
+                    // Bildbeschreibung wie der Haupttext: kein Rahmen-Label, mehrzeilig.
+                    // Erste Zeile = eigentlicher Bildtitel (für Listen/Vollansicht), der
+                    // Rest sind freie Notizen/Schlagworte.
                     OutlinedTextField(
                         value = imageTitles.getOrElse(index) { TextFieldValue("") },
                         onValueChange = { v ->
@@ -445,10 +449,10 @@ fun PostDetailEditor(
                                 it[index] = v
                             }
                         },
-                        label = { Text("Bildtitel") },
-                        singleLine = true,
+                        placeholder = { Text("Titel (1. Zeile), dann Notizen…") },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 56.dp)
                             .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
                     )
                 }
@@ -460,8 +464,8 @@ fun PostDetailEditor(
 /** Ein Suchtreffer: [target] == -1 -> Haupttext, sonst Index des Bildtitel-Felds. */
 private data class FindHit(val target: Int, val start: Int)
 
-/** Laufende externe Bearbeitung: welches Bild, Temp-Datei und Original-SHA (für Vergleich). */
-private data class PendingEdit(val index: Int, val tempFile: File, val originalSha: String)
+/** Laufende externe Bearbeitung: welches Bild, vorläufiger Galerie-Eintrag und Original-SHA (für Vergleich). */
+private data class PendingEdit(val index: Int, val galleryUri: android.net.Uri, val originalSha: String)
 
 /**
  * Menüeintrag „Bearbeiten" mit Doppelfunktion: Tippen öffnet den Standard-Editor
