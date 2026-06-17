@@ -164,4 +164,14 @@ fun SettingsScreen(
     }
 }
 
-private fun gb(bytes: Long): String = String.format(Locale.GERMANY, "%.2f GB", bytes / 1_073_741_824.0)
+/**
+ * Anzeige in GB mit angepasster Genauigkeit: ab 0,5 GB eine Nachkommastelle,
+ * bei kleineren Mengen so viele Stellen, dass mindestens zwei signifikante
+ * Ziffern sichtbar sind (z. B. 0,0028 GB statt 0,00 GB).
+ */
+private fun gb(bytes: Long): String {
+    val v = bytes / 1_073_741_824.0
+    if (v <= 0.0) return "0 GB"
+    val decimals = if (v >= 0.5) 1 else (Math.floor(-Math.log10(v)).toInt() + 2).coerceIn(2, 9)
+    return String.format(Locale.GERMANY, "%.${decimals}f GB", v)
+}
