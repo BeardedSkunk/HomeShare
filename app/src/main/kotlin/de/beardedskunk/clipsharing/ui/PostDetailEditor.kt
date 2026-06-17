@@ -200,13 +200,13 @@ fun PostDetailEditor(
             Toast.makeText(context, "Konnte Bild nicht vorbereiten.", Toast.LENGTH_SHORT).show(); return
         }
         val uri = FileProvider.getUriForFile(context, authority, tmp)
-        // WICHTIG: kein EXTRA_OUTPUT auf dieselbe URI – manche Editoren (Markup) öffnen
-        // das Ziel sofort im Schreibmodus und truncaten damit die Eingabe (0 Byte ->
-        // leerer Canvas). Wir geben nur die beschreibbare Eingabe; In-Place-Editoren
-        // überschreiben sie beim Speichern, andere liefern die Ergebnis-URI zurück.
+        // Eingabe NUR lesbar freigeben. Sonst öffnen manche Editoren (Markup) die
+        // Quelle beim Start im Schreib-/Truncate-Modus und löschen damit das Bild
+        // (0 Byte -> leerer Canvas). Read-only verhindert das; das Ergebnis kommt über
+        // die Result-URI zurück (Foto-Editor: „Kopie speichern" liefert die neue URI).
         val base = Intent(Intent.ACTION_EDIT).apply {
             setDataAndType(uri, "image/png")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         val toLaunch = when {
             target != null -> Intent(base).setComponent(ComponentName(target.pkg, target.cls))
