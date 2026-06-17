@@ -24,6 +24,9 @@ class FeedRepository(
     private val identity: DeviceIdentity,
 ) : OpSource {
 
+    /** Wird nach jeder LOKALEN Aenderung aufgerufen (nicht beim Sync-Ingest) -> Auto-Sync. */
+    var onLocalChange: (() -> Unit)? = null
+
     // ---------------------------------------------------------------- Feeds
 
     fun createFeed(name: String): Feed {
@@ -86,6 +89,7 @@ class FeedRepository(
         } finally {
             db.endTransaction()
         }
+        onLocalChange?.invoke()
         return version
     }
 

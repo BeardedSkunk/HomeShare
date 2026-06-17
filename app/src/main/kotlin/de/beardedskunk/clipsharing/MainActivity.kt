@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val graph = appGraph
         graph.sync.start()
+        graph.repo.onLocalChange = { graph.autoSync.trigger() }
+        graph.autoSync.start()
         val shared = parseShared(intent)
         setContent {
             ClipTheme {
@@ -44,9 +46,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // App im Vordergrund -> einmal synchronisieren.
+        appGraph.autoSync.trigger()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) appGraph.sync.stop()
+        if (isFinishing) {
+            appGraph.sync.stop()
+            appGraph.autoSync.stop()
+        }
     }
 
     private fun parseShared(intent: Intent?): SharedContent? {
