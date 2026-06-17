@@ -13,3 +13,6 @@
 !debug.keystore
 
 .debug_shots/
+
+# MCP-Server-Konfiguration (lokales Dev-Tooling, nicht eingecheckt)
+.mcp.json

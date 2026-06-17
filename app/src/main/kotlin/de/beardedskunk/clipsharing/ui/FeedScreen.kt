@@ -1,5 +1,6 @@
 package de.beardedskunk.clipsharing.ui
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -43,9 +44,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.data.FeedRepository
@@ -58,6 +61,18 @@ import kotlinx.coroutines.withContext
 @Composable
 fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    fun shareImage(sha: String) {
+        val file = if (blobStore.hasFull(sha)) blobStore.fullFile(sha) else blobStore.thumbFile(sha)
+        if (!file.exists()) return
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
+    }
     var posts by remember { mutableStateOf<List<PostState>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -80,7 +95,13 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     val img = viewingImage
     if (img != null) {
         BackHandler { viewingImage = null }
-        ImageViewerScreen(blobStore = blobStore, sha = img, onBack = { viewingImage = null })
+        // Merge-/Listen-Kontext: nur Teilen, kein Bearbeiten/Löschen, kein (uneindeutiger) Titel.
+        ImageViewerScreen(
+            blobStore = blobStore,
+            sha = img,
+            onBack = { viewingImage = null },
+            onShare = { shareImage(img) },
+        )
         return
     }
 
@@ -125,7 +146,6 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
             blobStore = blobStore,
             feed = feed,
             post = current,
-            onOpenImage = { viewingImage = it },
             onClose = { editing = null; creatingNew = false; reload() },
         )
         return

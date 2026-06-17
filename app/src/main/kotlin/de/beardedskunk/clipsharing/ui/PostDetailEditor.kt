@@ -2,8 +2,8 @@ package de.beardedskunk.clipsharing.ui
 
 import android.content.ComponentName
 import android.content.Intent
-import android.provider.MediaStore
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -80,7 +80,6 @@ fun PostDetailEditor(
     blobStore: BlobStore,
     feed: Feed,
     post: PostState?,
-    onOpenImage: (String) -> Unit,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -153,6 +152,7 @@ fun PostDetailEditor(
     // --- Bild-Aktionen (Long-Press-Menü pro Bild) ---
     val editTargets = remember { imageEditTargets(context) }
     var imageMenuFor by remember { mutableStateOf<Int?>(null) }
+    var viewingIndex by remember { mutableStateOf<Int?>(null) }
     var pendingEdit by remember { mutableStateOf<PendingEdit?>(null) }
     val authority = remember { context.packageName + ".fileprovider" }
 
@@ -200,10 +200,13 @@ fun PostDetailEditor(
             Toast.makeText(context, "Konnte Bild nicht vorbereiten.", Toast.LENGTH_SHORT).show(); return
         }
         val uri = FileProvider.getUriForFile(context, authority, tmp)
+        // WICHTIG: kein EXTRA_OUTPUT auf dieselbe URI – manche Editoren (Markup) öffnen
+        // das Ziel sofort im Schreibmodus und truncaten damit die Eingabe (0 Byte ->
+        // leerer Canvas). Wir geben nur die beschreibbare Eingabe; In-Place-Editoren
+        // überschreiben sie beim Speichern, andere liefern die Ergebnis-URI zurück.
         val base = Intent(Intent.ACTION_EDIT).apply {
             setDataAndType(uri, "image/png")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            putExtra(MediaStore.EXTRA_OUTPUT, uri)
         }
         val toLaunch = when {
             target != null -> Intent(base).setComponent(ComponentName(target.pkg, target.cls))
@@ -268,6 +271,28 @@ fun PostDetailEditor(
             withContext(Dispatchers.IO) { repo.deletePost(feed.id, post.postId) }
             onClose()
         }
+    }
+
+    // Eigene Vollbild-Ansicht mit allen Aktionen (Teilen/Bearbeiten/Löschen) – im
+    // Gegensatz zur Merge-Ansicht ist hier Bearbeiten/Löschen erlaubt.
+    val vi = viewingIndex
+    if (vi != null && vi < images.size) {
+        BackHandler { viewingIndex = null }
+        val sha = images[vi]
+        ImageViewerScreen(
+            blobStore = blobStore,
+            sha = sha,
+            title = imageTitles.getOrNull(vi)?.text,
+            onShare = { shareImage(sha) },
+            onEdit = { force -> launchEdit(vi, images[vi], null, force) },
+            onDelete = {
+                images = images.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
+                imageTitles = imageTitles.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
+                viewingIndex = null
+            },
+            onBack = { viewingIndex = null },
+        )
+        return
     }
 
     Scaffold(
@@ -355,7 +380,7 @@ fun PostDetailEditor(
                             .fillMaxWidth()
                             .heightIn(max = maxImageHeight)
                             .combinedClickable(
-                                onClick = { onOpenImage(sha) },
+                                onClick = { viewingIndex = index },
                                 onLongClick = { imageMenuFor = index },
                             )
                         if (bmp != null) {
@@ -379,8 +404,8 @@ fun PostDetailEditor(
                         }
                         DropdownMenu(expanded = imageMenuFor == index, onDismissRequest = { imageMenuFor = null }) {
                             DropdownMenuItem(
-                                text = { Text("Öffnen zum Anschauen") },
-                                onClick = { imageMenuFor = null; onOpenImage(sha) },
+                                text = { Text("Öffnen") },
+                                onClick = { imageMenuFor = null; viewingIndex = index },
                             )
                             if (editTargets.size in 1..3) {
                                 // Bis zu drei Editoren direkt anbieten.
@@ -453,11 +478,6 @@ private fun EditMenuItem(onTap: () -> Unit, onLongPress: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Text("Bearbeiten")
-        Text(
-            "lang drücken: App wählen",
-            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
