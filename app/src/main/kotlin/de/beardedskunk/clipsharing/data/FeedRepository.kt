@@ -273,7 +273,8 @@ class FeedRepository(
         if (!shown.content.deleted) {
             db.insert("post_fts", null, ContentValues().apply {
                 put("post_id", postId)
-                put("text", shown.content.text)
+                // Bildtitel mit indexieren -> Suche findet auch Titel.
+                put("text", (shown.content.text + " " + shown.content.imageTitles.joinToString(" ")).trim())
             })
         }
     }
