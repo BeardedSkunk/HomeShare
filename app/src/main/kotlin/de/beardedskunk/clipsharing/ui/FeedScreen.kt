@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
@@ -33,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -276,7 +280,34 @@ private fun PostRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 14.dp),
             )
-            for (sha in post.imageHashes.take(3)) {
+            // Aufgaben-Badge (erledigt/gesamt); wenn vorhanden, nur EIN Thumbnail rechts.
+            val tasks = if (post.deleted) null else taskCounts(post.text)
+            if (tasks != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(end = 8.dp),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Text(
+                            " ${tasks.first}/${tasks.second}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+            }
+            val thumbCount = if (tasks != null) 1 else 3
+            for (sha in post.imageHashes.take(thumbCount)) {
                 val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
                 Box(
                     Modifier
