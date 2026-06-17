@@ -41,5 +41,10 @@
                 android:resource="@xml/file_paths" />
         </provider>
     </application>
-
+	<queries>
+	  <intent>
+		<action android:name="android.intent.action.EDIT" />
+		<data android:mimeType="image/*" />
+	  </intent>
+	</queries>
 </manifest>
