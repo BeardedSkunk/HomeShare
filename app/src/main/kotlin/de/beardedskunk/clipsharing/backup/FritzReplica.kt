@@ -87,7 +87,9 @@ class FritzReplica(
                 .put("version", 1)
                 .put("passphrase", cfg.passphrase)
                 .put("createdBy", cfg.deviceId)
-            storeBytes(c, path, obj.toString(2).toByteArray(Charsets.UTF_8))
+            if (!storeBytes(c, path, obj.toString(2).toByteArray(Charsets.UTF_8))) {
+                error("group.json konnte nicht geschrieben werden (Reply ${c.replyCode})")
+            }
             Log.i(TAG, "group.json neu angelegt (Gruppe beansprucht)")
         } else {
             val stored = runCatching { JSONObject(existing).optString("passphrase") }.getOrDefault("")
@@ -235,27 +237,36 @@ class FritzReplica(
     }
 
     private fun retrieveBytes(c: FTPClient, path: String): ByteArray? {
-        val stream = c.retrieveFileStream(path) ?: return null
-        return try {
-            val out = ByteArrayOutputStream()
-            stream.copyTo(out)
-            stream.close()
-            if (c.completePendingCommand()) out.toByteArray() else null
-        } catch (e: Exception) {
-            null
+        // Mit Retry gegen sporadische FTPS-Datenkanal-Abbrüche (z. B. Reply 426).
+        repeat(MAX_TRIES) { attempt ->
+            val result = runCatching {
+                val stream = c.retrieveFileStream(path) ?: return null // Datei existiert nicht
+                val out = ByteArrayOutputStream()
+                stream.copyTo(out)
+                stream.close()
+                if (c.completePendingCommand()) out.toByteArray() else null
+            }.getOrNull()
+            if (result != null) return result
+            Log.w(TAG, "retrieve Versuch ${attempt + 1} fehlgeschlagen für $path (Reply ${c.replyCode})")
         }
+        return null
     }
 
     private fun retrieveText(c: FTPClient, path: String): String? =
         retrieveBytes(c, path)?.let { String(it, Charsets.UTF_8) }
 
     private fun storeBytes(c: FTPClient, path: String, bytes: ByteArray): Boolean {
-        val ok = ByteArrayInputStream(bytes).use { c.storeFile(path, it) }
-        if (!ok) Log.w(TAG, "storeFile fehlgeschlagen für $path (Reply ${c.replyCode})")
-        return ok
+        // Mit Retry gegen sporadische FTPS-Datenkanal-Abbrüche (Reply 426).
+        repeat(MAX_TRIES) { attempt ->
+            val ok = runCatching { ByteArrayInputStream(bytes).use { c.storeFile(path, it) } }.getOrDefault(false)
+            if (ok) return true
+            Log.w(TAG, "storeFile Versuch ${attempt + 1} fehlgeschlagen für $path (Reply ${c.replyCode})")
+        }
+        return false
     }
 
     companion object {
         private const val TAG = "FritzReplica"
+        private const val MAX_TRIES = 3
     }
 }
