@@ -24,6 +24,8 @@ class SyncTest {
             ops[op.versionId] = op
             return true
         }
+
+        override fun displayedImageHashes(): Set<String> = emptySet()
     }
 
     private fun op(device: String, seq: Long, text: String, parents: Set<String> = emptySet()): OpDto {

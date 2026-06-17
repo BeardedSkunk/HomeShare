@@ -148,6 +148,9 @@ interface OpSource {
 
     /** Speist eine empfangene Op ein. @return true, wenn neu. */
     fun ingestOp(op: OpDto): Boolean
+
+    /** Aktuell angezeigte Bild-Hashes (fuer gezielten Blob-Abgleich). */
+    fun displayedImageHashes(): Set<String>
 }
 
 data class SyncResult(val pulled: Int, val pushed: Int)

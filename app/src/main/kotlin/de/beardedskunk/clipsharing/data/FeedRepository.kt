@@ -28,31 +28,37 @@ class FeedRepository(
     /** Wird nach jeder LOKALEN Aenderung aufgerufen (nicht beim Sync-Ingest) -> Auto-Sync. */
     var onLocalChange: (() -> Unit)? = null
 
+    @Volatile
+    private var migrated = false
+
+    private companion object {
+        /** Reservierte Feed-Id: darunter liegen die Feed-Metadaten als Ops. */
+        const val FEEDS_FEED = "__feeds__"
+    }
+
     // ---------------------------------------------------------------- Feeds
 
+    // Feeds reisen als Ops im selben Log (feedId == FEEDS_FEED, postId == die echte
+    // Feed-Id, text == Feed-Name) -> sie synchronisieren ueber Box UND Peers ohne
+    // zusaetzliche Transport-Logik.
+
     fun createFeed(name: String): Feed {
-        val hlc = identity.nextHlc()
-        val feed = Feed(UUID.randomUUID().toString(), name.trim(), hlc, deleted = false)
-        val cv = ContentValues().apply {
-            put("feed_id", feed.id)
-            put("name", feed.name)
-            put("created_wall", hlc.wallMillis)
-            put("created_counter", hlc.counter)
-            put("deleted", 0)
-        }
-        db.insertOrThrow("feeds", null, cv)
-        return feed
+        ensureMigrated()
+        val feedId = UUID.randomUUID().toString()
+        val v = author(FEEDS_FEED, feedId, emptySet(), PostContent(text = name.trim()))
+        return Feed(feedId, name.trim(), v.hlc, deleted = false)
     }
 
     fun renameFeed(feedId: String, name: String) {
-        db.update("feeds", ContentValues().apply { put("name", name.trim()) }, "feed_id = ?", arrayOf(feedId))
+        author(FEEDS_FEED, feedId, currentHeads(feedId), PostContent(text = name.trim()))
     }
 
     fun deleteFeed(feedId: String) {
-        db.update("feeds", ContentValues().apply { put("deleted", 1) }, "feed_id = ?", arrayOf(feedId))
+        author(FEEDS_FEED, feedId, currentHeads(feedId), PostContent(text = "", deleted = true))
     }
 
     fun listFeeds(): List<Feed> {
+        ensureMigrated()
         val out = ArrayList<Feed>()
         db.rawQuery(
             "SELECT feed_id, name, created_wall, created_counter, deleted FROM feeds WHERE deleted = 0 ORDER BY created_wall, created_counter",
@@ -96,7 +102,7 @@ class FeedRepository(
         db.beginTransaction()
         try {
             persistOp(version, feedId, seq)
-            rebuildPostState(feedId, postId)
+            if (feedId == FEEDS_FEED) rebuildFeedState(postId) else rebuildPostState(feedId, postId)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -114,7 +120,7 @@ class FeedRepository(
         db.beginTransaction()
         try {
             persistOp(version, feedId, seq)
-            rebuildPostState(feedId, version.postId)
+            if (feedId == FEEDS_FEED) rebuildFeedState(version.postId) else rebuildPostState(feedId, version.postId)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -124,6 +130,7 @@ class FeedRepository(
 
     /** Versions-Vektor dieses Geraets: hoechste bekannte Seq je Autor-Geraet. */
     override fun versionVector(): Map<String, Long> {
+        ensureMigrated()
         val out = HashMap<String, Long>()
         db.rawQuery("SELECT device_id, MAX(seq) FROM ops GROUP BY device_id", null).use { c ->
             while (c.moveToNext()) out[c.getString(0)] = c.getLong(1)
@@ -133,6 +140,7 @@ class FeedRepository(
 
     /** Alle lokalen Ops, die der Gegenseite (gegeben deren VV) fehlen. */
     override fun missingFor(remote: Map<String, Long>): List<OpDto> {
+        ensureMigrated()
         val out = ArrayList<OpDto>()
         db.rawQuery(
             "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles " +
@@ -268,6 +276,50 @@ class FeedRepository(
                 put("text", shown.content.text)
             })
         }
+    }
+
+    /** Materialisiert den Feed-Stand aus dem Feed-Op-DAG in die feeds-Tabelle. */
+    private fun rebuildFeedState(feedId: String) {
+        val post = loadPost(feedId)
+        val heads = post.heads()
+        if (heads.isEmpty()) return
+        val shown = heads.last()
+        val root = post.allVersions().firstOrNull { it.parents.isEmpty() } ?: shown
+        val cv = ContentValues().apply {
+            put("feed_id", feedId)
+            put("name", shown.content.text)
+            put("created_wall", root.hlc.wallMillis)
+            put("created_counter", root.hlc.counter)
+            put("deleted", if (shown.content.deleted) 1 else 0)
+        }
+        db.insertWithOnConflict("feeds", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    /** Einmalige Migration: bestehende (alt angelegte) Feeds bekommen einen Feed-Op, damit sie syncen. */
+    @Synchronized
+    private fun ensureMigrated() {
+        if (migrated) return
+        migrated = true
+        val feeds = ArrayList<Pair<String, String>>()
+        db.rawQuery("SELECT feed_id, name FROM feeds", null).use { c ->
+            while (c.moveToNext()) feeds += c.getString(0) to c.getString(1)
+        }
+        for ((fid, name) in feeds) {
+            val hasOp = db.rawQuery(
+                "SELECT 1 FROM ops WHERE feed_id = ? AND post_id = ? LIMIT 1",
+                arrayOf(FEEDS_FEED, fid),
+            ).use { it.moveToFirst() }
+            if (!hasOp) author(FEEDS_FEED, fid, emptySet(), PostContent(text = name))
+        }
+    }
+
+    /** Alle aktuell angezeigten Bild-Hashes (fuer gezielten Blob-Pull). */
+    override fun displayedImageHashes(): Set<String> {
+        val out = HashSet<String>()
+        db.rawQuery("SELECT image_hashes FROM post_current WHERE deleted = 0", null).use { c ->
+            while (c.moveToNext()) out += splitCsv(c.getString(0))
+        }
+        return out
     }
 
     private fun queryPostStates(where: String, args: Array<String>): List<PostState> {

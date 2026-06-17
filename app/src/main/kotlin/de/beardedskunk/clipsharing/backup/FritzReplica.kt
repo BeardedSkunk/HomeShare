@@ -27,7 +27,7 @@ data class FritzConfig(
     val useFtps: Boolean = false,
 )
 
-data class ReplicaResult(val pulledOps: Int, val pushedOps: Int, val pushedBlobs: Int)
+data class ReplicaResult(val pulledOps: Int, val pushedOps: Int, val pushedBlobs: Int, val pulledBlobs: Int)
 
 /**
  * Passive Replik auf der FRITZ!Box ueber FTP. **Alle Dateien liegen im Klartext**
@@ -59,8 +59,9 @@ class FritzReplica(
             val pulled = pullOps(c)
             val pushedOps = pushOps(c)
             val pushedBlobs = pushBlobs(c)
-            Log.i(TAG, "Sync fertig: pulled=$pulled pushedOps=$pushedOps pushedBlobs=$pushedBlobs")
-            return ReplicaResult(pulled, pushedOps, pushedBlobs)
+            val pulledBlobs = pullBlobs(c)
+            Log.i(TAG, "Sync fertig: pulledOps=$pulled pushedOps=$pushedOps pushedBlobs=$pushedBlobs pulledBlobs=$pulledBlobs")
+            return ReplicaResult(pulled, pushedOps, pushedBlobs, pulledBlobs)
         } finally {
             runCatching { c.logout() }
             runCatching { c.disconnect() }
@@ -139,6 +140,18 @@ class FritzReplica(
         }
         Log.i(TAG, "pushBlobs: $pushed neue Bilder")
         return pushed
+    }
+
+    /** Laedt fehlende, aktuell angezeigte Bilder von der Box (erzeugt dabei Thumbnails). */
+    private fun pullBlobs(c: FTPClient): Int {
+        var pulled = 0
+        for (sha in source.displayedImageHashes()) {
+            if (blobStore.hasFull(sha)) continue
+            val bytes = retrieveBytes(c, "$blobsDir/$sha") ?: continue
+            runCatching { blobStore.putWithSha(sha, bytes) }.onSuccess { pulled++ }
+        }
+        Log.i(TAG, "pullBlobs: $pulled neue Bilder geladen")
+        return pulled
     }
 
     private fun remoteVersionVector(c: FTPClient): Map<String, Long> {
