@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +86,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
 
     val share = pendingShare
     if (share != null) {
+        BackHandler { pendingShare = null }
         SharePickerScreen(
             repo = graph.repo,
             blobStore = graph.blobStore,
@@ -96,6 +98,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     }
 
     if (showSettings) {
+        BackHandler { showSettings = false }
         SettingsScreen(
             settings = graph.settings,
             identity = graph.identity,
