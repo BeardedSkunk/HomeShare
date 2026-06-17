@@ -137,6 +137,13 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             onOpenFeed = { openFeed = it },
         )
     } else {
-        FeedScreen(repo = graph.repo, blobStore = graph.blobStore, feed = feed, onBack = { openFeed = null })
+        FeedScreen(
+            repo = graph.repo,
+            blobStore = graph.blobStore,
+            feed = feed,
+            settings = graph.settings,
+            onRequestCalendarSync = { graph.calendarSync.requestSync() },
+            onBack = { openFeed = null },
+        )
     }
 }

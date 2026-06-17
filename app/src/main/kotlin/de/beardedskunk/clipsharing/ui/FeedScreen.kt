@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -37,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -63,9 +65,17 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: () -> Unit) {
+fun FeedScreen(
+    repo: FeedRepository,
+    blobStore: BlobStore,
+    feed: Feed,
+    settings: de.beardedskunk.clipsharing.data.Settings,
+    onRequestCalendarSync: () -> Unit,
+    onBack: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var calEnabled by remember(feed.id) { mutableStateOf(settings.isCalendarFeedEnabled(feed.id)) }
     fun shareImage(sha: String) {
         val file = if (blobStore.hasFull(sha)) blobStore.fullFile(sha) else blobStore.thumbFile(sha)
         if (!file.exists()) return
@@ -211,13 +221,30 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
             }
         },
     ) { padding ->
-        if (posts.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(if (searching) "Keine Treffer." else "Noch keine Einträge. Mit „Neuer Eintrag“ beginnen.")
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (feed.calendar) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("In Android-Kalender übernehmen", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = calEnabled,
+                        onCheckedChange = {
+                            calEnabled = it
+                            settings.setCalendarFeedEnabled(feed.id, it)
+                            onRequestCalendarSync()
+                        },
+                    )
+                }
             }
-        } else {
-            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-                items(posts, key = { it.postId }) { post ->
+            if (posts.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(if (searching) "Keine Treffer." else "Noch keine Einträge. Mit „Neuer Eintrag“ beginnen.")
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(posts, key = { it.postId }) { post ->
                     if (feed.calendar) {
                         CalendarRow(
                             post = post,
@@ -234,6 +261,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
                         )
                     }
                 }
+            }
             }
         }
     }
