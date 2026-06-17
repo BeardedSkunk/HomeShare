@@ -110,9 +110,12 @@ object OpCodec {
         if (i < 0) return emptyList()
         val count = s.substring(0, i).toIntOrNull() ?: 0
         if (count == 0) return emptyList()
+        // Bei count>0 IMMER splitten: "1;" -> rest "" -> [""] (eine leere Titel-Zeile).
+        // Frueher wurde rest=="" als leere Liste behandelt -> ein einzelner leerer Titel
+        // ging verloren, wodurch sich die versionId nach DB-Roundtrip aenderte
+        // (Phantom-Konflikte bei Bildern ohne Titel).
         val rest = s.substring(i + 1)
-        val tokens = if (rest.isEmpty()) emptyList() else rest.split(',')
-        return tokens.map { unb64(it) }
+        return rest.split(',').map { unb64(it) }
     }
 
     /** Ganze Op als eine einzelne (base64-)Zeile -> bequem fuers Stream-Protokoll. */
