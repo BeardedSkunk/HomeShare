@@ -131,11 +131,10 @@ class FritzReplica(
 
     /** Verbindet die Box (FTPES nur, wenn [FritzConfig.useFtps]); sonst Klartext-FTP. */
     fun connect(): FTPClient {
-        val c: FTPClient = if (cfg.useFtps) {
-            FTPSClient(false).also { runCatching { it.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.1", "TLSv1") } }
-        } else {
-            FTPClient()
-        }
+        // FTPS nutzt die vom Android-System unterstuetzten Protokolle (i. d. R. TLS 1.2/1.3).
+        // Aeltere Versionen (TLS 1.0/1.1) hat Android entfernt und lassen sich nicht erzwingen
+        // -> mit alten FRITZ!Box-FTPS-Servern ggf. nicht nutzbar; dann Klartext-FTP verwenden.
+        val c: FTPClient = if (cfg.useFtps) FTPSClient(false) else FTPClient()
         c.connectTimeout = 8000
         c.connect(cfg.host, cfg.port)
         if (!FTPReply.isPositiveCompletion(c.replyCode)) {
