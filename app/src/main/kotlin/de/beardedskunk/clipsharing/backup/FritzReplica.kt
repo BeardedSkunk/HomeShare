@@ -131,14 +131,17 @@ class FritzReplica(
     }
 
     private fun pushBlobs(c: FTPClient): Int {
-        val remote = (c.listNames(blobsDir) ?: emptyArray()).map { it.substringAfterLast('/') }.toHashSet()
+        // Groessen-verifiziert: vorhandene, aber unvollstaendige Reste (z. B. nach
+        // 426-Abbruch) werden geloescht und neu hochgeladen.
+        val remote = (c.listFiles(blobsDir) ?: emptyArray()).filter { it.isFile }.associate { it.name to it.size }
         var pushed = 0
-        for ((sha, _) in blobStore.fullSizes()) {
-            if (sha in remote) continue
+        for ((sha, size) in blobStore.fullSizes()) {
+            if (remote[sha] == size) continue
+            if (remote.containsKey(sha)) runCatching { c.deleteFile("$blobsDir/$sha") }
             val bytes = blobStore.readFull(sha) ?: continue
-            if (storeBytes(c, "$blobsDir/$sha", bytes)) pushed++
+            if (storeBytes(c, "$blobsDir/$sha", bytes)) pushed++ else runCatching { c.deleteFile("$blobsDir/$sha") }
         }
-        Log.i(TAG, "pushBlobs: $pushed neue Bilder")
+        Log.i(TAG, "pushBlobs: $pushed Bilder (neu/repariert)")
         return pushed
     }
 
@@ -148,7 +151,13 @@ class FritzReplica(
         for (sha in source.displayedImageHashes()) {
             if (blobStore.hasFull(sha)) continue
             val bytes = retrieveBytes(c, "$blobsDir/$sha") ?: continue
-            runCatching { blobStore.putWithSha(sha, bytes) }.onSuccess { pulled++ }
+            runCatching { blobStore.putWithSha(sha, bytes) }
+                .onSuccess { pulled++ }
+                .onFailure {
+                    // Unvollstaendige/falsche Box-Datei entfernen, damit der Eigentuemer sie neu pusht.
+                    Log.w(TAG, "Blob $sha unvollstaendig auf Box -> geloescht")
+                    runCatching { c.deleteFile("$blobsDir/$sha") }
+                }
         }
         Log.i(TAG, "pullBlobs: $pulled neue Bilder geladen")
         return pulled
