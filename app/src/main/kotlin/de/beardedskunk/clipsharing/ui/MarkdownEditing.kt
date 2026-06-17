@@ -50,9 +50,15 @@ fun applyCode(v: TextFieldValue): TextFieldValue {
     val t = v.text
     val sel = t.substring(start, end)
     return if (start != end && sel.contains('\n')) {
-        val block = "```\n" + sel + "\n```"
-        val nt = t.substring(0, start) + block + t.substring(end)
-        TextFieldValue(nt, TextRange(start + 4, start + 4 + sel.length))
+        // ```-Zäune müssen auf eigenen Zeilen stehen. Angebrochene Zeilen vor/nach der
+        // Auswahl bleiben außerhalb des Blocks; ggf. Zeilenumbruch ergänzen.
+        val prefix = t.substring(0, start)
+        val suffix = t.substring(end)
+        val open = (if (prefix.isNotEmpty() && !prefix.endsWith("\n")) "\n" else "") + "```\n"
+        val close = "\n```" + (if (suffix.isNotEmpty() && !suffix.startsWith("\n")) "\n" else "")
+        val nt = prefix + open + sel + close + suffix
+        val selStart = prefix.length + open.length
+        TextFieldValue(nt, TextRange(selStart, selStart + sel.length))
     } else {
         wrapSelection(v, "`")
     }
@@ -145,19 +151,27 @@ fun moveLines(v: TextFieldValue, up: Boolean): TextFieldValue {
     }
     val first = lineOf(selStart)
     val last = lineOf(selEnd)
-    if (up && first == 0) return v
+    // Zeile 0 ist der Titel und bleibt oben: nicht über sie hinaus nach oben schieben.
+    if (up && first <= 1) return v
     if (!up && last == lines.lastIndex) return v
+    val newFirst: Int
+    val newLast: Int
     if (up) {
-        val moved = lines.removeAt(first - 1)
-        lines.add(last, moved)
+        val moved = lines.removeAt(first - 1); lines.add(last, moved)
+        newFirst = first - 1; newLast = last - 1
     } else {
-        val moved = lines.removeAt(last + 1)
-        lines.add(first, moved)
+        val moved = lines.removeAt(last + 1); lines.add(first, moved)
+        newFirst = first + 1; newLast = last + 1
     }
     val nt = lines.joinToString("\n")
-    // Auswahl grob mitführen: an den Anfang des verschobenen Blocks.
-    val newFirst = if (up) first - 1 else first + 1
-    var off = 0
-    for (idx in 0 until newFirst) off += lines[idx].length + 1
-    return TextFieldValue(nt, TextRange(off))
+    // Markierung erhalten: den verschobenen Zeilenblock weiter selektieren,
+    // damit man ihn ohne Neu-Markieren um mehrere Zeilen bewegen kann.
+    var startOff = 0
+    for (idx in 0 until newFirst) startOff += lines[idx].length + 1
+    var endOff = startOff
+    for (idx in newFirst..newLast) {
+        endOff += lines[idx].length
+        if (idx < newLast) endOff += 1
+    }
+    return TextFieldValue(nt, TextRange(startOff, endOff))
 }

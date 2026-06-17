@@ -101,4 +101,28 @@ class MarkdownEditingTest {
         val r = moveLines(v, up = false)
         assertEquals("Titel\na\nb", r.text)
     }
+
+    @Test fun moveLines_keepsSelectionOnMovedBlock() {
+        // "Titel\na\nb\nc"; Zeile "b" (Index 2) markiert -> nach oben -> bleibt markiert.
+        val v = TextFieldValue("Titel\na\nb\nc", TextRange(8, 9))
+        val r = moveLines(v, up = true)
+        assertEquals("Titel\nb\na\nc", r.text)
+        assertEquals(6, r.selection.start)
+        assertEquals(7, r.selection.end)
+    }
+
+    @Test fun moveLines_doesNotCrossTitleLine() {
+        // Erste Körperzeile darf nicht über den Titel (Zeile 0) wandern.
+        val v = TextFieldValue("Titel\na\nb", TextRange(6, 7))
+        assertEquals("Titel\na\nb", moveLines(v, up = true).text)
+    }
+
+    @Test fun applyCode_putsFencesOnOwnLinesForPartialLines() {
+        val t = "vorher UND\nmitte\nENDE rest"
+        val start = t.indexOf("UND")
+        val end = t.indexOf(" rest")
+        val v = TextFieldValue(t, TextRange(start, end))
+        val r = applyCode(v)
+        assertEquals("vorher \n```\nUND\nmitte\nENDE\n```\n rest", r.text)
+    }
 }
