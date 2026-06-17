@@ -21,6 +21,7 @@ data class PostState(
     val headVersionId: String,
     val text: String,
     val imageHashes: List<String>,
+    val imageTitles: List<String> = emptyList(),
     val deleted: Boolean,
     val conflicted: Boolean,
     val created: Hlc,

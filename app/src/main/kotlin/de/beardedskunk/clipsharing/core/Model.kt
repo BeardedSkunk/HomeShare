@@ -28,10 +28,14 @@ data class Hlc(val wallMillis: Long, val counter: Int) : Comparable<Hlc> {
     }
 }
 
-/** Inhalt einer Post-Version. [deleted] = Tombstone (geloeschte Version). */
+/**
+ * Inhalt einer Post-Version. [deleted] = Tombstone (geloeschte Version).
+ * [imageTitles] ist (sofern gesetzt) parallel zu [imageHashes] – pro Bild ein Titel.
+ */
 data class PostContent(
     val text: String = "",
     val imageHashes: List<String> = emptyList(),
+    val imageTitles: List<String> = emptyList(),
     val deleted: Boolean = false,
 )
 
@@ -60,6 +64,10 @@ class PostVersion(
         append("images:")
         content.imageHashes.forEach { append(it).append(',') }
         append('\n')
+        // Bild-Titel laengenpraefixiert (Teil des Inhalts -> fliessen in die versionId,
+        // damit Titel-Aenderungen versioniert/gesynct werden).
+        append("titles:").append(content.imageTitles.size).append('\n')
+        content.imageTitles.forEach { append(it.length).append(':').append(it).append('\n') }
         // Text zuletzt und laengenpraefixiert, damit nichts ueber Trenner kollidiert.
         append("text:").append(content.text.length).append(':').append(content.text)
     }
