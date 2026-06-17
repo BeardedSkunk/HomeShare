@@ -61,6 +61,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    var deviceName by remember { mutableStateOf(identity.deviceName) }
     var groupName by remember { mutableStateOf(identity.groupName) }
     var passphrase by remember { mutableStateOf(settings.groupPassphrase) }
     var host by remember { mutableStateOf(settings.fritzHost) }
@@ -84,6 +85,7 @@ fun SettingsScreen(
     }
 
     fun save() {
+        identity.deviceName = deviceName.trim().ifBlank { identity.deviceName }
         identity.groupName = groupName.trim().ifBlank { identity.groupName }
         settings.groupPassphrase = passphrase
         settings.fritzHost = host.trim()
@@ -111,6 +113,12 @@ fun SettingsScreen(
             Modifier.fillMaxSize().padding(padding).imePadding().padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Text("Dieses Gerät", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                deviceName, { deviceName = it }, label = { Text("Gerätename (z. B. F101, Pixel)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Text("Gruppe (nur Geräte mit gleicher Passphrase syncen)", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(groupName, { groupName = it }, label = { Text("Gruppenname") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(

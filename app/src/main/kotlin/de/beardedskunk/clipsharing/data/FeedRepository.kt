@@ -101,7 +101,7 @@ class FeedRepository(
         val seq = identity.nextSeq()
         db.beginTransaction()
         try {
-            persistOp(version, feedId, seq)
+            persistOp(version, feedId, seq, identity.deviceName)
             if (feedId == FEEDS_FEED) rebuildFeedState(postId) else rebuildPostState(feedId, postId)
             db.setTransactionSuccessful()
         } finally {
@@ -114,12 +114,12 @@ class FeedRepository(
     // ------------------------------------------------------------ Sync ingest
 
     /** Speist eine beim Sync empfangene Version ein. @return true, wenn neu. */
-    fun ingest(version: PostVersion, feedId: String, seq: Long): Boolean {
+    fun ingest(version: PostVersion, feedId: String, seq: Long, deviceName: String = ""): Boolean {
         if (opExists(version.versionId)) return false
         identity.observe(version.hlc)
         db.beginTransaction()
         try {
-            persistOp(version, feedId, seq)
+            persistOp(version, feedId, seq, deviceName)
             if (feedId == FEEDS_FEED) rebuildFeedState(version.postId) else rebuildPostState(feedId, version.postId)
             db.setTransactionSuccessful()
         } finally {
@@ -143,7 +143,7 @@ class FeedRepository(
         ensureMigrated()
         val out = ArrayList<OpDto>()
         db.rawQuery(
-            "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles " +
+            "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles, device_name " +
                 "FROM ops ORDER BY device_id, seq",
             null,
         ).use { c ->
@@ -164,6 +164,7 @@ class FeedRepository(
                     parents = splitCsv(c.getString(7)),
                     imageHashes = splitCsv(c.getString(10)),
                     imageTitles = OpCodec.decodeTitles(c.getString(11)),
+                    deviceName = c.getString(12) ?: "",
                 )
             }
         }
@@ -173,7 +174,7 @@ class FeedRepository(
     /** Speist eine beim Sync empfangene Op (Wire-DTO) ein; verwirft inkonsistente. */
     override fun ingestOp(op: OpDto): Boolean {
         if (!op.isConsistent()) return false
-        return ingest(op.toVersion(), op.feedId, op.seq)
+        return ingest(op.toVersion(), op.feedId, op.seq, op.deviceName)
     }
 
     // -------------------------------------------------------------- Reading
@@ -209,7 +210,7 @@ class FeedRepository(
     private fun opExists(versionId: String): Boolean =
         db.rawQuery("SELECT 1 FROM ops WHERE version_id = ? LIMIT 1", arrayOf(versionId)).use { it.moveToFirst() }
 
-    private fun persistOp(v: PostVersion, feedId: String, seq: Long) {
+    private fun persistOp(v: PostVersion, feedId: String, seq: Long, deviceName: String) {
         val cv = ContentValues().apply {
             put("version_id", v.versionId)
             put("feed_id", feedId)
@@ -223,8 +224,22 @@ class FeedRepository(
             put("text", v.content.text)
             put("image_hashes", v.content.imageHashes.joinToString(","))
             put("image_titles", OpCodec.encodeTitles(v.content.imageTitles))
+            put("device_name", deviceName)
         }
         db.insertWithOnConflict("ops", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    /**
+     * Karte deviceId -> menschlicher Name (juengster bekannter Name je Geraet).
+     * Fuer die Konflikt-Ansicht, damit dort "F101"/"Pixel" statt Id-Stummel stehen.
+     */
+    fun deviceNames(): Map<String, String> {
+        val out = HashMap<String, String>()
+        db.rawQuery(
+            "SELECT device_id, device_name FROM ops WHERE device_name <> '' ORDER BY seq",
+            null,
+        ).use { c -> while (c.moveToNext()) out[c.getString(0)] = c.getString(1) }
+        return out
     }
 
     private fun loadPost(postId: String): Post {

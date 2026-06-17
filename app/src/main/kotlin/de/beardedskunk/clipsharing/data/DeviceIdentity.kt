@@ -23,6 +23,15 @@ class DeviceIdentity(context: Context) {
         }
 
     /**
+     * Menschlich lesbarer Geraetename (z. B. "F101", "Pixel"). Reist als Metadatum
+     * mit jeder Op mit, damit die Konflikt-Ansicht echte Namen statt Id-Stummeln
+     * zeigen kann. Standard: das Geraetemodell; in den Einstellungen aenderbar.
+     */
+    var deviceName: String
+        get() = prefs.getString(KEY_DEVICE_NAME, null) ?: android.os.Build.MODEL ?: "Gerät"
+        set(value) { prefs.edit().putString(KEY_DEVICE_NAME, value).apply() }
+
+    /**
      * Name der Geraetegruppe. Aktuell eine feste Standardgruppe; spaeter per
      * QR-/Passphrase-Pairing (siehe Plan). Nur Geraete derselben Gruppe syncen.
      */
@@ -70,6 +79,7 @@ class DeviceIdentity(context: Context) {
     companion object {
         private const val DEFAULT_GROUP = "meine-gruppe"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_GROUP = "group_name"
         private const val KEY_SEQ = "seq"
         private const val KEY_HLC_WALL = "hlc_wall"
