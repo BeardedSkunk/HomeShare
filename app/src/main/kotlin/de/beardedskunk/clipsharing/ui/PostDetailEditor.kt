@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -78,8 +79,9 @@ fun PostDetailEditor(
 
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
     var images by remember { mutableStateOf(post?.imageHashes ?: emptyList()) }
+    // Bildtitel als TextFieldValue, damit die Suche eine Auswahl/den Cursor setzen kann.
     var imageTitles by remember {
-        mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> post?.imageTitles?.getOrNull(i) ?: "" })
+        mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> TextFieldValue(post?.imageTitles?.getOrNull(i) ?: "") })
     }
     // Gespeicherter Stand (fuer gruener/grauer Haken) + aktuelle Post-Id (fuer Folge-Speicherungen).
     var currentPostId by remember { mutableStateOf(post?.postId) }
@@ -92,18 +94,36 @@ fun PostDetailEditor(
     var findQuery by remember { mutableStateOf("") }
     var matchIdx by remember { mutableStateOf(0) }
     val focusRequester = remember { FocusRequester() }
+    // Fokus-Anker je Bildtitel-Feld (Neuanlage bei Aenderung der Bildanzahl -> Felder neu verbunden).
+    val titleFocusers = remember(images.size) { List(images.size) { FocusRequester() } }
 
-    val matches: List<Int> = remember(tfv.text, findQuery) {
-        if (findQuery.isBlank()) emptyList() else findAllMatches(tfv.text, findQuery)
+    // Treffer ueber Text UND Bildtitel: target == -1 -> Haupttext, sonst Bildtitel-Index.
+    val matches: List<FindHit> = remember(tfv.text, imageTitles, findQuery) {
+        if (findQuery.isBlank()) {
+            emptyList()
+        } else {
+            buildList {
+                findAllMatches(tfv.text, findQuery).forEach { add(FindHit(-1, it)) }
+                imageTitles.forEachIndexed { i, t -> findAllMatches(t.text, findQuery).forEach { add(FindHit(i, it)) } }
+            }
+        }
     }
 
     fun jumpTo(index: Int) {
         if (matches.isEmpty()) return
         val i = ((index % matches.size) + matches.size) % matches.size
         matchIdx = i
-        val start = matches[i]
-        tfv = tfv.copy(selection = TextRange(start, start + findQuery.length))
-        focusRequester.requestFocus()
+        val hit = matches[i]
+        val range = TextRange(hit.start, hit.start + findQuery.length)
+        if (hit.target < 0) {
+            tfv = tfv.copy(selection = range)
+            focusRequester.requestFocus()
+        } else {
+            imageTitles = imageTitles.toMutableList().also {
+                if (hit.target < it.size) it[hit.target] = it[hit.target].copy(selection = range)
+            }
+            titleFocusers.getOrNull(hit.target)?.requestFocus()
+        }
     }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -114,7 +134,7 @@ fun PostDetailEditor(
                 }
                 if (sha != null && sha !in images) {
                     images = images + sha
-                    imageTitles = imageTitles + ""
+                    imageTitles = imageTitles + TextFieldValue("")
                 }
             }
         }
@@ -124,7 +144,7 @@ fun PostDetailEditor(
     fun save() {
         val text = tfv.text
         val imgs = images
-        val titles = imageTitles
+        val titles = imageTitles.map { it.text }
         scope.launch {
             val pid = currentPostId
             val newId = withContext(Dispatchers.IO) {
@@ -142,7 +162,7 @@ fun PostDetailEditor(
         }
     }
 
-    val dirty = tfv.text != savedText || images != savedImages || imageTitles != savedTitles
+    val dirty = tfv.text != savedText || images != savedImages || imageTitles.map { it.text } != savedTitles
 
     fun delete() {
         if (post == null) { onClose(); return }
@@ -176,10 +196,13 @@ fun PostDetailEditor(
                         }
                     }
                     IconButton(onClick = { save() }) {
+                        // Grau bei lokalen Aenderungen; gruen UND groesser/dicker, sobald der
+                        // angezeigte Stand gespeichert ist (faellt deutlicher auf).
                         Icon(
                             Icons.Filled.Check,
                             contentDescription = "Speichern",
                             tint = if (dirty) androidx.compose.ui.graphics.Color.Gray else androidx.compose.ui.graphics.Color(0xFF2E7D32),
+                            modifier = if (dirty) Modifier.size(24.dp) else Modifier.size(34.dp),
                         )
                     }
                 },
@@ -232,7 +255,7 @@ fun PostDetailEditor(
                         if (bmp != null) {
                             Image(
                                 bitmap = bmp,
-                                contentDescription = imageTitles.getOrNull(index),
+                                contentDescription = imageTitles.getOrNull(index)?.text,
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -253,22 +276,27 @@ fun PostDetailEditor(
                         }
                     }
                     OutlinedTextField(
-                        value = imageTitles.getOrElse(index) { "" },
+                        value = imageTitles.getOrElse(index) { TextFieldValue("") },
                         onValueChange = { v ->
                             imageTitles = imageTitles.toMutableList().also {
-                                while (it.size <= index) it.add("")
+                                while (it.size <= index) it.add(TextFieldValue(""))
                                 it[index] = v
                             }
                         },
                         label = { Text("Bildtitel") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
                     )
                 }
             }
         }
     }
 }
+
+/** Ein Suchtreffer: [target] == -1 -> Haupttext, sonst Index des Bildtitel-Felds. */
+private data class FindHit(val target: Int, val start: Int)
 
 /** Alle Start-Indizes von [needle] in [haystack] (case-insensitive, ueberlappungsfrei). */
 private fun findAllMatches(haystack: String, needle: String): List<Int> {
