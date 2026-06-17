@@ -1,12 +1,15 @@
 package de.beardedskunk.clipsharing.backup
 
+import android.util.Log
 import de.beardedskunk.clipsharing.data.BlobStore
-import de.beardedskunk.clipsharing.sync.OpCodec
+import de.beardedskunk.clipsharing.sync.OpDto
 import de.beardedskunk.clipsharing.sync.OpSource
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
@@ -17,6 +20,9 @@ data class FritzConfig(
     val password: String,
     val baseDir: String,
     val group: String,
+    /** Gruppen-Passphrase (Klartext) – wird in group.json zur Zugangskontrolle abgelegt. */
+    val passphrase: String,
+    val deviceId: String,
     /** true = FTPES (verschluesselt); false = Klartext-FTP (Standard im Heimnetz). */
     val useFtps: Boolean = false,
 )
@@ -24,18 +30,17 @@ data class FritzConfig(
 data class ReplicaResult(val pulledOps: Int, val pushedOps: Int, val pushedBlobs: Int)
 
 /**
- * Vollwertige passive Replik auf der FRITZ!Box ueber **FTPES** (FTP explicit TLS).
+ * Passive Replik auf der FRITZ!Box ueber FTP. **Alle Dateien liegen im Klartext**
+ * (lesbar/anschaubar):
+ *   <baseDir>/<group>/group.json                 (Gruppen-Metadaten inkl. Passphrase)
+ *   <baseDir>/<group>/log/<deviceId>__<seq>.json (lesbare Op-/Versions-Daten)
+ *   <baseDir>/<group>/blobs/<sha>                (rohe Bilddateien)
  *
- * Ablage (portabel fuer spaeteren NAS-Wechsel):
- *   <baseDir>/<group>/log/<deviceId>/<seq>.op   (unveraenderliche Ops)
- *   <baseDir>/<group>/blobs/<sha>               (Voll-Bilder)
+ * Flaches Log-Layout (Dateiname kodiert Geraet+Seq) -> kein Unterordner-Listing
+ * noetig, das auf eingebetteten FTP-Servern oft unzuverlaessig ist.
  *
- * Der Versions-Vektor der Box ergibt sich aus dem Verzeichnis-Listing -> keine
- * mutierten Indexdateien, daher kollisionsfrei bei parallelem Push mehrerer Geraete.
- *
- * Hinweis: Die Box nutzt aeltere TLS-Cipher (AES-256-CBC/SHA1, ggf. TLS 1.0);
- * daher werden hier aeltere Protokolle explizit erlaubt. Benoetigt echtes
- * Geraet/Netz zum Testen; ggf. Cipher-Feintuning noetig.
+ * Zugangskontrolle: Das erste Geraet legt group.json mit seiner Passphrase an;
+ * weitere Geraete duerfen nur mit derselben Passphrase synchronisieren.
  */
 class FritzReplica(
     private val cfg: FritzConfig,
@@ -43,97 +48,170 @@ class FritzReplica(
     private val blobStore: BlobStore,
 ) {
     private val root: String = "${cfg.baseDir.trimEnd('/')}/${cfg.group}"
+    private val logDir = "$root/log"
+    private val blobsDir = "$root/blobs"
 
     fun sync(): ReplicaResult {
-        val ftps = connect()
+        val c = connect()
         try {
-            for (dir in listOf(cfg.baseDir.trimEnd('/'), root, "$root/log", "$root/blobs")) {
-                ftps.makeDirectory(dir)
-            }
-
-            val pulled = pullOps(ftps)
-            val pushedOps = pushOps(ftps)
-            val pushedBlobs = pushBlobs(ftps)
+            for (dir in listOf(cfg.baseDir.trimEnd('/'), root, logDir, blobsDir)) c.makeDirectory(dir)
+            ensureGroup(c)
+            val pulled = pullOps(c)
+            val pushedOps = pushOps(c)
+            val pushedBlobs = pushBlobs(c)
+            Log.i(TAG, "Sync fertig: pulled=$pulled pushedOps=$pushedOps pushedBlobs=$pushedBlobs")
             return ReplicaResult(pulled, pushedOps, pushedBlobs)
         } finally {
-            runCatching { ftps.logout() }
-            runCatching { ftps.disconnect() }
+            runCatching { c.logout() }
+            runCatching { c.disconnect() }
         }
     }
 
-    /** On-Demand: ein Voll-Bild von der Box holen (falls lokal evictet). */
     fun fetchBlob(sha: String): ByteArray? {
-        val ftps = connect()
+        val c = connect()
         return try {
-            retrieveBytes(ftps, "$root/blobs/$sha")
+            retrieveBytes(c, "$blobsDir/$sha")
         } finally {
-            runCatching { ftps.logout() }
-            runCatching { ftps.disconnect() }
+            runCatching { c.logout() }
+            runCatching { c.disconnect() }
         }
     }
 
-    // -------------------------------------------------------------- Schritte
+    // --------------------------------------------------------- Gruppen-Datei
 
-    private fun pullOps(ftps: FTPClient): Int {
-        val localVv = source.versionVector()
-        var pulled = 0
-        val deviceDirs = ftps.listFiles("$root/log").filter { it.isDirectory }.map { it.name }
-        for (device in deviceDirs) {
-            val known = localVv[device] ?: 0L
-            val names = ftps.listNames("$root/log/$device") ?: continue
-            for (path in names) {
-                val name = path.substringAfterLast('/')
-                val seq = name.removeSuffix(".op").toLongOrNull() ?: continue
-                if (seq <= known) continue
-                val content = retrieveText(ftps, "$root/log/$device/$name") ?: continue
-                val op = runCatching { OpCodec.decodeOp(content) }.getOrNull() ?: continue
-                if (source.ingestOp(op)) pulled++
+    private fun ensureGroup(c: FTPClient) {
+        val path = "$root/group.json"
+        val existing = retrieveText(c, path)
+        if (existing == null) {
+            val obj = JSONObject()
+                .put("version", 1)
+                .put("passphrase", cfg.passphrase)
+                .put("createdBy", cfg.deviceId)
+            storeBytes(c, path, obj.toString(2).toByteArray(Charsets.UTF_8))
+            Log.i(TAG, "group.json neu angelegt (Gruppe beansprucht)")
+        } else {
+            val stored = runCatching { JSONObject(existing).optString("passphrase") }.getOrDefault("")
+            if (stored != cfg.passphrase) {
+                error("Falsche Gruppen-Passphrase – diese Gruppe gehört zu einer anderen Passphrase.")
             }
+        }
+    }
+
+    // ------------------------------------------------------------- Schritte
+
+    private fun pullOps(c: FTPClient): Int {
+        val localVv = source.versionVector()
+        val names = (c.listNames(logDir) ?: emptyArray()).map { it.substringAfterLast('/') }
+            .filter { it.endsWith(".json") }
+        Log.i(TAG, "pullOps: ${names.size} Dateien im log, lokalVv=$localVv")
+        var pulled = 0
+        for (name in names) {
+            val (device, seq) = parseLogName(name) ?: continue
+            if (seq <= (localVv[device] ?: 0L)) continue
+            val text = retrieveText(c, "$logDir/$name") ?: continue
+            val op = runCatching { opFromJson(text) }.getOrNull() ?: continue
+            if (source.ingestOp(op)) pulled++
         }
         return pulled
     }
 
-    private fun pushOps(ftps: FTPClient): Int {
-        val remoteVv = remoteVersionVector(ftps)
+    private fun pushOps(c: FTPClient): Int {
+        val remoteVv = remoteVersionVector(c)
+        val toPush = source.missingFor(remoteVv)
+        Log.i(TAG, "pushOps: ${toPush.size} zu senden, remoteVv=$remoteVv")
         var pushed = 0
-        for (op in source.missingFor(remoteVv)) {
-            ftps.makeDirectory("$root/log/${op.deviceId}")
-            val path = "$root/log/${op.deviceId}/${op.seq}.op"
-            if (storeBytes(ftps, path, OpCodec.encodeOp(op).toByteArray(Charsets.UTF_8))) pushed++
+        for (op in toPush) {
+            val path = "$logDir/${op.deviceId}__${op.seq}.json"
+            if (storeBytes(c, path, opToJson(op).toByteArray(Charsets.UTF_8))) pushed++
         }
         return pushed
     }
 
-    private fun pushBlobs(ftps: FTPClient): Int {
-        val remote = (ftps.listNames("$root/blobs") ?: emptyArray())
-            .map { it.substringAfterLast('/') }.toHashSet()
+    private fun pushBlobs(c: FTPClient): Int {
+        val remote = (c.listNames(blobsDir) ?: emptyArray()).map { it.substringAfterLast('/') }.toHashSet()
         var pushed = 0
         for ((sha, _) in blobStore.fullSizes()) {
             if (sha in remote) continue
             val bytes = blobStore.readFull(sha) ?: continue
-            if (storeBytes(ftps, "$root/blobs/$sha", bytes)) pushed++
+            if (storeBytes(c, "$blobsDir/$sha", bytes)) pushed++
         }
+        Log.i(TAG, "pushBlobs: $pushed neue Bilder")
         return pushed
     }
 
-    private fun remoteVersionVector(ftps: FTPClient): Map<String, Long> {
+    private fun remoteVersionVector(c: FTPClient): Map<String, Long> {
         val vv = HashMap<String, Long>()
-        val deviceDirs = ftps.listFiles("$root/log").filter { it.isDirectory }.map { it.name }
-        for (device in deviceDirs) {
-            val names = ftps.listNames("$root/log/$device") ?: continue
-            val maxSeq = names.mapNotNull { it.substringAfterLast('/').removeSuffix(".op").toLongOrNull() }.maxOrNull()
-            if (maxSeq != null) vv[device] = maxSeq
+        val names = (c.listNames(logDir) ?: emptyArray()).map { it.substringAfterLast('/') }
+        for (name in names) {
+            val (device, seq) = parseLogName(name) ?: continue
+            if (seq > (vv[device] ?: 0L)) vv[device] = seq
         }
         return vv
     }
 
+    private fun parseLogName(name: String): Pair<String, Long>? {
+        val base = name.removeSuffix(".json")
+        val idx = base.lastIndexOf("__")
+        if (idx <= 0) return null
+        val device = base.substring(0, idx)
+        val seq = base.substring(idx + 2).toLongOrNull() ?: return null
+        return device to seq
+    }
+
+    // ----------------------------------------------------------- JSON (lesbar)
+
+    private fun opToJson(op: OpDto): String {
+        val images = JSONArray()
+        op.imageHashes.forEachIndexed { i, sha ->
+            images.put(JSONObject().put("sha", sha).put("title", op.imageTitles.getOrElse(i) { "" }))
+        }
+        return JSONObject()
+            .put("versionId", op.versionId)
+            .put("feedId", op.feedId)
+            .put("postId", op.postId)
+            .put("deviceId", op.deviceId)
+            .put("seq", op.seq)
+            .put("hlcWall", op.hlcWall)
+            .put("hlcCounter", op.hlcCounter)
+            .put("deleted", op.deleted)
+            .put("parents", JSONArray(op.parents))
+            .put("text", op.text)
+            .put("images", images)
+            .toString(2)
+    }
+
+    private fun opFromJson(s: String): OpDto {
+        val o = JSONObject(s)
+        val parents = o.optJSONArray("parents")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
+        val imgs = o.optJSONArray("images")
+        val hashes = ArrayList<String>()
+        val titles = ArrayList<String>()
+        if (imgs != null) {
+            for (i in 0 until imgs.length()) {
+                val io = imgs.getJSONObject(i)
+                hashes.add(io.getString("sha"))
+                titles.add(io.optString("title"))
+            }
+        }
+        return OpDto(
+            versionId = o.getString("versionId"),
+            feedId = o.getString("feedId"),
+            postId = o.getString("postId"),
+            deviceId = o.getString("deviceId"),
+            seq = o.getLong("seq"),
+            hlcWall = o.getLong("hlcWall"),
+            hlcCounter = o.getInt("hlcCounter"),
+            deleted = o.getBoolean("deleted"),
+            text = o.getString("text"),
+            parents = parents,
+            imageHashes = hashes,
+            imageTitles = titles,
+        )
+    }
+
     // -------------------------------------------------------------- FTP-Helfer
 
-    /** Verbindet die Box (FTPES nur, wenn [FritzConfig.useFtps]); sonst Klartext-FTP. */
     fun connect(): FTPClient {
-        // FTPS nutzt die vom Android-System unterstuetzten Protokolle (i. d. R. TLS 1.2/1.3).
-        // Aeltere Versionen (TLS 1.0/1.1) hat Android entfernt und lassen sich nicht erzwingen
-        // -> mit alten FRITZ!Box-FTPS-Servern ggf. nicht nutzbar; dann Klartext-FTP verwenden.
         val c: FTPClient = if (cfg.useFtps) FTPSClient(false) else FTPClient()
         c.connectTimeout = 8000
         c.connect(cfg.host, cfg.port)
@@ -147,48 +225,37 @@ class FritzReplica(
         }
         if (c is FTPSClient) {
             c.execPBSZ(0)
-            c.execPROT("P") // Datenkanal verschluesseln
+            c.execPROT("P")
         }
         c.enterLocalPassiveMode()
         c.setFileType(FTP.BINARY_FILE_TYPE)
         c.controlEncoding = "UTF-8"
+        Log.i(TAG, "FTP verbunden mit ${cfg.host}:${cfg.port} (ftps=${cfg.useFtps})")
         return c
     }
 
-    /**
-     * Testet die Verbindung und legt die Ordnerstruktur an. Wirft mit aussagekraeftiger
-     * Meldung, wenn etwas schiefgeht; liefert sonst eine Erfolgsmeldung.
-     */
-    fun testAndPrepare(): String {
-        val c = connect()
-        try {
-            for (dir in listOf(cfg.baseDir.trimEnd('/'), root, "$root/log", "$root/blobs")) {
-                c.makeDirectory(dir)
-            }
-            val names = c.listNames(root)
-                ?: error("Ordner '$root' nicht lesbar – Schreibrecht/Pfad prüfen")
-            return "Verbunden mit ${cfg.host}. Ordner '$root' bereit (${names.size} Einträge)."
-        } finally {
-            runCatching { c.logout() }
-            runCatching { c.disconnect() }
-        }
-    }
-
-    private fun retrieveBytes(ftps: FTPClient, path: String): ByteArray? {
-        val stream = ftps.retrieveFileStream(path) ?: return null
+    private fun retrieveBytes(c: FTPClient, path: String): ByteArray? {
+        val stream = c.retrieveFileStream(path) ?: return null
         return try {
             val out = ByteArrayOutputStream()
             stream.copyTo(out)
             stream.close()
-            if (ftps.completePendingCommand()) out.toByteArray() else null
+            if (c.completePendingCommand()) out.toByteArray() else null
         } catch (e: Exception) {
             null
         }
     }
 
-    private fun retrieveText(ftps: FTPClient, path: String): String? =
-        retrieveBytes(ftps, path)?.let { String(it, Charsets.UTF_8) }
+    private fun retrieveText(c: FTPClient, path: String): String? =
+        retrieveBytes(c, path)?.let { String(it, Charsets.UTF_8) }
 
-    private fun storeBytes(ftps: FTPClient, path: String, bytes: ByteArray): Boolean =
-        ByteArrayInputStream(bytes).use { ftps.storeFile(path, it) }
+    private fun storeBytes(c: FTPClient, path: String, bytes: ByteArray): Boolean {
+        val ok = ByteArrayInputStream(bytes).use { c.storeFile(path, it) }
+        if (!ok) Log.w(TAG, "storeFile fehlgeschlagen für $path (Reply ${c.replyCode})")
+        return ok
+    }
+
+    companion object {
+        private const val TAG = "FritzReplica"
+    }
 }

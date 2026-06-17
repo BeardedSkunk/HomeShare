@@ -22,6 +22,8 @@ class FritzController(
         password = settings.fritzPassword,
         baseDir = settings.fritzBaseDir,
         group = identity.groupName,
+        passphrase = settings.groupPassphrase,
+        deviceId = identity.deviceId,
         useFtps = settings.fritzUseFtps,
     )
 
@@ -41,9 +43,7 @@ class FritzController(
      * Blockierend – auf IO-Thread aufrufen.
      */
     fun testAndSync(): Result<String> = runCatching {
-        val replica = FritzReplica(config(), source, blobStore)
-        replica.testAndPrepare()
-        val r = replica.sync()
+        val r = FritzReplica(config(), source, blobStore).sync()
         "Backup läuft. Gesendet: ${r.pushedOps} Einträge / ${r.pushedBlobs} Bilder · Empfangen: ${r.pulledOps} Einträge."
     }
 }
