@@ -152,7 +152,7 @@ fun ConflictScreen(
             }
             if (commonImages.isNotEmpty()) {
                 item {
-                    Text("Gemeinsames Bild (in beiden Fassungen gleich)", fontWeight = FontWeight.Bold)
+                    Text("Gemeinsames Bild (in allen Fassungen gleich)", fontWeight = FontWeight.Bold)
                     Text(
                         "Zum Vergrößern antippen.",
                         style = MaterialTheme.typography.labelSmall,
@@ -173,17 +173,23 @@ fun ConflictScreen(
                         )
                         Text(
                             "Geändert: " + formatWhen(head.hlc.wallMillis),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                         if (head.content.deleted) {
                             Text("Diese Fassung löscht den Beitrag.", color = MaterialTheme.colorScheme.error)
                         } else {
-                            // Text: unveraendert -> klar benennen; sonst Wort-Diff gegen die Basis.
-                            if (head.content.text == baseText) {
-                                Text("Text unverändert.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
-                                Text(diffAnnotated(baseText, head.content.text))
+                            // Text: unveraendert -> klar benennen; ohne gemeinsame Basis Klartext
+                            // (sonst faerbt der Diff gegen "" alles gruen, was nichts aussagt);
+                            // sonst Wort-Diff gegen die Basis.
+                            when {
+                                head.content.text == baseText ->
+                                    Text("Text unverändert.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                baseText.isBlank() ->
+                                    Text(head.content.text.ifBlank { "(kein Text)" })
+                                else ->
+                                    Text(diffAnnotated(baseText, head.content.text))
                             }
                             val titles = head.content.imageTitles.filter { it.isNotBlank() }
                             if (titles.isNotEmpty()) {
