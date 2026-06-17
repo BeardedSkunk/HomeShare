@@ -156,7 +156,7 @@ class SyncManager(
         val listener = object : NsdManager.ResolveListener {
             override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {}
             override fun onServiceResolved(resolved: NsdServiceInfo) {
-                val device = resolved.attributes[ATTR_DEVICE]?.toString(Charsets.UTF_8)
+                val device = resolved.attributes[ATTR_DEVICE]?.toString(Charsets.UTF_8) ?: return
                 val group = resolved.attributes[ATTR_GROUP]?.toString(Charsets.UTF_8)
                 if (device == identity.deviceId) return // eigenes Gerät
                 if (group != identity.groupName) return // andere Gruppe
