@@ -65,6 +65,7 @@ fun SettingsScreen(
     var deviceName by remember { mutableStateOf(identity.explicitDeviceName ?: "") }
     var groupName by remember { mutableStateOf(identity.groupName) }
     var passphrase by remember { mutableStateOf(settings.groupPassphrase) }
+    var fallbackPeers by remember { mutableStateOf(settings.fallbackPeers) }
     var host by remember { mutableStateOf(settings.fritzHost) }
     var port by remember { mutableStateOf(settings.fritzPort.toString()) }
     var user by remember { mutableStateOf(settings.fritzUser) }
@@ -89,6 +90,7 @@ fun SettingsScreen(
         identity.deviceName = deviceName // leer -> faellt auf den Android-Systemnamen zurueck
         identity.groupName = groupName.trim().ifBlank { identity.groupName }
         settings.groupPassphrase = passphrase
+        settings.fallbackPeers = fallbackPeers.trim()
         settings.fritzHost = host.trim()
         settings.fritzPort = port.toIntOrNull() ?: 21
         settings.fritzUser = user.trim()
@@ -126,6 +128,13 @@ fun SettingsScreen(
             OutlinedTextField(groupName, { groupName = it }, label = { Text("Gruppenname") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
                 passphrase, { passphrase = it }, label = { Text("Gruppen-Passphrase (Klartext)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                fallbackPeers, { fallbackPeers = it },
+                label = { Text("Fallback-Geräte (IPs/Bereiche, optional)") },
+                placeholder = { Text("z. B. 192.168.178.4, 192.168.178.1-192.168.178.10") },
+                supportingText = { Text("Nur nötig, wenn die automatische Erkennung im Netz nicht greift. Eigene IP wird übersprungen.") },
                 modifier = Modifier.fillMaxWidth(),
             )
 

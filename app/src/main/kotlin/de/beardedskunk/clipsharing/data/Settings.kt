@@ -12,6 +12,16 @@ class Settings(context: Context) {
         get() = prefs.getString(K_PASSPHRASE, "") ?: ""
         set(v) = prefs.edit().putString(K_PASSPHRASE, v).apply()
 
+    /**
+     * Manuelle Fallback-Peers fuer den Gerät-zu-Gerät-Sync, falls die automatische
+     * Discovery (NSD/Broadcast) im Netz nicht greift. Freitext: einzelne IPs und/oder
+     * Bereiche, getrennt durch Komma/Zeilenumbruch, z. B.
+     * "192.168.178.4, 192.168.178.1-192.168.178.10". Wird per [de.beardedskunk.clipsharing.sync.PeerList] geparst.
+     */
+    var fallbackPeers: String
+        get() = prefs.getString(K_FALLBACK_PEERS, "") ?: ""
+        set(v) = prefs.edit().putString(K_FALLBACK_PEERS, v).apply()
+
     var fritzHost: String
         get() = prefs.getString(K_HOST, "fritz.box") ?: "fritz.box"
         set(v) = prefs.edit().putString(K_HOST, v).apply()
@@ -49,6 +59,7 @@ class Settings(context: Context) {
 
     companion object {
         private const val K_PASSPHRASE = "group_passphrase"
+        private const val K_FALLBACK_PEERS = "fallback_peers"
         private const val K_HOST = "fritz_host"
         private const val K_PORT = "fritz_port"
         private const val K_USER = "fritz_user"
