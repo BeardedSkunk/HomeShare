@@ -78,6 +78,9 @@ fun PostDetailEditor(
 
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
     var images by remember { mutableStateOf(post?.imageHashes ?: emptyList()) }
+    var imageTitles by remember {
+        mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> post?.imageTitles?.getOrNull(i) ?: "" })
+    }
     var findOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var matchIdx by remember { mutableStateOf(0) }
@@ -102,7 +105,10 @@ fun PostDetailEditor(
                 val sha = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { blobStore.put(it) }
                 }
-                if (sha != null && sha !in images) images = images + sha
+                if (sha != null && sha !in images) {
+                    images = images + sha
+                    imageTitles = imageTitles + ""
+                }
             }
         }
     }
@@ -112,9 +118,9 @@ fun PostDetailEditor(
         scope.launch {
             withContext(Dispatchers.IO) {
                 if (post == null) {
-                    repo.createPost(feed.id, text, images)
+                    repo.createPost(feed.id, text, images, imageTitles)
                 } else {
-                    repo.editPost(feed.id, post.postId, text, images)
+                    repo.editPost(feed.id, post.postId, text, images, imageTitles)
                 }
             }
             onClose()
@@ -196,29 +202,47 @@ fun PostDetailEditor(
                     .focusRequester(focusRequester),
             )
 
-            // Bilder im Fluss: echtes Seitenverhältnis, Höhe auf 20% begrenzt.
-            for (sha in images) {
-                Box(Modifier.fillMaxWidth().padding(8.dp)) {
-                    val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp,
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = maxImageHeight)
-                                .clickable { onOpenImage(sha) },
-                        )
-                    } else {
-                        Text("🖼 (Bild nicht lokal)")
+            // Bilder im Fluss: echtes Seitenverhältnis, Höhe auf 20% begrenzt,
+            // darunter je ein editierbarer Titel (versioniert + gesynct).
+            images.forEachIndexed { index, sha ->
+                Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                    Box(Modifier.fillMaxWidth()) {
+                        val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp,
+                                contentDescription = imageTitles.getOrNull(index),
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = maxImageHeight)
+                                    .clickable { onOpenImage(sha) },
+                            )
+                        } else {
+                            Text("🖼 (Bild nicht lokal)")
+                        }
+                        IconButton(
+                            onClick = {
+                                images = images.toMutableList().also { it.removeAt(index) }
+                                imageTitles = imageTitles.toMutableList().also { if (index < it.size) it.removeAt(index) }
+                            },
+                            modifier = Modifier.align(Alignment.TopEnd),
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "Bild entfernen")
+                        }
                     }
-                    IconButton(
-                        onClick = { images = images.filterNot { it == sha } },
-                        modifier = Modifier.align(Alignment.TopEnd),
-                    ) {
-                        Icon(Icons.Filled.Close, contentDescription = "Bild entfernen")
-                    }
+                    OutlinedTextField(
+                        value = imageTitles.getOrElse(index) { "" },
+                        onValueChange = { v ->
+                            imageTitles = imageTitles.toMutableList().also {
+                                while (it.size <= index) it.add("")
+                                it[index] = v
+                            }
+                        },
+                        label = { Text("Bildtitel") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }

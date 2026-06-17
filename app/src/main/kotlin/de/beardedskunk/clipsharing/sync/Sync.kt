@@ -21,13 +21,14 @@ data class OpDto(
     val text: String,
     val parents: List<String>,
     val imageHashes: List<String>,
+    val imageTitles: List<String> = emptyList(),
 ) {
     fun toVersion(): PostVersion = PostVersion(
         postId = postId,
         parents = parents.toSet(),
         deviceId = deviceId,
         hlc = Hlc(hlcWall, hlcCounter),
-        content = PostContent(text = text, imageHashes = imageHashes, deleted = deleted),
+        content = PostContent(text = text, imageHashes = imageHashes, imageTitles = imageTitles, deleted = deleted),
     )
 
     /** Integritaetspruefung: stimmt die mitgelieferte Id mit dem Inhalt ueberein? */
@@ -46,6 +47,7 @@ data class OpDto(
             text = v.content.text,
             parents = v.parents.toList(),
             imageHashes = v.content.imageHashes,
+            imageTitles = v.content.imageTitles,
         )
     }
 }
@@ -70,7 +72,8 @@ object OpCodec {
         append(if (d.deleted) "1" else "0").append('\n')
         append(b64(d.text)).append('\n')
         append(d.parents.joinToString(",")).append('\n')
-        append(d.imageHashes.joinToString(","))
+        append(d.imageHashes.joinToString(",")).append('\n')
+        append(encodeTitles(d.imageTitles))
     }
 
     fun decodeOp(s: String): OpDto {
@@ -88,7 +91,23 @@ object OpCodec {
             text = unb64(p[9]),
             parents = splitCsv(p.getOrElse(10) { "" }),
             imageHashes = splitCsv(p.getOrElse(11) { "" }),
+            imageTitles = decodeTitles(p.getOrElse(12) { "" }),
         )
+    }
+
+    /** Titel-Liste: "count;b64,b64,..." (base64 enthaelt kein Komma -> sicher). */
+    fun encodeTitles(list: List<String>): String =
+        "${list.size};" + list.joinToString(",") { b64(it) }
+
+    fun decodeTitles(s: String): List<String> {
+        if (s.isBlank()) return emptyList()
+        val i = s.indexOf(';')
+        if (i < 0) return emptyList()
+        val count = s.substring(0, i).toIntOrNull() ?: 0
+        if (count == 0) return emptyList()
+        val rest = s.substring(i + 1)
+        val tokens = if (rest.isEmpty()) emptyList() else rest.split(',')
+        return tokens.map { unb64(it) }
     }
 
     /** Ganze Op als eine einzelne (base64-)Zeile -> bequem fuers Stream-Protokoll. */

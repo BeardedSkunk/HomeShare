@@ -7,6 +7,7 @@ import de.beardedskunk.clipsharing.core.Hlc
 import de.beardedskunk.clipsharing.core.Post
 import de.beardedskunk.clipsharing.core.PostContent
 import de.beardedskunk.clipsharing.core.PostVersion
+import de.beardedskunk.clipsharing.sync.OpCodec
 import de.beardedskunk.clipsharing.sync.OpDto
 import de.beardedskunk.clipsharing.sync.OpSource
 import java.util.UUID
@@ -66,11 +67,22 @@ class FeedRepository(
 
     // ------------------------------------------------------- Post authoring
 
-    fun createPost(feedId: String, text: String, imageHashes: List<String> = emptyList()): PostVersion =
-        author(feedId, UUID.randomUUID().toString(), emptySet(), PostContent(text, imageHashes, deleted = false))
+    fun createPost(
+        feedId: String,
+        text: String,
+        imageHashes: List<String> = emptyList(),
+        imageTitles: List<String> = emptyList(),
+    ): PostVersion =
+        author(feedId, UUID.randomUUID().toString(), emptySet(), PostContent(text, imageHashes, imageTitles, deleted = false))
 
-    fun editPost(feedId: String, postId: String, text: String, imageHashes: List<String> = emptyList()): PostVersion =
-        author(feedId, postId, currentHeads(postId), PostContent(text, imageHashes, deleted = false))
+    fun editPost(
+        feedId: String,
+        postId: String,
+        text: String,
+        imageHashes: List<String> = emptyList(),
+        imageTitles: List<String> = emptyList(),
+    ): PostVersion =
+        author(feedId, postId, currentHeads(postId), PostContent(text, imageHashes, imageTitles, deleted = false))
 
     fun deletePost(feedId: String, postId: String): PostVersion =
         author(feedId, postId, currentHeads(postId), PostContent(deleted = true))
@@ -201,6 +213,7 @@ class FeedRepository(
             put("deleted", if (v.content.deleted) 1 else 0)
             put("text", v.content.text)
             put("image_hashes", v.content.imageHashes.joinToString(","))
+            put("image_titles", OpCodec.encodeTitles(v.content.imageTitles))
         }
         db.insertWithOnConflict("ops", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
     }
@@ -208,7 +221,7 @@ class FeedRepository(
     private fun loadPost(postId: String): Post {
         val post = Post(postId)
         db.rawQuery(
-            "SELECT post_id, device_id, hlc_wall, hlc_counter, parents, deleted, text, image_hashes FROM ops WHERE post_id = ?",
+            "SELECT post_id, device_id, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles FROM ops WHERE post_id = ?",
             arrayOf(postId),
         ).use { c ->
             while (c.moveToNext()) {
@@ -216,6 +229,7 @@ class FeedRepository(
                 val content = PostContent(
                     text = c.getString(6),
                     imageHashes = splitCsv(c.getString(7)),
+                    imageTitles = OpCodec.decodeTitles(c.getString(8)),
                     deleted = c.getInt(5) != 0,
                 )
                 post.ingest(PostVersion(c.getString(0), parents, c.getString(1), Hlc(c.getLong(2), c.getInt(3)), content))
@@ -236,6 +250,7 @@ class FeedRepository(
             put("head_version_id", shown.versionId)
             put("text", shown.content.text)
             put("image_hashes", shown.content.imageHashes.joinToString(","))
+            put("image_titles", OpCodec.encodeTitles(shown.content.imageTitles))
             put("deleted", if (shown.content.deleted) 1 else 0)
             put("conflicted", if (heads.size > 1) 1 else 0)
             put("created_wall", root.hlc.wallMillis)
@@ -257,7 +272,7 @@ class FeedRepository(
     private fun queryPostStates(where: String, args: Array<String>): List<PostState> {
         val out = ArrayList<PostState>()
         db.rawQuery(
-            "SELECT post_id, feed_id, head_version_id, text, image_hashes, deleted, conflicted, created_wall, created_counter, updated_wall, updated_counter " +
+            "SELECT post_id, feed_id, head_version_id, text, image_hashes, deleted, conflicted, created_wall, created_counter, updated_wall, updated_counter, image_titles " +
                 "FROM post_current WHERE $where ORDER BY created_wall, created_counter",
             args,
         ).use { c -> while (c.moveToNext()) out += readPostState(c) }
@@ -270,6 +285,7 @@ class FeedRepository(
         headVersionId = c.getString(2),
         text = c.getString(3),
         imageHashes = splitCsv(c.getString(4)),
+        imageTitles = OpCodec.decodeTitles(c.getString(11)),
         deleted = c.getInt(5) != 0,
         conflicted = c.getInt(6) != 0,
         created = Hlc(c.getLong(7), c.getInt(8)),
