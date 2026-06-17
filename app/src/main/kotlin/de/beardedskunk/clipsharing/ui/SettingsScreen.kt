@@ -130,7 +130,10 @@ fun SettingsScreen(
             OutlinedTextField(pass, { pass = it }, label = { Text("Passwort (Klartext)") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(baseDir, { baseDir = it }, label = { Text("Basisordner") }, modifier = Modifier.fillMaxWidth())
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("FTPS (verschlüsselt)", modifier = Modifier.weight(1f))
+                Text(
+                    "FTPS (verschlüsselt) – bei FRITZ!Box meist NICHT nutzbar, aus lassen",
+                    modifier = Modifier.weight(1f),
+                )
                 Switch(checked = useFtps, onCheckedChange = { useFtps = it })
             }
 
