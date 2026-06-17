@@ -1,6 +1,7 @@
 package de.beardedskunk.clipsharing.data
 
 import android.content.Context
+import android.provider.Settings
 import de.beardedskunk.clipsharing.core.Hlc
 import java.util.UUID
 
@@ -14,7 +15,8 @@ import java.util.UUID
  */
 class DeviceIdentity(context: Context) {
 
-    private val prefs = context.applicationContext
+    private val appContext = context.applicationContext
+    private val prefs = appContext
         .getSharedPreferences("clip_identity", Context.MODE_PRIVATE)
 
     val deviceId: String =
@@ -23,13 +25,35 @@ class DeviceIdentity(context: Context) {
         }
 
     /**
-     * Menschlich lesbarer Geraetename (z. B. "F101", "Pixel"). Reist als Metadatum
-     * mit jeder Op mit, damit die Konflikt-Ansicht echte Namen statt Id-Stummeln
-     * zeigen kann. Standard: das Geraetemodell; in den Einstellungen aenderbar.
+     * Der Name, den Android selbst fuer dieses Geraet kennt (Einstellungen >
+     * Ueber das Telefon > Geraetename, z. B. "YogaTablet mit runder Base").
+     * Dient als Vorgabe/Platzhalter, wenn der Nutzer keinen eigenen Namen setzt.
+     */
+    val systemDeviceName: String
+        get() {
+            val cr = appContext.contentResolver
+            val candidate = Settings.Global.getString(cr, Settings.Global.DEVICE_NAME)
+                ?: Settings.Secure.getString(cr, "bluetooth_name")
+                ?: android.os.Build.MODEL
+            return candidate?.trim()?.takeIf { it.isNotBlank() } ?: (android.os.Build.MODEL ?: "Gerät")
+        }
+
+    /** Vom Nutzer ausdruecklich gesetzter Name, oder null -> dann gilt [systemDeviceName]. */
+    val explicitDeviceName: String?
+        get() = prefs.getString(KEY_DEVICE_NAME, null)?.takeIf { it.isNotBlank() }
+
+    /**
+     * Menschlich lesbarer Geraetename. Reist als Metadatum mit jeder Op mit, damit
+     * die Konflikt-Ansicht echte Namen statt Id-Stummeln zeigen kann. Ohne eigene
+     * Eingabe gilt der [systemDeviceName]; leeres Setzen loescht die Eingabe wieder.
      */
     var deviceName: String
-        get() = prefs.getString(KEY_DEVICE_NAME, null) ?: android.os.Build.MODEL ?: "Gerät"
-        set(value) { prefs.edit().putString(KEY_DEVICE_NAME, value).apply() }
+        get() = explicitDeviceName ?: systemDeviceName
+        set(value) {
+            val v = value.trim()
+            if (v.isBlank()) prefs.edit().remove(KEY_DEVICE_NAME).apply()
+            else prefs.edit().putString(KEY_DEVICE_NAME, v).apply()
+        }
 
     /**
      * Name der Geraetegruppe. Aktuell eine feste Standardgruppe; spaeter per
