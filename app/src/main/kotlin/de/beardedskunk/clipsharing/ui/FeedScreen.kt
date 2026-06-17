@@ -1,5 +1,6 @@
 package de.beardedskunk.clipsharing.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +74,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     // --- Vollbild-Ansicht eines Bildes ---
     val img = viewingImage
     if (img != null) {
+        BackHandler { viewingImage = null }
         ImageViewerScreen(blobStore = blobStore, sha = img, onBack = { viewingImage = null })
         return
     }
@@ -80,6 +82,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     // --- Konfliktauflösung ---
     val conflict = resolving
     if (conflict != null) {
+        BackHandler { resolving = null }
         ConflictScreen(
             repo = repo,
             feed = feed,
@@ -93,6 +96,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     // --- Detail-/Editier-Ansicht (bestehend oder neu) ---
     val current = editing
     if (current != null || creatingNew) {
+        BackHandler { editing = null; creatingNew = false; reload() }
         PostDetailEditor(
             repo = repo,
             blobStore = blobStore,
@@ -103,6 +107,9 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
         )
         return
     }
+
+    // Liste: System-Zurück geht zur Feed-Übersicht (wie der Pfeil oben links).
+    BackHandler { onBack() }
 
     Scaffold(
         topBar = {
