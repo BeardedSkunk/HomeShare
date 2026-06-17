@@ -141,29 +141,48 @@ class CalendarSync(
 
     // ----- Zielkalender -----
 
+    /**
+     * Zielkalender = eigener **lokaler** Kalender „HomeShare" (synct NICHT zu Google,
+     * vermischt sich nicht mit den persönlichen/geteilten Kalendern). Wird bei Bedarf
+     * angelegt. Eine explizit gesetzte [Settings.calendarId] hat Vorrang.
+     */
     private fun targetCalendarId(): Long? {
         val chosen = settings.calendarId
         if (chosen > 0 && calendarExists(chosen)) return chosen
-        val proj = arrayOf(
-            CalendarContract.Calendars._ID,
-            CalendarContract.Calendars.IS_PRIMARY,
-        )
+        findLocalCalendar()?.let { return it }
+        return createLocalCalendar()
+    }
+
+    private fun findLocalCalendar(): Long? =
         cr.query(
             CalendarContract.Calendars.CONTENT_URI,
-            proj,
-            "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?",
-            arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString()),
+            arrayOf(CalendarContract.Calendars._ID),
+            "${CalendarContract.Calendars.ACCOUNT_TYPE}=? AND ${CalendarContract.Calendars.ACCOUNT_NAME}=? AND ${CalendarContract.Calendars.NAME}=?",
+            arrayOf(CalendarContract.ACCOUNT_TYPE_LOCAL, LOCAL_CAL_ACCOUNT, LOCAL_CAL_NAME),
             null,
-        )?.use { c ->
-            var first = -1L
-            while (c.moveToNext()) {
-                val id = c.getLong(0)
-                if (c.getInt(1) == 1) return id // primärer bevorzugt
-                if (first < 0) first = id
-            }
-            if (first >= 0) return first
+        )?.use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    private fun createLocalCalendar(): Long? {
+        val uri = CalendarContract.Calendars.CONTENT_URI.buildUpon()
+            .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, LOCAL_CAL_ACCOUNT)
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            .build()
+        val values = ContentValues().apply {
+            put(CalendarContract.Calendars.ACCOUNT_NAME, LOCAL_CAL_ACCOUNT)
+            put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            put(CalendarContract.Calendars.NAME, LOCAL_CAL_NAME)
+            put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, LOCAL_CAL_NAME)
+            put(CalendarContract.Calendars.CALENDAR_COLOR, 0xFF3F51B5.toInt())
+            put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
+            put(CalendarContract.Calendars.OWNER_ACCOUNT, LOCAL_CAL_ACCOUNT)
+            put(CalendarContract.Calendars.SYNC_EVENTS, 1)
+            put(CalendarContract.Calendars.VISIBLE, 1)
+            put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, TimeZone.getDefault().id)
         }
-        return null
+        return runCatching { cr.insert(uri, values)?.let { ContentUris.parseId(it) } }
+            .onFailure { Log.w(TAG, "Lokalen HomeShare-Kalender anlegen fehlgeschlagen", it) }
+            .getOrNull()
     }
 
     private fun calendarExists(id: Long): Boolean =
@@ -209,5 +228,8 @@ class CalendarSync(
 
     companion object {
         private const val TAG = "CalendarSync"
+        // Eigener lokaler Kalender (kein Cloud-Sync, eigene Farbe, ein-/ausblendbar).
+        private const val LOCAL_CAL_NAME = "HomeShare"
+        private const val LOCAL_CAL_ACCOUNT = "HomeShare"
     }
 }

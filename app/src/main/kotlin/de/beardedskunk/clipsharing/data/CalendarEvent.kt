@@ -18,16 +18,17 @@ enum class Recurrence(val rrule: String?, val label: String) {
 
 /**
  * Strukturierter Kalendereintrag. **Kanonische Speicherung ist Markdown** (siehe [EventCodec]) –
- * damit synct ein Eintrag unverändert über den bestehenden Op-/DAG-Mechanismus. Zeiten als
- * lokale ISO-Werte: getimt `yyyy-MM-ddTHH:mm`, ganztägig nur `yyyy-MM-dd`. [tz] = ZoneId
- * (leer ⇒ Geräte-Zeitzone beim Push in den Android-Kalender).
+ * damit synct ein Eintrag unverändert über den bestehenden Op-/DAG-Mechanismus.
+ *
+ * Zeiten als vollständige ISO-8601-Strings **inkl. Zeitzone**:
+ *  - getimt: ISO-ZonedDateTime, z. B. `2026-06-20T14:00:00+02:00[Europe/Berlin]`
+ *  - ganztägig: ISO-Datum, z. B. `2026-06-20`
  */
 data class EventData(
     val title: String,
     val start: String,
     val end: String,
     val allDay: Boolean = false,
-    val tz: String = "",
     val location: String = "",
     val description: String = "",
     val reminderMinutes: Int? = null,
@@ -41,10 +42,9 @@ data class EventData(
  * <Titel>
  *
  * ```event
- * start: 2026-06-20T14:00
- * end: 2026-06-20T15:00
+ * start: 2026-06-20T14:00:00+02:00[Europe/Berlin]
+ * end: 2026-06-20T15:00:00+02:00[Europe/Berlin]
  * allDay: false
- * tz: Europe/Berlin
  * location: …
  * rrule: FREQ=WEEKLY
  * reminder: 10
@@ -66,7 +66,6 @@ object EventCodec {
         append("start: ").append(e.start).append('\n')
         append("end: ").append(e.end).append('\n')
         append("allDay: ").append(e.allDay).append('\n')
-        if (e.tz.isNotBlank()) append("tz: ").append(e.tz).append('\n')
         if (e.location.isNotBlank()) append("location: ").append(e.location.replace("\n", " ")).append('\n')
         e.recurrence.rrule?.let { append("rrule: ").append(it).append('\n') }
         e.reminderMinutes?.let { append("reminder: ").append(it).append('\n') }
@@ -96,7 +95,6 @@ object EventCodec {
             start = start,
             end = map["end"]?.takeIf { it.isNotBlank() } ?: start,
             allDay = map["allday"].toBoolStrict(),
-            tz = map["tz"].orEmpty(),
             location = map["location"].orEmpty(),
             description = desc,
             reminderMinutes = map["reminder"]?.toIntOrNull(),
