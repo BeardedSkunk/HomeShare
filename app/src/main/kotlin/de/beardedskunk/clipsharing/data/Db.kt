@@ -44,7 +44,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
               deleted INTEGER NOT NULL,
               text TEXT NOT NULL,
               image_hashes TEXT NOT NULL,
-              image_titles TEXT NOT NULL DEFAULT ''
+              image_titles TEXT NOT NULL DEFAULT '',
+              device_name TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -84,6 +85,6 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
 
     companion object {
         const val DB_NAME = "clipsharing.db"
-        const val DB_VERSION = 2
+        const val DB_VERSION = 3
     }
 }

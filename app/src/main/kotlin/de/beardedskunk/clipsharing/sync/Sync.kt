@@ -22,6 +22,8 @@ data class OpDto(
     val parents: List<String>,
     val imageHashes: List<String>,
     val imageTitles: List<String> = emptyList(),
+    /** Menschlicher Name des Autor-Geraets (Metadatum, fliesst NICHT in versionId). */
+    val deviceName: String = "",
 ) {
     fun toVersion(): PostVersion = PostVersion(
         postId = postId,
@@ -35,7 +37,7 @@ data class OpDto(
     fun isConsistent(): Boolean = toVersion().versionId == versionId
 
     companion object {
-        fun from(v: PostVersion, feedId: String, seq: Long): OpDto = OpDto(
+        fun from(v: PostVersion, feedId: String, seq: Long, deviceName: String = ""): OpDto = OpDto(
             versionId = v.versionId,
             feedId = feedId,
             postId = v.postId,
@@ -48,6 +50,7 @@ data class OpDto(
             parents = v.parents.toList(),
             imageHashes = v.content.imageHashes,
             imageTitles = v.content.imageTitles,
+            deviceName = deviceName,
         )
     }
 }
@@ -73,7 +76,8 @@ object OpCodec {
         append(b64(d.text)).append('\n')
         append(d.parents.joinToString(",")).append('\n')
         append(d.imageHashes.joinToString(",")).append('\n')
-        append(encodeTitles(d.imageTitles))
+        append(encodeTitles(d.imageTitles)).append('\n')
+        append(b64(d.deviceName))
     }
 
     fun decodeOp(s: String): OpDto {
@@ -92,6 +96,7 @@ object OpCodec {
             parents = splitCsv(p.getOrElse(10) { "" }),
             imageHashes = splitCsv(p.getOrElse(11) { "" }),
             imageTitles = decodeTitles(p.getOrElse(12) { "" }),
+            deviceName = p.getOrNull(13)?.takeIf { it.isNotBlank() }?.let { unb64(it) } ?: "",
         )
     }
 

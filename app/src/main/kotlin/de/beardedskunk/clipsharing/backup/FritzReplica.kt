@@ -194,6 +194,7 @@ class FritzReplica(
             .put("feedId", op.feedId)
             .put("postId", op.postId)
             .put("deviceId", op.deviceId)
+            .put("deviceName", op.deviceName)
             .put("seq", op.seq)
             .put("hlcWall", op.hlcWall)
             .put("hlcCounter", op.hlcCounter)
@@ -222,6 +223,7 @@ class FritzReplica(
             feedId = o.getString("feedId"),
             postId = o.getString("postId"),
             deviceId = o.getString("deviceId"),
+            deviceName = o.optString("deviceName"),
             seq = o.getLong("seq"),
             hlcWall = o.getLong("hlcWall"),
             hlcCounter = o.getInt("hlcCounter"),
