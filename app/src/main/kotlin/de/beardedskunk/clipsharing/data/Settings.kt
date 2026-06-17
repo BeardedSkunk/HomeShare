@@ -53,6 +53,22 @@ class Settings(context: Context) {
         get() = prefs.getLong(K_CALENDAR_ID, 0L)
         set(v) = prefs.edit().putLong(K_CALENDAR_ID, v).apply()
 
+    /**
+     * GERÄTE-LOKAL deaktivierte Kalender-Feeds: deren Einträge werden auf DIESEM Gerät
+     * NICHT in den Android-Kalender übernommen. Default ist „übernehmen" (Feed nicht in der Menge).
+     */
+    var calendarDisabledFeeds: Set<String>
+        get() = prefs.getStringSet(K_CAL_DISABLED, emptySet())?.toSet() ?: emptySet()
+        set(v) = prefs.edit().putStringSet(K_CAL_DISABLED, v).apply()
+
+    fun isCalendarFeedEnabled(feedId: String): Boolean = feedId !in calendarDisabledFeeds
+
+    fun setCalendarFeedEnabled(feedId: String, enabled: Boolean) {
+        val s = calendarDisabledFeeds.toMutableSet()
+        if (enabled) s.remove(feedId) else s.add(feedId)
+        calendarDisabledFeeds = s
+    }
+
     /** Lokales Speicherbudget fuer Voll-Bilder in GB (0 = unbegrenzt). */
     var imageBudgetGb: Float
         get() = prefs.getFloat(K_BUDGET_GB, 0f)
@@ -73,5 +89,6 @@ class Settings(context: Context) {
         private const val K_FTPS = "fritz_use_ftps"
         private const val K_BUDGET_GB = "image_budget_gb"
         private const val K_CALENDAR_ID = "calendar_id"
+        private const val K_CAL_DISABLED = "calendar_disabled_feeds"
     }
 }

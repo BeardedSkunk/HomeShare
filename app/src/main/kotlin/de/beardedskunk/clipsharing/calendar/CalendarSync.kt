@@ -60,7 +60,9 @@ class CalendarSync(
     private fun syncAll() {
         val calId = targetCalendarId() ?: return
         for (e in repo.calendarEntries()) {
-            val ev = if (e.deleted) null else EventCodec.parse(e.text)
+            // Gelöscht ODER Feed auf diesem Gerät deaktiviert -> Event aus dem Android-Kalender entfernen.
+            val enabled = settings.isCalendarFeedEnabled(e.feedId)
+            val ev = if (e.deleted || !enabled) null else EventCodec.parse(e.text)
             if (ev == null) {
                 deleteLinked(e.postId)
             } else {
