@@ -1,8 +1,10 @@
 package de.beardedskunk.clipsharing.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -60,6 +64,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
     var editing by remember { mutableStateOf<PostState?>(null) }
     var creatingNew by remember { mutableStateOf(false) }
     var resolving by remember { mutableStateOf<PostState?>(null) }
+    var resolvingDetailed by remember { mutableStateOf<PostState?>(null) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
 
     fun reload() {
@@ -79,7 +84,7 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
         return
     }
 
-    // --- Konfliktauflösung ---
+    // --- Konfliktauflösung: ganze Fassung wählen (Kombi-Ansicht) ---
     val conflict = resolving
     if (conflict != null) {
         BackHandler { resolving = null }
@@ -91,6 +96,22 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
             onOpenImage = { viewingImage = it },
             onResolved = { resolving = null; reload() },
             onCancel = { resolving = null },
+        )
+        return
+    }
+
+    // --- Konfliktauflösung: Teil für Teil zusammenführen (Detail-Ansicht) ---
+    val detailed = resolvingDetailed
+    if (detailed != null) {
+        BackHandler { resolvingDetailed = null }
+        DetailMergeScreen(
+            repo = repo,
+            blobStore = blobStore,
+            feed = feed,
+            post = detailed,
+            onOpenImage = { viewingImage = it },
+            onResolved = { resolvingDetailed = null; reload() },
+            onCancel = { resolvingDetailed = null },
         )
         return
     }
@@ -168,6 +189,8 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
                         post = post,
                         blobStore = blobStore,
                         onClick = { if (post.conflicted) resolving = post else editing = post },
+                        onResolveWhole = { resolving = post },
+                        onResolveDetailed = { resolvingDetailed = post },
                         onOpenImage = { viewingImage = it },
                     )
                 }
@@ -181,25 +204,44 @@ fun FeedScreen(repo: FeedRepository, blobStore: BlobStore, feed: Feed, onBack: (
  * quadratische Mini-Thumbnails so hoch wie die Box. Antippen eines Thumbnails
  * öffnet das Bild groß; Antippen der Box öffnet den Eintrag.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PostRow(
     post: PostState,
     blobStore: BlobStore,
     onClick: () -> Unit,
+    onResolveWhole: () -> Unit,
+    onResolveDetailed: () -> Unit,
     onOpenImage: (String) -> Unit,
 ) {
     val rowHeight = 56.dp
+    // Long-Press auf einen Konflikt-Eintrag (rot) bietet die Wahl zwischen
+    // Kombi-Auflösung (ganze Fassung) und Detail-Merge (Teil für Teil).
+    var menuOpen by remember { mutableStateOf(false) }
     Card(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { if (post.conflicted) menuOpen = true },
+            ),
         colors = if (post.conflicted) {
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
         } else {
             CardDefaults.cardColors()
         },
     ) {
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Ganze Fassung wählen") },
+                onClick = { menuOpen = false; onResolveWhole() },
+            )
+            DropdownMenuItem(
+                text = { Text("Im Detail zusammenführen") },
+                onClick = { menuOpen = false; onResolveDetailed() },
+            )
+        }
         Row(
             Modifier.fillMaxWidth().height(rowHeight),
             verticalAlignment = Alignment.CenterVertically,

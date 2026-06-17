@@ -61,7 +61,8 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    var deviceName by remember { mutableStateOf(identity.deviceName) }
+    // Leer = Android-Systemname (als grauer Platzhalter sichtbar) gilt automatisch.
+    var deviceName by remember { mutableStateOf(identity.explicitDeviceName ?: "") }
     var groupName by remember { mutableStateOf(identity.groupName) }
     var passphrase by remember { mutableStateOf(settings.groupPassphrase) }
     var host by remember { mutableStateOf(settings.fritzHost) }
@@ -85,7 +86,7 @@ fun SettingsScreen(
     }
 
     fun save() {
-        identity.deviceName = deviceName.trim().ifBlank { identity.deviceName }
+        identity.deviceName = deviceName // leer -> faellt auf den Android-Systemnamen zurueck
         identity.groupName = groupName.trim().ifBlank { identity.groupName }
         settings.groupPassphrase = passphrase
         settings.fritzHost = host.trim()
@@ -116,6 +117,8 @@ fun SettingsScreen(
             Text("Dieses Gerät", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 deviceName, { deviceName = it }, label = { Text("Gerätename (z. B. F101, Pixel)") },
+                placeholder = { Text(identity.systemDeviceName) },
+                supportingText = { Text("Leer lassen = Android-Gerätename „${identity.systemDeviceName}“") },
                 modifier = Modifier.fillMaxWidth(),
             )
 

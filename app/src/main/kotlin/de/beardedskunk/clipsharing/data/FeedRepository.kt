@@ -233,6 +233,9 @@ class FeedRepository(
      * Karte deviceId -> menschlicher Name (juengster bekannter Name je Geraet).
      * Fuer die Konflikt-Ansicht, damit dort "F101"/"Pixel" statt Id-Stummel stehen.
      */
+    /** Id dieses Geraets – fuer die Detail-Merge-Ansicht (zuletzt lokal aktive Fassung). */
+    fun localDeviceId(): String = identity.deviceId
+
     fun deviceNames(): Map<String, String> {
         val out = HashMap<String, String>()
         db.rawQuery(
