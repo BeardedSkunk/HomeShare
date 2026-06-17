@@ -70,6 +70,23 @@ class SyncManager(
 
     @Synchronized
     fun stop() {
+        teardown()
+        status.value = SyncStatus(running = false, lastMessage = "Sync gestoppt")
+    }
+
+    /**
+     * Pausieren, weil kein WLAN aktiv ist: NSD/Discovery, Server und Multicast-Lock
+     * werden abgebaut, damit es keinerlei Sync-Versuche gibt. [start] fährt alles
+     * wieder hoch, sobald wieder ein WLAN da ist.
+     */
+    @Synchronized
+    fun pause() {
+        if (!status.value.running && status.value.lastMessage == NO_WIFI) return
+        teardown()
+        status.value = SyncStatus(running = false, lastMessage = NO_WIFI)
+    }
+
+    private fun teardown() {
         runCatching { discListener?.let { nsd.stopServiceDiscovery(it) } }
         runCatching { regListener?.let { nsd.unregisterService(it) } }
         discListener = null
@@ -78,8 +95,8 @@ class SyncManager(
         serverSocket = null
         runCatching { multicastLock?.release() }
         multicastLock = null
+        knownPeers.clear()
         scope.cancel()
-        status.value = SyncStatus(running = false, lastMessage = "Sync gestoppt")
     }
 
     private fun startServer() {
@@ -195,6 +212,7 @@ class SyncManager(
 
     companion object {
         private const val TAG = "SyncManager"
+        private const val NO_WIFI = "Kein WLAN – Sync pausiert"
         private const val DEFAULT_PASSPHRASE = "clipsharing-default"
         private const val SERVICE_TYPE = "_clipfeed._tcp."
         private const val ATTR_GROUP = "grp"
