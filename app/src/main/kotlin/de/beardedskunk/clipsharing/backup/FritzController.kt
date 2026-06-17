@@ -44,6 +44,7 @@ class FritzController(
      */
     fun testAndSync(): Result<String> = runCatching {
         val r = FritzReplica(config(), source, blobStore).sync()
-        "Backup läuft. Gesendet: ${r.pushedOps} Einträge / ${r.pushedBlobs} Bilder · Empfangen: ${r.pulledOps} Einträge."
+        "Backup läuft. Gesendet: ${r.pushedOps} Einträge / ${r.pushedBlobs} Bilder · " +
+            "Empfangen: ${r.pulledOps} Einträge / ${r.pulledBlobs} Bilder."
     }
 }
