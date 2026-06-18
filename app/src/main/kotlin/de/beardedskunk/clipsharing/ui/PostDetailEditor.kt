@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
@@ -406,12 +409,6 @@ fun PostDetailEditor(
                             contentDescription = if (findOpen) "Suche schließen" else "Im Text suchen",
                         )
                     }
-                    // Markdown-Hilfe: im Quelltext-Modus immer sichtbar (früher in der Toolbar versteckt).
-                    if (sourceMode) {
-                        IconButton(onClick = { helpOpen = true }) {
-                            Text("?", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        }
-                    }
                     if (!readOnly) {
                         // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
                         IconButton(onClick = {
@@ -463,6 +460,7 @@ fun PostDetailEditor(
                         tfv = tfv,
                         onTfvChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
                         focusRequester = focusRequester,
+                        onHelp = { helpOpen = true },
                         applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
                         // Bildtext-Toolbar wirkt auf das jeweilige Beschreibungsfeld (gleiche Mechanik wie Haupttext).
                         titleApply = { idx, transform ->
@@ -568,6 +566,7 @@ private fun SourceEditor(
     tfv: TextFieldValue,
     onTfvChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester,
+    onHelp: () -> Unit,
     applyToTfv: ((TextFieldValue) -> TextFieldValue) -> Unit,
     titleApply: (Int, (TextFieldValue) -> TextFieldValue) -> Unit,
     images: List<String>,
@@ -597,7 +596,7 @@ private fun SourceEditor(
             placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).focusRequester(focusRequester),
         )
-        MarkdownToolbar(value = tfv, apply = applyToTfv)
+        MarkdownToolbar(value = tfv, apply = applyToTfv, onHelp = onHelp)
 
         images.forEachIndexed { index, sha ->
             Column(Modifier.fillMaxWidth().padding(8.dp)) {
@@ -630,7 +629,7 @@ private fun SourceEditor(
                         .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
                 )
                 // Gleiche Toolbar wie beim Haupttext – wirkt auf genau dieses Beschreibungsfeld.
-                MarkdownToolbar(value = titleValue, apply = { transform -> titleApply(index, transform) })
+                MarkdownToolbar(value = titleValue, apply = { transform -> titleApply(index, transform) }, onHelp = onHelp)
             }
         }
         // Tastaturhoher Puffer: das letzte (Bild-)Feld kann so über die Tastatur gescrollt
@@ -645,31 +644,34 @@ private fun SourceEditor(
  * [value] dient der Aktiv/Inaktiv-Logik (Titelzeile, Zeilenauswahl), [apply] wendet eine
  * Transformation auf das zugehörige Feld an (und fokussiert es danach wieder).
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun MarkdownToolbar(
     value: TextFieldValue,
     apply: ((TextFieldValue) -> TextFieldValue) -> Unit,
+    onHelp: () -> Unit,
 ) {
     // Auf der Titelzeile (1. Zeile) sind die Format-Knöpfe inaktiv.
     val firstNl = value.text.indexOf('\n').let { if (it < 0) value.text.length else it }
     val onTitleLine = value.selection.start <= firstNl
     val hasLineSelection = !value.selection.collapsed && minOf(value.selection.start, value.selection.end) > firstNl
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    // Rendert genau MARKDOWN_TOOLBAR (datengetrieben + exhaustives when => kein Knopf fällt unbemerkt weg).
+    // FlowRow statt horizontalem Scroll: passt nicht alles in eine Zeile (schmale Geräte), bricht der
+    // Rest (↑ ↓ ?) in eine zweite Zeile um – nie abgeschnitten, alle Labels bleiben sichtbar.
+    FlowRow(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        TbButton("☐ Aufgabe", enabled = !onTitleLine) { apply(::insertTask) }
-        TbButton("B", enabled = !onTitleLine, bold = true) { apply { toggleWrap(it, "**") } }
-        TbButton("I", enabled = !onTitleLine, italic = true) { apply { toggleWrap(it, "*") } }
-        TbButton("S", enabled = !onTitleLine, strike = true) { apply { toggleWrap(it, "~~") } }
-        TbButton("</>", enabled = !onTitleLine) { apply { applyCode(it) } }
-        IconButton(enabled = hasLineSelection, onClick = { apply { moveLines(it, up = true) } }) {
-            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Zeile(n) nach oben")
-        }
-        IconButton(enabled = hasLineSelection, onClick = { apply { moveLines(it, up = false) } }) {
-            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Zeile(n) nach unten")
+        for (item in MARKDOWN_TOOLBAR) when (item) {
+            MarkdownToolbarItem.TASK -> TbButton("☐ Aufgabe", enabled = !onTitleLine) { apply(::insertTask) }
+            MarkdownToolbarItem.BOLD -> TbButton("B", enabled = !onTitleLine, bold = true) { apply { toggleWrap(it, "**") } }
+            MarkdownToolbarItem.ITALIC -> TbButton("I", enabled = !onTitleLine, italic = true) { apply { toggleWrap(it, "*") } }
+            MarkdownToolbarItem.STRIKE -> TbButton("S", enabled = !onTitleLine, strike = true) { apply { toggleWrap(it, "~~") } }
+            MarkdownToolbarItem.CODE -> TbButton("</>", enabled = !onTitleLine) { apply { applyCode(it) } }
+            // Markierte Zeilen-/Blöcke nach oben/unten verschieben (nur bei Zeilenauswahl aktiv).
+            MarkdownToolbarItem.MOVE_UP -> TbButton("↑", enabled = hasLineSelection) { apply { moveLines(it, up = true) } }
+            MarkdownToolbarItem.MOVE_DOWN -> TbButton("↓", enabled = hasLineSelection) { apply { moveLines(it, up = false) } }
+            MarkdownToolbarItem.HELP -> TbButton("?", enabled = true) { onHelp() }
         }
     }
 }
@@ -813,11 +815,17 @@ private fun ImageActionMenu(
     }
 }
 
-/** Kleiner Toolbar-Knopf. */
+/** Kleiner Toolbar-Knopf. defaultMinSize hebt den 58-dp-Mindestbreiten-Boden von TextButton auf,
+ *  sonst passen die 8 Knöpfe (inkl. ↑ ↓ ?) auf schmalen Geräten nicht nebeneinander. */
 @Composable
 private fun TbButton(label: String, enabled: Boolean, bold: Boolean = false, italic: Boolean = false, strike: Boolean = false, onClick: () -> Unit) {
     val color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-    TextButton(onClick = onClick, enabled = enabled, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+        modifier = Modifier.defaultMinSize(minWidth = 1.dp, minHeight = 36.dp),
+    ) {
         Text(
             label,
             color = color,
