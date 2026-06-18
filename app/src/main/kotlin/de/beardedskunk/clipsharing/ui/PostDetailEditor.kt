@@ -25,6 +25,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -108,11 +111,12 @@ fun PostDetailEditor(
     feed: Feed,
     post: PostState?,
     /**
-     * #5-lite: Wurde der Beitrag aus einem Suchtreffer geoeffnet, hier der Suchbegriff.
-     * Dann oeffnet die Ansicht direkt im Edit-Modus mit dem Cursor am ENDE der ersten
-     * Zeile, die den Begriff enthaelt (statt voller Suche in der gerenderten Ansicht).
+     * Wurde der Beitrag aus einer Suche geoeffnet: dieser Suchbegriff. Die Ansicht startet dann
+     * im RENDER-Modus mit aktiver Suche (Treffer hervorgehoben, durchsteppbar, Bild-Beschreibungen
+     * klappen am Treffer auf). Tippt man dann in einen Treffer, oeffnet der Edit-Modus mit
+     * markiertem Treffer.
      */
-    jumpToQuery: String? = null,
+    searchQuery: String? = null,
     /** #10: Nur-Lese-Ansicht (Fremdfeed ohne Schreibrecht) – keine Bearbeitung möglich. */
     readOnly: Boolean = false,
     onClose: () -> Unit,
@@ -156,6 +160,19 @@ fun PostDetailEditor(
             }
             titleFocusers.getOrNull(hit.target)?.requestFocus()
         }
+    }
+
+    // Im Render-Modus zaehlt die RenderedView ihre (gerenderten) Treffer; im Edit-Modus die Quell-Treffer.
+    var renderMatchCount by remember { mutableStateOf(0) }
+    val matchCount = if (sourceMode) matches.size else renderMatchCount
+    // Beim Wechsel Render<->Edit bzw. neuer Suche von vorne zaehlen.
+    LaunchedEffect(sourceMode) { matchIdx = 0 }
+
+    fun stepMatch(delta: Int) {
+        val c = matchCount
+        if (c == 0) return
+        val next = ((matchIdx + delta) % c + c) % c
+        if (sourceMode) jumpTo(next) else matchIdx = next // render: RenderedView scrollt/klappt auf
     }
 
     // Nach Bildauswahl in der Renderview: zum neuen Bild springen + dessen Titel-Feld fokussieren (Tbd #6).
@@ -207,15 +224,11 @@ fun PostDetailEditor(
         }
     }
 
-    // Bonus: aus einem Suchtreffer geoeffnet -> direkt in Edit, der Treffer ist MARKIERT
-    // (Cursor-/Auswahlposition dadurch eindeutig).
+    // Aus der Suche geoeffnet: im RENDER-Modus die Suche gleich aktivieren (gleiches Suchwort).
     LaunchedEffect(Unit) {
-        if (post != null && !jumpToQuery.isNullOrBlank()) {
-            val idx = tfv.text.indexOf(jumpToQuery, ignoreCase = true)
-            val sel = if (idx >= 0) TextRange(idx, idx + jumpToQuery.length) else TextRange(tfv.text.length)
-            tfv = tfv.copy(selection = sel)
-            sourceMode = true
-            pendingEditFocus = true
+        if (!searchQuery.isNullOrBlank()) {
+            findQuery = searchQuery
+            findOpen = true
         }
     }
 
@@ -411,69 +424,112 @@ fun PostDetailEditor(
             )
         },
     ) { padding ->
-        if (sourceMode) {
-            SourceEditor(
-                padding = padding,
-                tfv = tfv,
-                onTfvChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
-                focusRequester = focusRequester,
-                findOpen = findOpen,
-                findQuery = findQuery,
-                onFindQuery = { findQuery = it; matchIdx = 0 },
-                matchLabel = if (matches.isEmpty()) "0/0" else "${matchIdx + 1}/${matches.size}",
-                hasMatches = matches.isNotEmpty(),
-                onPrev = { jumpTo(matchIdx - 1) },
-                onNext = { jumpTo(matchIdx + 1) },
-                onHelp = { helpOpen = true },
-                applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
-                images = images,
-                imageTitles = imageTitles,
-                titleFocusers = titleFocusers,
-                maxImageHeight = maxImageHeight,
-                blobStore = blobStore,
-                editTargets = editTargets,
-                imageMenuFor = imageMenuFor,
-                onImageMenu = { imageMenuFor = it },
-                onView = { viewingIndex = it },
-                onEdit = { idx, sha, t, force -> launchEdit(idx, sha, t, force) },
-                onShare = { shareImage(it) },
-                onRemove = { idx ->
-                    images = images.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                    imageTitles = imageTitles.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                },
-                onTitleChange = { idx, nv ->
-                    imageTitles = imageTitles.toMutableList().also {
-                        while (it.size <= idx) it.add(TextFieldValue(""))
-                        it[idx] = handleEnter(it[idx], nv) ?: nv
-                    }
-                },
-            )
-        } else {
-            RenderedView(
-                padding = padding,
-                text = tfv.text,
-                onToggleTask = { if (!readOnly) toggleTask(it) },
-                onEditAt = { off ->
-                    if (!readOnly) {
-                        // #5-lite: Tipp auf gerenderten Text (NICHT auf eine Aufgaben-Checkbox,
-                        // die toggelt separat) -> Edit-Modus, Cursor ans Ende DIESER Zeile.
-                        tfv = tfv.copy(selection = TextRange(endOfLineAt(tfv.text, off)))
-                        sourceMode = true
-                        pendingEditFocus = true
-                    }
-                },
-                images = images,
-                imageTitles = imageTitles,
-                maxImageHeight = maxImageHeight,
-                blobStore = blobStore,
-                imageMenuFor = imageMenuFor,
-                onImageMenu = { imageMenuFor = it },
-                onView = { viewingIndex = it },
-                onEdit = { idx, sha, force -> launchEdit(idx, sha, null, force) },
-                onShare = { shareImage(it) },
-                onToggleImageTask = { idx, line -> toggleImageTask(idx, line) },
-            )
+        // Such-Leiste FIX oben (ausserhalb des scrollenden Inhalts) -> sie bleibt sichtbar,
+        // auch wenn die Tastatur hochpoppt (#7). Inhalt darunter bekommt imePadding.
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            if (findOpen) {
+                FindBar(
+                    query = findQuery,
+                    onQuery = { findQuery = it; matchIdx = 0 },
+                    label = if (matchCount == 0) "0/0" else "${matchIdx + 1}/$matchCount",
+                    hasMatches = matchCount > 0,
+                    onPrev = { stepMatch(-1) },
+                    onNext = { stepMatch(1) },
+                )
+            }
+            Box(Modifier.weight(1f).fillMaxWidth().imePadding()) {
+                if (sourceMode) {
+                    SourceEditor(
+                        tfv = tfv,
+                        onTfvChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
+                        focusRequester = focusRequester,
+                        onHelp = { helpOpen = true },
+                        applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
+                        images = images,
+                        imageTitles = imageTitles,
+                        titleFocusers = titleFocusers,
+                        maxImageHeight = maxImageHeight,
+                        blobStore = blobStore,
+                        editTargets = editTargets,
+                        imageMenuFor = imageMenuFor,
+                        onImageMenu = { imageMenuFor = it },
+                        onView = { viewingIndex = it },
+                        onEdit = { idx, sha, t, force -> launchEdit(idx, sha, t, force) },
+                        onShare = { shareImage(it) },
+                        onRemove = { idx ->
+                            images = images.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                            imageTitles = imageTitles.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                        },
+                        onTitleChange = { idx, nv ->
+                            imageTitles = imageTitles.toMutableList().also {
+                                while (it.size <= idx) it.add(TextFieldValue(""))
+                                it[idx] = handleEnter(it[idx], nv) ?: nv
+                            }
+                        },
+                    )
+                } else {
+                    RenderedView(
+                        text = tfv.text,
+                        onToggleTask = { if (!readOnly) toggleTask(it) },
+                        onEditAt = { off ->
+                            if (!readOnly) {
+                                // Tipp auf gerenderten Text -> Edit. Bei aktiver Suche den Treffer
+                                // an/um der Tippstelle markieren; sonst Cursor ans Zeilenende (#5-lite).
+                                val sel = if (findOpen && findQuery.isNotBlank()) {
+                                    var i = tfv.text.indexOf(findQuery, maxOf(0, off - findQuery.length), ignoreCase = true)
+                                    if (i < 0) i = tfv.text.indexOf(findQuery, 0, ignoreCase = true)
+                                    if (i >= 0) TextRange(i, i + findQuery.length) else TextRange(endOfLineAt(tfv.text, off))
+                                } else {
+                                    TextRange(endOfLineAt(tfv.text, off))
+                                }
+                                tfv = tfv.copy(selection = sel)
+                                sourceMode = true
+                                pendingEditFocus = true
+                            }
+                        },
+                        images = images,
+                        imageTitles = imageTitles,
+                        maxImageHeight = maxImageHeight,
+                        blobStore = blobStore,
+                        imageMenuFor = imageMenuFor,
+                        onImageMenu = { imageMenuFor = it },
+                        onView = { viewingIndex = it },
+                        onEdit = { idx, sha, force -> launchEdit(idx, sha, null, force) },
+                        onShare = { shareImage(it) },
+                        onToggleImageTask = { idx, line -> toggleImageTask(idx, line) },
+                        query = if (findOpen) findQuery else null,
+                        currentMatch = matchIdx,
+                        onMatchCount = { renderMatchCount = it },
+                    )
+                }
+            }
         }
+    }
+}
+
+/** Fixe Such-Leiste (oben, ausserhalb des Scrolls) – Suchfeld + Treffer-Zähler + vor/zurück. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FindBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    label: String,
+    hasMatches: Boolean,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        OutlinedTextField(
+            value = query, onValueChange = onQuery,
+            placeholder = { Text("Suchen…") }, singleLine = true, modifier = Modifier.weight(1f),
+        )
+        Text(label)
+        IconButton(enabled = hasMatches, onClick = onPrev) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Vorheriger Treffer") }
+        IconButton(enabled = hasMatches, onClick = onNext) { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Nächster Treffer") }
     }
 }
 
@@ -481,17 +537,9 @@ fun PostDetailEditor(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun SourceEditor(
-    padding: androidx.compose.foundation.layout.PaddingValues,
     tfv: TextFieldValue,
     onTfvChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester,
-    findOpen: Boolean,
-    findQuery: String,
-    onFindQuery: (String) -> Unit,
-    matchLabel: String,
-    hasMatches: Boolean,
-    onPrev: () -> Unit,
-    onNext: () -> Unit,
     onHelp: () -> Unit,
     applyToTfv: ((TextFieldValue) -> TextFieldValue) -> Unit,
     images: List<String>,
@@ -513,28 +561,8 @@ private fun SourceEditor(
     val onTitleLine = tfv.selection.start <= firstNl
     val hasLineSelection = !tfv.selection.collapsed && minOf(tfv.selection.start, tfv.selection.end) > firstNl
 
-    // Aeusserste Spalte scrollt NICHT: die Such-Leiste bleibt oben fix (#7). consumeWindowInsets
-    // verhindert den weissen Streifen (#8): sonst zaehlen Scaffold-Navbar-Inset UND imePadding
-    // doppelt. imePadding hier verkleinert die Editier-Flaeche, sodass der Cursor ueber der
-    // Tastatur sichtbar bleibt (#9).
-    Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
-        if (findOpen) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                OutlinedTextField(
-                    value = findQuery, onValueChange = onFindQuery,
-                    placeholder = { Text("Suchen…") }, singleLine = true, modifier = Modifier.weight(1f),
-                )
-                Text(matchLabel)
-                IconButton(enabled = hasMatches, onClick = onPrev) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Vorheriger Treffer") }
-                IconButton(enabled = hasMatches, onClick = onNext) { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Nächster Treffer") }
-            }
-        }
-
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+    // Editier-Flaeche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         OutlinedTextField(
             value = tfv,
             onValueChange = onTfvChange,
@@ -592,7 +620,6 @@ private fun SourceEditor(
                 )
             }
         }
-        }
     }
 }
 
@@ -600,7 +627,6 @@ private fun SourceEditor(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RenderedView(
-    padding: androidx.compose.foundation.layout.PaddingValues,
     text: String,
     onToggleTask: (Int) -> Unit,
     onEditAt: (Int) -> Unit,
@@ -614,59 +640,97 @@ private fun RenderedView(
     onEdit: (Int, String, Boolean) -> Unit,
     onShare: (String) -> Unit,
     onToggleImageTask: (Int, Int) -> Unit,
+    query: String?,
+    currentMatch: Int,
+    onMatchCount: (Int) -> Unit,
 ) {
-    // Aufgeklappte Bild-Beschreibungen (Tbd #12): per Default nur der Titel, Pfeil klappt Details auf.
     val descExpanded = remember { mutableStateMapOf<Int, Boolean>() }
-    Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(12.dp)) {
-        val title = postTitle(text)
-        if (title.isNotBlank()) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 6.dp))
-        }
-        MarkdownBody(text, onToggleTask = onToggleTask, onEditAt = onEditAt)
+    val listState = rememberLazyListState()
+    val body = MaterialTheme.typography.bodyLarge
+    val title = postTitle(text)
+    val blocks = remember(text) { parseMarkdownBody(text) }
+    val q = query?.takeIf { it.isNotBlank() }
+    val titleItems = if (title.isNotBlank()) 1 else 0
 
-        images.forEachIndexed { index, sha ->
-            Spacer(Modifier.size(12.dp))
-            Box(Modifier.fillMaxWidth()) {
-                val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
-                val imgModifier = Modifier.fillMaxWidth().heightIn(max = maxImageHeight).combinedClickable(
-                    onClick = { onView(index) }, onLongClick = { onImageMenu(index) },
-                )
-                if (bmp != null) Image(bitmap = bmp, contentDescription = null, contentScale = ContentScale.Fit, modifier = imgModifier)
-                else Text("🖼 (Bild nicht lokal)", modifier = imgModifier)
-                ImageActionMenu(
-                    expanded = imageMenuFor == index, onDismiss = { onImageMenu(null) },
-                    editTargets = emptyList(),
-                    onView = { onImageMenu(null); onView(index) },
-                    onEdit = { _, force -> onImageMenu(null); onEdit(index, sha, force) },
-                    onShare = { onImageMenu(null); onShare(sha) },
-                    onRemove = null,
+    // Treffer-Anker in LazyColumn-Item-Reihenfolge: [Titel?] + Bloecke + Bilder.
+    // Triple(itemIndex, bildIndexOder-1, gerenderter Treffer-Bereich).
+    val anchors = remember(text, q, imageTitles.map { it.text }, images) {
+        if (q == null) emptyList() else buildList {
+            var item = 0
+            if (title.isNotBlank()) { matchRanges(title, q).forEach { add(Triple(item, -1, it)) }; item++ }
+            for (b in blocks) { matchRanges(b.plain, q).forEach { add(Triple(item, -1, it)) }; item++ }
+            images.indices.forEach { i ->
+                matchRanges(imageTitles.getOrNull(i)?.text ?: "", q).forEach { add(Triple(item, i, it)) }
+                item++
+            }
+        }
+    }
+    LaunchedEffect(anchors.size) { onMatchCount(anchors.size) }
+    LaunchedEffect(currentMatch, anchors) {
+        anchors.getOrNull(currentMatch)?.let { (itemIdx, img, _) ->
+            if (img >= 0) descExpanded[img] = true // Treffer in Bild-Beschreibung -> diese aufklappen
+            runCatching { listState.animateScrollToItem(itemIdx) }
+        }
+    }
+    val cur = anchors.getOrNull(currentMatch)
+    fun curRangeFor(itemIndex: Int): IntRange? =
+        if (cur != null && cur.first == itemIndex && cur.second < 0) cur.third else null
+
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp), state = listState) {
+        if (title.isNotBlank()) {
+            item("title") {
+                Text(
+                    highlightedText(title, q, curRangeFor(0)),
+                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(bottom = 6.dp),
                 )
             }
-            val desc = imageTitles.getOrNull(index)?.text ?: ""
-            val dTitle = postTitle(desc)
-            val hasBody = postBody(desc).isNotBlank()
-            val isOpen = descExpanded[index] == true
-            if (dTitle.isNotBlank() || hasBody) {
-                Row(
-                    Modifier.fillMaxWidth().let { if (hasBody) it.clickable { descExpanded[index] = !isOpen } else it },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        dTitle.ifBlank { "Details" },
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f).padding(top = 4.dp),
+        }
+        itemsIndexed(blocks) { idx, b ->
+            MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
+        }
+        itemsIndexed(images) { i, sha ->
+            Column(Modifier.fillMaxWidth()) {
+                Spacer(Modifier.size(12.dp))
+                Box(Modifier.fillMaxWidth()) {
+                    val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
+                    val imgModifier = Modifier.fillMaxWidth().heightIn(max = maxImageHeight).combinedClickable(
+                        onClick = { onView(i) }, onLongClick = { onImageMenu(i) },
                     )
-                    if (hasBody) {
-                        Icon(
-                            if (isOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                            contentDescription = if (isOpen) "Einklappen" else "Aufklappen",
+                    if (bmp != null) Image(bitmap = bmp, contentDescription = null, contentScale = ContentScale.Fit, modifier = imgModifier)
+                    else Text("🖼 (Bild nicht lokal)", modifier = imgModifier)
+                    ImageActionMenu(
+                        expanded = imageMenuFor == i, onDismiss = { onImageMenu(null) },
+                        editTargets = emptyList(),
+                        onView = { onImageMenu(null); onView(i) },
+                        onEdit = { _, force -> onImageMenu(null); onEdit(i, sha, force) },
+                        onShare = { onImageMenu(null); onShare(sha) },
+                        onRemove = null,
+                    )
+                }
+                val desc = imageTitles.getOrNull(i)?.text ?: ""
+                val dTitle = postTitle(desc)
+                val hasBody = postBody(desc).isNotBlank()
+                val isOpen = descExpanded[i] == true
+                if (dTitle.isNotBlank() || hasBody) {
+                    Row(
+                        Modifier.fillMaxWidth().let { if (hasBody) it.clickable { descExpanded[i] = !isOpen } else it },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            highlightedText(dTitle.ifBlank { "Details" }, q, null),
+                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f).padding(top = 4.dp),
                         )
+                        if (hasBody) {
+                            Icon(
+                                if (isOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                                contentDescription = if (isOpen) "Einklappen" else "Aufklappen",
+                            )
+                        }
                     }
                 }
-            }
-            if (hasBody && isOpen) {
-                MarkdownBody(desc, onToggleTask = { line -> onToggleImageTask(index, line) })
+                if (hasBody && isOpen) MarkdownBody(desc, onToggleTask = { line -> onToggleImageTask(i, line) }, highlight = q)
             }
         }
     }

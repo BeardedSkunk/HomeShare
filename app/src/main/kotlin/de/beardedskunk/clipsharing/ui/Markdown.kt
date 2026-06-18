@@ -78,7 +78,7 @@ fun taskCounts(text: String): Pair<Int, Int>? {
     return if (total == 0) null else done to total
 }
 
-private sealed interface MdBlock {
+sealed interface MdBlock {
     data class Heading(val level: Int, val inline: Inline) : MdBlock
     data class Para(val inline: Inline) : MdBlock
     data class Bullet(val indent: Int, val inline: Inline) : MdBlock
@@ -88,6 +88,38 @@ private sealed interface MdBlock {
     data class Code(val text: String, val srcStart: Int) : MdBlock
     data object Rule : MdBlock
     data object Blank : MdBlock
+
+    /** Gerenderter (markup-freier) Klartext dieses Blocks – für die Such-Treffersuche. */
+    val plain: String
+        get() = when (this) {
+            is Heading -> inline.spans.text
+            is Para -> inline.spans.text
+            is Bullet -> inline.spans.text
+            is Numbered -> inline.spans.text
+            is Task -> inline.spans.text
+            is Quote -> inline.spans.text
+            is Code -> text
+            Rule, Blank -> ""
+        }
+}
+
+/** Parst den Körper (ab Zeile 2) in Blöcke – öffentlich für die Render-Suche. */
+fun parseMarkdownBody(text: String): List<MdBlock> {
+    val nl = text.indexOf('\n')
+    val bodyStart = if (nl < 0) text.length else nl + 1
+    return parseBlocks(postBody(text), lineOffset = 1, bodyStart = bodyStart)
+}
+
+/** Alle (case-insensitiven) Treffer-Bereiche von [query] in [text]. */
+fun matchRanges(text: String, query: String): List<IntRange> {
+    if (query.isBlank()) return emptyList()
+    val out = ArrayList<IntRange>()
+    var i = text.indexOf(query, 0, ignoreCase = true)
+    while (i >= 0) {
+        out += i until (i + query.length)
+        i = text.indexOf(query, i + query.length, ignoreCase = true)
+    }
+    return out
 }
 
 /**
@@ -246,65 +278,90 @@ fun MarkdownBody(
     modifier: Modifier = Modifier,
     onToggleTask: ((sourceLine: Int) -> Unit)? = null,
     onEditAt: ((sourceOffset: Int) -> Unit)? = null,
+    highlight: String? = null,
 ) {
-    val nl = text.indexOf('\n')
-    val bodyStart = if (nl < 0) text.length else nl + 1
-    val blocks = parseBlocks(postBody(text), lineOffset = 1, bodyStart = bodyStart)
     val body = MaterialTheme.typography.bodyLarge
     Column(modifier) {
-        for (b in blocks) {
-            when (b) {
-                is MdBlock.Blank -> Spacer(Modifier.height(6.dp))
-                is MdBlock.Rule -> HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                is MdBlock.Heading -> MdText(
-                    b.inline,
-                    MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
-                    onEditAt,
-                    Modifier.padding(top = 4.dp, bottom = 2.dp),
-                )
-                is MdBlock.Para -> MdText(b.inline, body, onEditAt)
-                is MdBlock.Bullet -> ListRow(b.indent, bulletGlyph(b.indent)) { MdText(b.inline, body, onEditAt) }
-                is MdBlock.Numbered -> ListRow(b.indent, "${b.number}.") { MdText(b.inline, body, onEditAt) }
-                is MdBlock.Quote -> Row(Modifier.padding(vertical = 2.dp)) {
-                    Surface(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.width(3.dp).height(20.dp)) {}
-                    MdText(b.inline, body, onEditAt, Modifier.padding(start = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                is MdBlock.Code -> Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                ) {
-                    val codeMod = Modifier.padding(10.dp).let { if (onEditAt != null) it.clickable { onEditAt(b.srcStart) } else it }
-                    Text(b.text, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = codeMod)
-                }
-                is MdBlock.Task -> Row(
-                    Modifier.fillMaxWidth().padding(vertical = 1.dp).padding(start = (b.indent * 8).dp),
-                    // Bei mehrzeiligen Aufgaben Kästchen oben (auf Höhe der ersten Zeile) statt mittig.
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Checkbox(
-                        checked = b.checked,
-                        onCheckedChange = if (onToggleTask != null) { _ -> onToggleTask(b.sourceLine) } else null,
-                        enabled = onToggleTask != null,
-                        modifier = Modifier.size(28.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    MdText(
-                        b.inline,
-                        body,
-                        onEditAt,
-                        color = if (b.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                        strike = b.checked,
-                    )
-                }
-            }
+        for (b in parseMarkdownBody(text)) MdBlockView(b, body, onToggleTask, onEditAt, highlight)
+    }
+}
+
+/** Rendert EINEN Markdown-Block (für die block-weise Render-Suche per LazyColumn). */
+@Composable
+fun MdBlockView(
+    b: MdBlock,
+    body: TextStyle,
+    onToggleTask: ((sourceLine: Int) -> Unit)?,
+    onEditAt: ((sourceOffset: Int) -> Unit)?,
+    highlight: String? = null,
+    currentRange: IntRange? = null,
+) {
+    when (b) {
+        is MdBlock.Blank -> Spacer(Modifier.height(6.dp))
+        is MdBlock.Rule -> HorizontalDivider(Modifier.padding(vertical = 6.dp))
+        is MdBlock.Heading -> MdText(
+            b.inline, MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+            onEditAt, Modifier.padding(top = 4.dp, bottom = 2.dp), highlight = highlight, current = currentRange,
+        )
+        is MdBlock.Para -> MdText(b.inline, body, onEditAt, highlight = highlight, current = currentRange)
+        is MdBlock.Bullet -> ListRow(b.indent, bulletGlyph(b.indent)) { MdText(b.inline, body, onEditAt, highlight = highlight, current = currentRange) }
+        is MdBlock.Numbered -> ListRow(b.indent, "${b.number}.") { MdText(b.inline, body, onEditAt, highlight = highlight, current = currentRange) }
+        is MdBlock.Quote -> Row(Modifier.padding(vertical = 2.dp)) {
+            Surface(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.width(3.dp).height(20.dp)) {}
+            MdText(b.inline, body, onEditAt, Modifier.padding(start = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, highlight = highlight, current = currentRange)
+        }
+        is MdBlock.Code -> Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(6.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        ) {
+            val codeMod = Modifier.padding(10.dp).let { if (onEditAt != null) it.clickable { onEditAt(b.srcStart) } else it }
+            Text(highlighted(AnnotatedString(b.text), highlight, currentRange), style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = codeMod)
+        }
+        is MdBlock.Task -> Row(
+            Modifier.fillMaxWidth().padding(vertical = 1.dp).padding(start = (b.indent * 8).dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Checkbox(
+                checked = b.checked,
+                onCheckedChange = if (onToggleTask != null) { _ -> onToggleTask(b.sourceLine) } else null,
+                enabled = onToggleTask != null,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            MdText(
+                b.inline, body, onEditAt,
+                color = if (b.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                strike = b.checked, highlight = highlight, current = currentRange,
+            )
+        }
+    }
+}
+
+private val MATCH_BG = Color(0x55FFEB3B)        // alle Treffer: gelb, transparent
+private val MATCH_BG_CURRENT = Color(0xFFFFB300) // aktueller Treffer: kräftiges Orange
+
+/** Such-Hervorhebung über einem reinen String (z. B. dem Titel). */
+fun highlightedText(text: String, highlight: String?, current: IntRange?): AnnotatedString =
+    highlighted(AnnotatedString(text), highlight, current)
+
+/** Legt Treffer-Hintergründe über eine AnnotatedString (Such-Hervorhebung). */
+private fun highlighted(s: AnnotatedString, highlight: String?, current: IntRange?): AnnotatedString {
+    if (highlight.isNullOrBlank()) return s
+    val ranges = matchRanges(s.text, highlight)
+    if (ranges.isEmpty()) return s
+    return buildAnnotatedString {
+        append(s)
+        for (r in ranges) {
+            val isCur = current != null && r.first == current.first
+            addStyle(SpanStyle(background = if (isCur) MATCH_BG_CURRENT else MATCH_BG), r.first, r.last + 1)
         }
     }
 }
 
 /**
- * Text eines Inline-Blocks. Bei gesetztem [onEditAt] öffnet ein Tipp die Edit-Ansicht möglichst
- * zeichengenau an der getippten Quellstelle (über die Offset-Karte des [Inline]).
+ * Text eines Inline-Blocks. [onEditAt] = Tipp öffnet die Edit-Ansicht an der Quellstelle.
+ * [highlight] hebt Such-Treffer hervor, [current] markiert den aktuellen Treffer stärker.
  */
 @Composable
 private fun MdText(
@@ -314,6 +371,8 @@ private fun MdText(
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
     strike: Boolean = false,
+    highlight: String? = null,
+    current: IntRange? = null,
 ) {
     var layout by remember(inline) { mutableStateOf<TextLayoutResult?>(null) }
     val tapMod = if (onEditAt != null) {
@@ -327,7 +386,7 @@ private fun MdText(
         modifier
     }
     Text(
-        inline.spans,
+        highlighted(inline.spans, highlight, current),
         style = if (strike) style.copy(textDecoration = TextDecoration.LineThrough) else style,
         color = color,
         modifier = tapMod,
