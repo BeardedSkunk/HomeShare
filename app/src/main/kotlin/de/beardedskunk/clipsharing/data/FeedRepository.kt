@@ -11,6 +11,9 @@ import de.beardedskunk.clipsharing.sync.OpCodec
 import de.beardedskunk.clipsharing.sync.OpDto
 import de.beardedskunk.clipsharing.sync.OpSource
 import de.beardedskunk.clipsharing.sync.PeerState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import java.util.UUID
 
 /**
@@ -31,6 +34,17 @@ class FeedRepository(
 
     /** Wird nach JEDER Aenderung aufgerufen (lokal UND Sync-Ingest) -> Kalender-Sync. */
     var onAnyChange: (() -> Unit)? = null
+
+    private val _revision = MutableStateFlow(0)
+
+    /**
+     * Erhoeht sich bei JEDER Aenderung (lokale Aktion UND Sync-Ingest). Die UI beobachtet
+     * das und laedt neu – damit aktualisieren sich Feed-/Eintragslisten automatisch beim
+     * Sync, statt erst beim Verlassen/Neubetreten des Screens.
+     */
+    val revision: StateFlow<Int> = _revision
+
+    private fun bumpRevision() = _revision.update { it + 1 }
 
     @Volatile
     private var migrated = false
@@ -122,6 +136,7 @@ class FeedRepository(
         } finally {
             db.endTransaction()
         }
+        bumpRevision()
         onLocalChange?.invoke()
         onAnyChange?.invoke()
         return version
@@ -141,6 +156,7 @@ class FeedRepository(
         } finally {
             db.endTransaction()
         }
+        bumpRevision()
         onAnyChange?.invoke()
         return true
     }
@@ -409,6 +425,11 @@ class FeedRepository(
         } finally {
             db.endTransaction()
         }
+        // Nach dem Neuaufbau koennen Feeds erst JETZT als Kalender-Feeds erkannt sein
+        // (calendar=1). Einen Kalender-Sync anstossen, sonst landen deren Termine erst
+        // beim naechsten Neustart/Edit im Android-Kalender.
+        bumpRevision()
+        onAnyChange?.invoke()
     }
 
     /** Alle aktuell angezeigten Bild-Hashes (fuer gezielten Blob-Pull). */
