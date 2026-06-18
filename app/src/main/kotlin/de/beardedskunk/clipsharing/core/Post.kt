@@ -44,6 +44,27 @@ class Post(val postId: String) {
     /** Der aktuelle Stand bei genau einem Head, sonst null (Konflikt oder leer). */
     fun current(): PostVersion? = heads().singleOrNull()
 
+    /** Anzuzeigender Head bei mehreren: hoechste Uhr (siehe [headOrder]). */
+    fun shownHead(): PostVersion? = heads().lastOrNull()
+
+    /**
+     * Echter, manuell aufzuloesender Konflikt: mehrere Heads mit UNTERSCHIEDLICHEM
+     * Inhalt. Mehrere inhaltsgleiche Heads sind KEIN Konflikt – es gibt nichts zu
+     * entscheiden, also wird nirgends gefragt. Das tritt auf, wenn
+     *  - zwei Geraete offline exakt dieselbe Aenderung gemacht haben (z. B. denselben
+     *    Tippfehler korrigiert), oder
+     *  - dieselbe Aenderung ueber zwei Sync-Pfade ankam.
+     * Es wird bewusst KEINE neue Merge-Version erzeugt (das wuerde je Geraet eine andere
+     * Merge-Op erzeugen -> Ping-Pong); die mehreren Heads bleiben bestehen und kollabieren
+     * spaeter bei der naechsten echten Bearbeitung (deren Eltern dann alle Heads sind).
+     */
+    fun hasContentConflict(): Boolean {
+        val h = heads()
+        if (h.size <= 1) return false
+        val shownContent = h.last().content
+        return h.any { it.content != shownContent }
+    }
+
     /**
      * Loest einen Konflikt auf, indem eine Merge-Version mit dem gewaehlten
      * Inhalt erzeugt und eingespeist wird; ihre Eltern sind die aktuellen Heads.

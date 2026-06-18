@@ -285,12 +285,10 @@ class FeedRepository(
         if (heads.isEmpty()) return
         val shown = heads.last() // hoechste Uhr (siehe Post.headOrder)
         val root = post.allVersions().firstOrNull { it.parents.isEmpty() } ?: shown
-        // Echter Konflikt nur, wenn die Heads sich im INHALT unterscheiden. Sind mehrere
-        // Heads inhaltsgleich (dieselbe Aenderung ueber zwei Sync-Pfade angekommen, oder
-        // zwei Geraete haben zufaellig dasselbe geschrieben), gibt es nichts zu entscheiden
-        // -> nicht als Konflikt markieren. Es wird KEINE neue Merge-Version geschrieben
-        // (sonst Ping-Pong unterschiedlicher Merge-Ops je Geraet); rein lokale Materialisierung.
-        val realConflict = heads.size > 1 && heads.any { it.content != shown.content }
+        // Echter Konflikt nur bei inhaltlich unterschiedlichen Heads – inhaltsgleiche Heads
+        // (gleiche Aenderung offline doppelt gemacht / ueber zwei Sync-Pfade) sind keiner.
+        // Einzige Quelle der Wahrheit: Post.hasContentConflict() (per Unit-Test abgesichert).
+        val realConflict = post.hasContentConflict()
         val cv = ContentValues().apply {
             put("post_id", postId)
             put("feed_id", feedId)

@@ -96,6 +96,61 @@ class PostConflictTest {
     }
 
     @Test
+    fun threeDevices_offlineEdits_resolveOnOne_clearsOnAllOthers() {
+        // Genau das vom Nutzer beschriebene Szenario:
+        //  1) D1 legt Post an, D2+D3 syncen ihn ein.
+        //  2) D2 und D3 gehen offline und aendern den Post unterschiedlich.
+        //  3) Alle kommen zurueck -> auf ALLEN drei Geraeten ein echter Konflikt.
+        //  4) NUR EIN Geraet loest auf -> die Merge-Version klaert ihn fuer alle anderen,
+        //     ohne dass dort erneut gefragt wird.
+        val base = v(emptySet(), "D1", 1, "Einkaufsliste")
+        val onD2 = v(setOf(base.versionId), "D2", 5, "Einkaufsliste: Milch")
+        val onD3 = v(setOf(base.versionId), "D3", 5, "Einkaufsliste: Brot")
+
+        // Jedes Geraet hat nach dem Wiederankoppeln alle drei Versionen.
+        fun replicaWithAll(): Post = Post(postId).apply { listOf(base, onD2, onD3).forEach { ingest(it) } }
+        val d1 = replicaWithAll(); val d2 = replicaWithAll(); val d3 = replicaWithAll()
+        listOf(d1, d2, d3).forEach {
+            assertTrue("alle drei sehen den Konflikt", it.hasContentConflict())
+            assertEquals(2, it.heads().size)
+        }
+
+        // Nur D1 loest auf – Eltern sind ALLE aktuellen Heads (D2- und D3-Fassung).
+        val merge = d1.resolveConflict(PostContent(text = "Einkaufsliste: Milch, Brot"), "D1", Hlc(9, 0))
+        assertEquals(setOf(onD2.versionId, onD3.versionId), merge.parents)
+        assertFalse(d1.hasContentConflict())
+
+        // Die Merge-Version verteilt sich; D2 und D3 erhalten genau diese eine Op.
+        assertTrue(d2.ingest(merge)); assertTrue(d3.ingest(merge))
+        listOf(d2, d3).forEach {
+            assertFalse("nach Eintreffen des Merges kein Konflikt mehr", it.hasContentConflict())
+            assertEquals(merge.versionId, it.shownHead()?.versionId)
+            assertEquals("Einkaufsliste: Milch, Brot", it.shownHead()?.content?.text)
+        }
+    }
+
+    @Test
+    fun identicalOfflineEdits_areNotAConflict() {
+        // Bonus: D2 und D3 korrigieren offline unabhaengig denselben Tippfehler – gleicher
+        // Inhalt, aber andere versionId (anderes Geraet/HLC). Effektiv kein Konflikt.
+        val base = v(emptySet(), "D1", 1, "Hallo Welt")
+        val onD2 = v(setOf(base.versionId), "D2", 5, "Hallo, Welt")
+        val onD3 = v(setOf(base.versionId), "D3", 6, "Hallo, Welt")
+        assertTrue("verschiedene versionId trotz gleichem Inhalt", onD2.versionId != onD3.versionId)
+
+        val post = Post(postId).apply { listOf(base, onD2, onD3).forEach { ingest(it) } }
+        assertEquals("technisch zwei Heads", 2, post.heads().size)
+        assertFalse("aber inhaltsgleich -> kein zu entscheidender Konflikt", post.hasContentConflict())
+        assertEquals("Hallo, Welt", post.shownHead()?.content?.text)
+
+        // Eine spaetere echte Bearbeitung kollabiert die Heads wieder zu einem.
+        val next = v(post.heads().map { it.versionId }.toSet(), "D2", 7, "Hallo, Welt!")
+        post.ingest(next)
+        assertEquals(1, post.heads().size)
+        assertFalse(post.hasContentConflict())
+    }
+
+    @Test
     fun ingest_isIdempotent_andOrderIndependent() {
         val base = v(emptySet(), "A", 1, "x")
         val onA = v(setOf(base.versionId), "A", 2, "xa")
