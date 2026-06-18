@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,7 +104,9 @@ fun FeedScreen(
             }
         }
     }
-    LaunchedEffect(feed.id, searching, query) { reload() }
+    // revision: auch per Sync empfangene Aenderungen aktualisieren die Liste sofort.
+    val revision by repo.revision.collectAsState()
+    LaunchedEffect(feed.id, searching, query, revision) { reload() }
 
     // --- Vollbild-Ansicht eines Bildes ---
     val img = viewingImage
@@ -168,6 +171,8 @@ fun FeedScreen(
                 blobStore = blobStore,
                 feed = feed,
                 post = current,
+                // #5-lite: aus einem Suchtreffer geoeffnet -> direkt in Edit an der Fundstelle.
+                jumpToQuery = if (current != null && searching && query.isNotBlank()) query else null,
                 onClose = { editing = null; creatingNew = false; reload() },
             )
         }
