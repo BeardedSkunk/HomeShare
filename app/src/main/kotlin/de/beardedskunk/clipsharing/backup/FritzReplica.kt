@@ -28,7 +28,14 @@ data class FritzConfig(
     val useFtps: Boolean = false,
 )
 
-data class ReplicaResult(val pulledOps: Int, val pushedOps: Int, val pushedBlobs: Int, val pulledBlobs: Int)
+data class ReplicaResult(
+    val pulledOps: Int,
+    val pushedOps: Int,
+    val pushedBlobs: Int,
+    val pulledBlobs: Int,
+    /** benoetigte Op-Dateien, die trotz Retries NICHT von der Box geladen werden konnten (FTPS-Abbruch). */
+    val droppedOps: Int = 0,
+)
 
 /**
  * Passive Replik auf der FRITZ!Box ueber FTP. **Alle Dateien liegen im Klartext**
@@ -57,12 +64,12 @@ class FritzReplica(
         try {
             for (dir in listOf(cfg.baseDir.trimEnd('/'), root, logDir, blobsDir)) c.makeDirectory(dir)
             ensureGroup(c)
-            val pulled = pullOps(c)
+            val (pulled, dropped) = pullOps(c)
             val pushedOps = pushOps(c)
             val pushedBlobs = pushBlobs(c)
             val pulledBlobs = pullBlobs(c)
-            Log.i(TAG, "Sync fertig: pulledOps=$pulled pushedOps=$pushedOps pushedBlobs=$pushedBlobs pulledBlobs=$pulledBlobs")
-            return ReplicaResult(pulled, pushedOps, pushedBlobs, pulledBlobs)
+            Log.i(TAG, "Sync fertig: pulledOps=$pulled dropped=$dropped pushedOps=$pushedOps pushedBlobs=$pushedBlobs pulledBlobs=$pulledBlobs")
+            return ReplicaResult(pulled, pushedOps, pushedBlobs, pulledBlobs, dropped)
         } finally {
             runCatching { c.logout() }
             runCatching { c.disconnect() }
@@ -103,24 +110,27 @@ class FritzReplica(
 
     // ------------------------------------------------------------- Schritte
 
-    private fun pullOps(c: FTPClient): Int {
+    /** @return (uebernommen, nicht-ladbar) – nicht-ladbar = benoetigte Datei nach Retries nicht geholt. */
+    private fun pullOps(c: FTPClient): Pair<Int, Int> {
         val local = source.versionVector()
         val localGaps = local.mapValues { it.value.gaps.toHashSet() }
         val names = (c.listNames(logDir) ?: emptyArray()).map { it.substringAfterLast('/') }
             .filter { it.endsWith(".json") }
         Log.i(TAG, "pullOps: ${names.size} Dateien im log, lokal=$local")
         var pulled = 0
+        var dropped = 0
         for (name in names) {
             val (device, seq) = parseLogName(name) ?: continue
             val st = local[device]
             // Vorhanden = bekanntes Geraet, Seq <= max UND nicht in einer Luecke.
             // -> Luecken (fehlende Seqs in der Mitte) werden so von der Box nachgeladen.
             if (st != null && seq <= st.maxSeq && seq !in (localGaps[device] ?: emptySet())) continue
-            val text = retrieveText(c, "$logDir/$name") ?: continue
+            val text = retrieveText(c, "$logDir/$name")
+            if (text == null) { dropped++; continue } // benoetigt, aber nicht ladbar -> sichtbar machen
             val op = runCatching { opFromJson(text) }.getOrNull() ?: continue
             if (source.ingestOp(op)) pulled++
         }
-        return pulled
+        return pulled to dropped
     }
 
     private fun pushOps(c: FTPClient): Int {

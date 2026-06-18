@@ -66,6 +66,15 @@ class Post(val postId: String) {
     }
 
     /**
+     * Unvollstaendige Historie: irgendeine bekannte Version verweist auf einen Elternteil,
+     * den wir (noch) nicht haben. Dann sind mehrere Heads womoeglich nur ein Artefakt der
+     * fehlenden Op – das ist KEIN echter, manuell aufzuloesender Konflikt, sondern „synct noch".
+     * Sobald die fehlende Op ankommt, loest sich das von selbst.
+     */
+    fun hasMissingAncestors(): Boolean =
+        versions.values.any { v -> v.parents.any { it !in versions } }
+
+    /**
      * Loest einen Konflikt auf, indem eine Merge-Version mit dem gewaehlten
      * Inhalt erzeugt und eingespeist wird; ihre Eltern sind die aktuellen Heads.
      */

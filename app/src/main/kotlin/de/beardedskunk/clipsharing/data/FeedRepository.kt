@@ -516,10 +516,10 @@ class FeedRepository(
         if (heads.isEmpty()) return
         val shown = heads.last() // hoechste Uhr (siehe Post.headOrder)
         val root = post.allVersions().firstOrNull { it.parents.isEmpty() } ?: shown
-        // Echter Konflikt nur bei inhaltlich unterschiedlichen Heads – inhaltsgleiche Heads
-        // (gleiche Aenderung offline doppelt gemacht / ueber zwei Sync-Pfade) sind keiner.
-        // Einzige Quelle der Wahrheit: Post.hasContentConflict() (per Unit-Test abgesichert).
-        val realConflict = post.hasContentConflict()
+        // Echter Konflikt nur bei inhaltlich unterschiedlichen Heads – aber NICHT, solange die
+        // Historie unvollstaendig ist (eine Vorgaenger-Op fehlt noch): das waere ein Phantom-
+        // Konflikt, der sich beim naechsten Sync von selbst aufloest. Siehe Post.hasMissingAncestors().
+        val realConflict = post.hasContentConflict() && !post.hasMissingAncestors()
         val cv = ContentValues().apply {
             put("post_id", postId)
             put("feed_id", feedId)
