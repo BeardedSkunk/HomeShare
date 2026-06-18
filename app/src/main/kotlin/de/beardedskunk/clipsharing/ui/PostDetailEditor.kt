@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,10 +138,13 @@ fun PostDetailEditor(
         }
     }
 
+    // Nach Bildauswahl in der Renderview: zum neuen Bild springen + dessen Titel-Feld fokussieren (Tbd #6).
+    var pendingFocusImage by remember { mutableStateOf<Int?>(null) }
     // Mehrfachauswahl: man kann gleich mehrere Bilder picken, ohne extra "OK" (Tbd #11).
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) {
             scope.launch {
+                val before = images.size
                 val newShas = withContext(Dispatchers.IO) {
                     uris.mapNotNull { uri ->
                         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { blobStore.put(it) }
@@ -154,7 +158,22 @@ fun PostDetailEditor(
                 }
                 images = imgs
                 imageTitles = titles
+                if (imgs.size > before) {
+                    // Auch aus der Renderview heraus: in den Quelltext-Modus wechseln und springen.
+                    sourceMode = true
+                    pendingFocusImage = imgs.size - 1
+                }
             }
+        }
+    }
+
+    // Neu hinzugefügtes Bild fokussieren -> Compose scrollt das Titel-Feld automatisch in den Blick (Tbd #6).
+    LaunchedEffect(pendingFocusImage, sourceMode) {
+        val idx = pendingFocusImage
+        if (idx != null && sourceMode && idx < titleFocusers.size) {
+            kotlinx.coroutines.delay(150)
+            runCatching { titleFocusers[idx].requestFocus() }
+            pendingFocusImage = null
         }
     }
 
@@ -317,11 +336,12 @@ fun PostDetailEditor(
                         IconButton(onClick = { findOpen = !findOpen }) {
                             Icon(Icons.Filled.Search, contentDescription = "Im Text suchen")
                         }
-                        IconButton(onClick = {
-                            pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        }) {
-                            Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")
-                        }
+                    }
+                    // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
+                    IconButton(onClick = {
+                        pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }) {
+                        Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")
                     }
                     if (post != null) {
                         IconButton(onClick = { delete() }) {
