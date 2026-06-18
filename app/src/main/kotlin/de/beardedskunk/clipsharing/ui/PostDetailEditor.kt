@@ -137,16 +137,23 @@ fun PostDetailEditor(
         }
     }
 
-    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
+    // Mehrfachauswahl: man kann gleich mehrere Bilder picken, ohne extra "OK" (Tbd #11).
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isNotEmpty()) {
             scope.launch {
-                val sha = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { blobStore.put(it) }
+                val newShas = withContext(Dispatchers.IO) {
+                    uris.mapNotNull { uri ->
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { blobStore.put(it) }
+                    }
                 }
-                if (sha != null && sha !in images) {
-                    images = images + sha
-                    imageTitles = imageTitles + TextFieldValue("")
+                var imgs = images
+                var titles = imageTitles
+                for (sha in newShas) if (sha !in imgs) {
+                    imgs = imgs + sha
+                    titles = titles + TextFieldValue("")
                 }
+                images = imgs
+                imageTitles = titles
             }
         }
     }
