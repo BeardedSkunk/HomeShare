@@ -113,6 +113,8 @@ fun PostDetailEditor(
      * Zeile, die den Begriff enthaelt (statt voller Suche in der gerenderten Ansicht).
      */
     jumpToQuery: String? = null,
+    /** #10: Nur-Lese-Ansicht (Fremdfeed ohne Schreibrecht) – keine Bearbeitung möglich. */
+    readOnly: Boolean = false,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -377,30 +379,32 @@ fun PostDetailEditor(
                             Icon(Icons.Filled.Search, contentDescription = "Im Text suchen")
                         }
                     }
-                    // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
-                    IconButton(onClick = {
-                        pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    }) {
-                        Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")
-                    }
-                    if (post != null) {
-                        IconButton(onClick = { delete() }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Löschen")
+                    if (!readOnly) {
+                        // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
+                        IconButton(onClick = {
+                            pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")
                         }
-                    }
-                    // Modus-Umschalter: gerendert zeigt ✓ (grün), Quelltext zeigt ✎.
-                    IconButton(onClick = {
-                        if (sourceMode) { save(); sourceMode = false } else { sourceMode = true }
-                    }) {
-                        if (sourceMode) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
-                        } else {
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = "Bearbeiten",
-                                tint = Color(0xFF2E7D32),
-                                modifier = Modifier.size(30.dp),
-                            )
+                        if (post != null) {
+                            IconButton(onClick = { delete() }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Löschen")
+                            }
+                        }
+                        // Modus-Umschalter: gerendert zeigt ✓ (grün), Quelltext zeigt ✎.
+                        IconButton(onClick = {
+                            if (sourceMode) { save(); sourceMode = false } else { sourceMode = true }
+                        }) {
+                            if (sourceMode) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
+                            } else {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "Bearbeiten",
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(30.dp),
+                                )
+                            }
                         }
                     }
                 },
@@ -448,13 +452,15 @@ fun PostDetailEditor(
             RenderedView(
                 padding = padding,
                 text = tfv.text,
-                onToggleTask = { toggleTask(it) },
+                onToggleTask = { if (!readOnly) toggleTask(it) },
                 onEditAt = { off ->
-                    // #5-lite: Tipp auf gerenderten Text (NICHT auf eine Aufgaben-Checkbox,
-                    // die toggelt separat) -> Edit-Modus, Cursor ans Ende DIESER Zeile.
-                    tfv = tfv.copy(selection = TextRange(endOfLineAt(tfv.text, off)))
-                    sourceMode = true
-                    pendingEditFocus = true
+                    if (!readOnly) {
+                        // #5-lite: Tipp auf gerenderten Text (NICHT auf eine Aufgaben-Checkbox,
+                        // die toggelt separat) -> Edit-Modus, Cursor ans Ende DIESER Zeile.
+                        tfv = tfv.copy(selection = TextRange(endOfLineAt(tfv.text, off)))
+                        sourceMode = true
+                        pendingEditFocus = true
+                    }
                 },
                 images = images,
                 imageTitles = imageTitles,

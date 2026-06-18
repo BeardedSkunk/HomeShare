@@ -1,6 +1,7 @@
 package de.beardedskunk.clipsharing.ui
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -76,6 +77,9 @@ fun FeedScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // #10: Rechte bei Fremdfeeds. Eigene Feeds = volle Rechte.
+    val canWrite = !feed.isForeign || feed.foreignRight.canWrite()
+    val canMerge = !feed.isForeign || feed.foreignRight.canMerge()
     var calEnabled by remember(feed.id) { mutableStateOf(settings.isCalendarFeedEnabled(feed.id)) }
     fun shareImage(sha: String) {
         val file = if (blobStore.hasFull(sha)) blobStore.fullFile(sha) else blobStore.thumbFile(sha)
@@ -107,6 +111,18 @@ fun FeedScreen(
     // revision: auch per Sync empfangene Aenderungen aktualisieren die Liste sofort.
     val revision by repo.revision.collectAsState()
     LaunchedEffect(feed.id, searching, query, revision) { reload() }
+
+    // Eintrag oeffnen: Konflikt nur loesen, wenn merge-Recht (sonst nur ansehen + Hinweis).
+    fun openPost(p: PostState) {
+        if (p.conflicted && canMerge) {
+            resolving = p
+        } else {
+            if (p.conflicted && !canMerge) {
+                Toast.makeText(context, "Konflikt offen – nur die Originalgruppe kann ihn lösen.", Toast.LENGTH_LONG).show()
+            }
+            editing = p
+        }
+    }
 
     // --- Vollbild-Ansicht eines Bildes ---
     val img = viewingImage
@@ -173,6 +189,7 @@ fun FeedScreen(
                 post = current,
                 // #5-lite: aus einem Suchtreffer geoeffnet -> direkt in Edit an der Fundstelle.
                 jumpToQuery = if (current != null && searching && query.isNotBlank()) query else null,
+                readOnly = !canWrite, // Fremdfeed ohne Schreibrecht -> nur ansehen
                 onClose = { editing = null; creatingNew = false; reload() },
             )
         }
@@ -217,7 +234,7 @@ fun FeedScreen(
             )
         },
         floatingActionButton = {
-            if (!searching) {
+            if (!searching && canWrite) {
                 ExtendedFloatingActionButton(
                     text = { Text("Neuer Eintrag") },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -243,23 +260,34 @@ fun FeedScreen(
                     )
                 }
             }
+            if (feed.isForeign) {
+                val rightLabel = when (feed.foreignRight) {
+                    de.beardedskunk.clipsharing.data.FeedRight.READ -> "nur lesen"
+                    de.beardedskunk.clipsharing.data.FeedRight.WRITE -> "lesen & schreiben"
+                    de.beardedskunk.clipsharing.data.FeedRight.MERGE -> "lesen, schreiben, mergen"
+                }
+                Text(
+                    "🔗 Geteilt von „${feed.foreignOrigin}“ · $rightLabel",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             if (posts.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(if (searching) "Keine Treffer." else "Noch keine Einträge. Mit „Neuer Eintrag“ beginnen.")
+                    Text(if (searching) "Keine Treffer." else "Noch keine Einträge.")
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(posts, key = { it.postId }) { post ->
                     if (feed.calendar) {
-                        CalendarRow(
-                            post = post,
-                            onClick = { if (post.conflicted) resolving = post else editing = post },
-                        )
+                        CalendarRow(post = post, onClick = { openPost(post) })
                     } else {
                         PostRow(
                             post = post,
                             blobStore = blobStore,
-                            onClick = { if (post.conflicted) resolving = post else editing = post },
+                            canMerge = canMerge,
+                            onClick = { openPost(post) },
                             onResolveWhole = { resolving = post },
                             onResolveDetailed = { resolvingDetailed = post },
                             onOpenImage = { viewingImage = it },
@@ -282,6 +310,7 @@ fun FeedScreen(
 private fun PostRow(
     post: PostState,
     blobStore: BlobStore,
+    canMerge: Boolean = true,
     onClick: () -> Unit,
     onResolveWhole: () -> Unit,
     onResolveDetailed: () -> Unit,
@@ -289,7 +318,7 @@ private fun PostRow(
 ) {
     val rowHeight = 56.dp
     // Long-Press auf einen Konflikt-Eintrag (rot) bietet die Wahl zwischen
-    // Kombi-Auflösung (ganze Fassung) und Detail-Merge (Teil für Teil).
+    // Kombi-Auflösung (ganze Fassung) und Detail-Merge (Teil für Teil) – nur mit merge-Recht.
     var menuOpen by remember { mutableStateOf(false) }
     Card(
         Modifier
@@ -297,7 +326,7 @@ private fun PostRow(
             .padding(horizontal = 12.dp, vertical = 4.dp)
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = { if (post.conflicted) menuOpen = true },
+                onLongClick = { if (post.conflicted && canMerge) menuOpen = true },
             ),
         colors = if (post.conflicted) {
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)

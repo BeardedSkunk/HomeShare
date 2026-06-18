@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.ui.FeedListScreen
 import de.beardedskunk.clipsharing.ui.FeedScreen
+import de.beardedskunk.clipsharing.ui.FeedShareScreen
 import de.beardedskunk.clipsharing.ui.SettingsScreen
 import de.beardedskunk.clipsharing.ui.SharePickerScreen
 import de.beardedskunk.clipsharing.ui.SharedContent
@@ -87,6 +88,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
     var showSettings by remember { mutableStateOf(false) }
+    var sharingFeed by remember { mutableStateOf<Feed?>(null) }
     val status by graph.sync.status.collectAsState()
     val webUrl by graph.web.url.collectAsState()
 
@@ -127,14 +129,23 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
         return
     }
 
+    val sharing = sharingFeed
+    if (sharing != null) {
+        BackHandler { sharingFeed = null }
+        FeedShareScreen(repo = graph.repo, sync = graph.sync, feed = sharing, onBack = { sharingFeed = null })
+        return
+    }
+
     val feed = openFeed
     if (feed == null) {
         FeedListScreen(
             repo = graph.repo,
+            sync = graph.sync,
             statusText = status.lastMessage,
             webUrl = webUrl,
             onToggleWeb = { graph.web.toggle() },
             onOpenSettings = { showSettings = true },
+            onOpenShare = { sharingFeed = it },
             onOpenFeed = { openFeed = it },
         )
     } else {

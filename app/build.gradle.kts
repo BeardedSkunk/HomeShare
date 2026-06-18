@@ -47,6 +47,8 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.nanohttpd)
     implementation(libs.commons.net)
+    // #10: QR erzeugen (ZXing core) + scannen (fertige Scanner-UI, keine Play-Services).
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
