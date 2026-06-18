@@ -93,11 +93,19 @@ class AutoSync(
         }
     }
 
-    /** Ist gerade ein WLAN das aktive Netz? */
+    /**
+     * Ist IRGENDEIN WLAN verbunden? Bewusst NICHT nur das Default-Netz (`activeNetwork`)
+     * prüfen: sind WLAN UND Mobilfunk an und hat das WLAN (noch) kein Internet, macht
+     * Android Mobilfunk zum Default-Netz – dann wäre `activeNetwork` Mobilfunk, obwohl
+     * WLAN verbunden ist. Für LAN-Sync genügt aber ein verbundenes WLAN. Daher alle Netze prüfen.
+     */
     private fun wifiConnected(): Boolean {
         val mgr = cm ?: return false
-        val net = mgr.activeNetwork ?: return false
-        val caps = mgr.getNetworkCapabilities(net) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        @Suppress("DEPRECATION")
+        for (n in mgr.allNetworks) {
+            val caps = mgr.getNetworkCapabilities(n) ?: continue
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return true
+        }
+        return false
     }
 }

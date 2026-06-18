@@ -54,6 +54,7 @@ import de.beardedskunk.clipsharing.data.Recurrence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -63,6 +64,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 private val DATE_UI = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 private val HM = DateTimeFormatter.ofPattern("HH:mm")
@@ -181,8 +183,25 @@ fun CalendarEntryEditor(
 
             Text("Start", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DateField("Datum", startDate, Modifier.weight(1f)) { startDate = it; if (endDate.isBefore(it)) endDate = it }
-                if (!allDay) TimeField("Zeit", startTime, Modifier.weight(1f)) { startTime = it }
+                // Beim Verschieben des Starts die Dauer beibehalten (Ende wandert mit).
+                DateField("Datum", startDate, Modifier.weight(1f)) { picked ->
+                    if (allDay) {
+                        val days = ChronoUnit.DAYS.between(startDate, endDate).coerceAtLeast(0)
+                        startDate = picked
+                        endDate = picked.plusDays(days)
+                    } else {
+                        val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
+                        startDate = picked
+                        val ne = LocalDateTime.of(picked, startTime).plus(if (dur.isNegative) Duration.ZERO else dur)
+                        endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                    }
+                }
+                if (!allDay) TimeField("Zeit", startTime, Modifier.weight(1f)) { picked ->
+                    val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
+                    startTime = picked
+                    val ne = LocalDateTime.of(startDate, picked).plus(if (dur.isNegative) Duration.ZERO else dur)
+                    endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                }
             }
 
             Text("Ende", style = MaterialTheme.typography.labelLarge)
