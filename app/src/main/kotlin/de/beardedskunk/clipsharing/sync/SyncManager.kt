@@ -57,7 +57,24 @@ class SyncManager(
     private val repo: FeedRepository,
     private val identity: DeviceIdentity,
     private val settings: Settings,
+    private val blobStore: de.beardedskunk.clipsharing.data.BlobStore? = null,
 ) {
+    /**
+     * Direkter Blob-Abgleich (#11): nennt der Gegenseite die aktuell angezeigten Bilder,
+     * die uns lokal fehlen, und liefert, was wir von deren Wunschliste haben. Null, wenn
+     * kein BlobStore verdrahtet ist (z. B. in Tests) -> Protokoll laeuft dann nur mit Ops.
+     */
+    private val blobSync: BlobSync? = blobStore?.let { store ->
+        object : BlobSync {
+            override fun wanted(): Set<String> =
+                repo.displayedImageHashes().filterTo(HashSet()) { !store.hasFull(it) }
+            override fun has(sha: String): Boolean = store.hasFull(sha)
+            override fun read(sha: String): ByteArray? = store.readFull(sha)
+            override fun store(sha: String, bytes: ByteArray) {
+                runCatching { store.putWithSha(sha, bytes) }
+            }
+        }
+    }
     private val appContext = context.applicationContext
     private val nsd = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val wifi = appContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -233,7 +250,7 @@ class SyncManager(
                 val parts = readLineRaw(input).split(' ')
                 when (parts.getOrNull(0)) {
                     MODE_GROUP -> {
-                        val r = PeerProtocol.runResponder(repo, SecureChannel(input, output, groupKey()))
+                        val r = PeerProtocol.runResponder(repo, SecureChannel(input, output, groupKey()), blobSync)
                         status.value = status.value.copy(lastMessage = "Sync ok: +${r.pulled} empfangen, ${r.pushed} gesendet")
                     }
                     MODE_FEED -> serveForeignFeed(parts, input, output)
@@ -251,7 +268,7 @@ class SyncManager(
         val grant = repo.grantFor(feedId, capId) ?: return // unbekannt/widerrufen -> nichts tun
         val capSecret = runCatching { GroupCrypto.decryptString(groupKey(), grant.encSecret) }.getOrNull() ?: return
         val ch = SecureChannel(input, output, GroupCrypto.keyFromToken(capSecret))
-        val r = CrossGroupProtocol.runOriginal(repo, feedId, grant.right, ch)
+        val r = CrossGroupProtocol.runOriginal(repo, feedId, grant.right, ch, blobSync)
         status.value = status.value.copy(lastMessage = "Geteilt (${grant.label}): +${r.pulled}/${r.pushed}")
     }
 
@@ -284,7 +301,7 @@ class SyncManager(
                 connect(addr)?.use {
                     it.soTimeout = SOCKET_TIMEOUT_MS
                     writeLine(it.getOutputStream(), MODE_GROUP)
-                    val r = PeerProtocol.runInitiator(repo, SecureChannel(it.getInputStream(), it.getOutputStream(), groupKey()))
+                    val r = PeerProtocol.runInitiator(repo, SecureChannel(it.getInputStream(), it.getOutputStream(), groupKey()), blobSync)
                     status.value = status.value.copy(lastMessage = "Sync ok: +${r.pulled} empfangen, ${r.pushed} gesendet")
                 }
             } catch (e: Throwable) {
@@ -305,7 +322,7 @@ class SyncManager(
                     it.soTimeout = SOCKET_TIMEOUT_MS
                     writeLine(it.getOutputStream(), "$MODE_FEED ${ref.feedId} ${ref.capId}")
                     val ch = SecureChannel(it.getInputStream(), it.getOutputStream(), GroupCrypto.keyFromToken(ref.capSecret))
-                    val r = CrossGroupProtocol.runForeign(repo, ref.feedId, ch)
+                    val r = CrossGroupProtocol.runForeign(repo, ref.feedId, ch, blobSync)
                     repo.updateForeignRight(ref.feedId, r.right)
                     status.value = status.value.copy(lastMessage = "Geteilt (von ${ref.originGroup}): +${r.pulled}/${r.pushed}")
                 }

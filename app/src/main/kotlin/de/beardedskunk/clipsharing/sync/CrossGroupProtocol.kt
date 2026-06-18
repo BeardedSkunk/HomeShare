@@ -18,7 +18,7 @@ object CrossGroupProtocol {
 
     data class ForeignResult(val pulled: Int, val pushed: Int, val right: FeedRight)
 
-    fun runForeign(src: FeedScopedSource, feedId: String, channel: SecureChannel): ForeignResult {
+    fun runForeign(src: FeedScopedSource, feedId: String, channel: SecureChannel, blobs: BlobSync? = null): ForeignResult {
         channel.writeText(OpCodec.encodeVv(src.feedVersionVector(feedId)))
         val incoming = decodeOps(channel.readText())
         var pulled = 0
@@ -27,10 +27,12 @@ object CrossGroupProtocol {
         val right = FeedRight.from(channel.readText())
         val toRemote = src.feedMissingFor(feedId, remoteVv)
         channel.writeText(encodeOps(toRemote))
+        // Bilder direkt holen/geben – die Fremdgruppe erreicht die FRITZ!Box des Originals nicht.
+        BlobExchange.asInitiator(channel, blobs)
         return ForeignResult(pulled = pulled, pushed = toRemote.size, right = right)
     }
 
-    fun runOriginal(src: FeedScopedSource, feedId: String, right: FeedRight, channel: SecureChannel): SyncResult {
+    fun runOriginal(src: FeedScopedSource, feedId: String, right: FeedRight, channel: SecureChannel, blobs: BlobSync? = null): SyncResult {
         val remoteVv = OpCodec.decodeVv(channel.readText())
         val toRemote = src.feedMissingFor(feedId, remoteVv)
         channel.writeText(encodeOps(toRemote))
@@ -39,6 +41,7 @@ object CrossGroupProtocol {
         val incoming = decodeOps(channel.readText())
         var pulled = 0
         for (op in incoming) if (src.acceptForeignOp(op, feedId, right)) pulled++
+        BlobExchange.asResponder(channel, blobs)
         return SyncResult(pulled = pulled, pushed = toRemote.size)
     }
 

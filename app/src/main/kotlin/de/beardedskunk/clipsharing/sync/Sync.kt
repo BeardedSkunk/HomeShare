@@ -182,6 +182,18 @@ interface OpSource {
 data class SyncResult(val pulled: Int, val pushed: Int)
 
 /**
+ * Blob-Transfer (Voll-Bilder) direkt zwischen Geräten beim Peer-Sync (#11) – ohne Umweg
+ * über die FRITZ!Box. Jede Seite nennt die aktuell angezeigten Bilder, die ihr lokal fehlen
+ * ([wanted]); die Gegenseite schickt, was sie davon hat.
+ */
+interface BlobSync {
+    fun wanted(): Set<String>
+    fun has(sha: String): Boolean
+    fun read(sha: String): ByteArray?
+    fun store(sha: String, bytes: ByteArray)
+}
+
+/**
  * Feed-bezogene Quelle/Senke fuer den **gruppenuebergreifenden** Sync (#10): nur die Ops
  * EINES Feeds, mit Rechtedurchsetzung beim Annehmen von Fremd-Pushes.
  */
