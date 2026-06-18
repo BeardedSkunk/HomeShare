@@ -140,10 +140,23 @@ class WebServer(
         return (0 until arr.length()).map { arr.getString(it) }
     }
 
+    /**
+     * Liest den POST-Body roh und dekodiert ihn IMMER als UTF-8. NanoHTTPDs parseBody
+     * nimmt ohne charset im Content-Type einen falschen Zeichensatz an -> Umlaute wurden
+     * dabei zu U+FFFD zerstört. Daher die Bytes selbst lesen (Content-Length).
+     */
     private fun readBody(session: IHTTPSession): String {
-        val map = HashMap<String, String>()
-        session.parseBody(map)
-        return map["postData"] ?: ""
+        val len = session.headers["content-length"]?.toIntOrNull() ?: return ""
+        if (len <= 0) return ""
+        val buf = ByteArray(len)
+        var off = 0
+        val ins = session.inputStream
+        while (off < len) {
+            val r = ins.read(buf, off, len - off)
+            if (r <= 0) break
+            off += r
+        }
+        return String(buf, 0, off, Charsets.UTF_8)
     }
 
     private fun param(session: IHTTPSession, name: String): String =
