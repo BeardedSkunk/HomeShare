@@ -11,6 +11,24 @@ import kotlin.math.min
  * damit sie sich unit-testen lassen.
  */
 
+/**
+ * Die Knöpfe der Markdown-Toolbar als Daten – Single Source of Truth für UI **und** Test.
+ * Die UI rendert genau [MARKDOWN_TOOLBAR] (exhaustives `when`), ein Test pinnt Inhalt+Reihenfolge.
+ * Fällt ein Knopf raus oder ändert sich die Reihenfolge, schlägt der Test an (Regressionsschutz).
+ */
+enum class MarkdownToolbarItem { TASK, BOLD, ITALIC, STRIKE, CODE, MOVE_UP, MOVE_DOWN, HELP }
+
+val MARKDOWN_TOOLBAR: List<MarkdownToolbarItem> = listOf(
+    MarkdownToolbarItem.TASK,
+    MarkdownToolbarItem.BOLD,
+    MarkdownToolbarItem.ITALIC,
+    MarkdownToolbarItem.STRIKE,
+    MarkdownToolbarItem.CODE,
+    MarkdownToolbarItem.MOVE_UP,
+    MarkdownToolbarItem.MOVE_DOWN,
+    MarkdownToolbarItem.HELP,
+)
+
 private val EDIT_TASK_RE = Regex("""^(\s*)- \[([ xX])]\s?(.*)$""")
 private val EDIT_BULLET_RE = Regex("""^(\s*)([-*])\s+(.*)$""")
 private val EDIT_NUMBER_RE = Regex("""^(\s*)(\d+)\.\s+(.*)$""")

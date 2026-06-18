@@ -149,4 +149,51 @@ class MarkdownEditingTest {
         val r = applyCode(v)
         assertEquals("vorher \n```\nUND\nmitte\nENDE\n```\n rest", r.text)
     }
+
+    @Test fun moveLines_movesSelectedLineDown() {
+        // Zeilen: 0 "Titel", 1 "a", 2 "b"; Auswahl in Zeile 1 -> a nach unten.
+        val v = TextFieldValue("Titel\na\nb", TextRange(6))
+        assertEquals("Titel\nb\na", moveLines(v, up = false).text)
+    }
+
+    @Test fun moveLines_movesMultiLineBlock() {
+        // Block "a"+"b" (Zeilen 1..2) markiert -> nach unten, "c" rutscht hoch.
+        val v = TextFieldValue("Titel\na\nb\nc", TextRange(6, 9))
+        val r = moveLines(v, up = false)
+        assertEquals("Titel\nc\na\nb", r.text)
+        // Markierung bleibt auf dem verschobenen Block.
+        assertEquals(8, r.selection.start)
+        assertEquals(11, r.selection.end)
+    }
+
+    @Test fun moveLines_upAtFirstBodyLineIsNoop() {
+        // Erste Körperzeile (Index 1) darf nicht über den Titel wandern.
+        val v = TextFieldValue("Titel\na\nb", TextRange(6))
+        assertEquals("Titel\na\nb", moveLines(v, up = true).text)
+    }
+
+    /**
+     * Struktur-Regressionstest: pinnt die Markdown-Toolbar (Inhalt UND Reihenfolge). Verschwindet ein
+     * Knopf (z. B. die Zeilen-Pfeile) oder verrutscht die Reihenfolge, schlägt dieser Test an –
+     * genau das, was zuletzt unbemerkt durchgegangen wäre.
+     */
+    @Test fun markdownToolbar_hasAllButtonsInOrder() {
+        assertEquals(
+            listOf(
+                MarkdownToolbarItem.TASK,
+                MarkdownToolbarItem.BOLD,
+                MarkdownToolbarItem.ITALIC,
+                MarkdownToolbarItem.STRIKE,
+                MarkdownToolbarItem.CODE,
+                MarkdownToolbarItem.MOVE_UP,
+                MarkdownToolbarItem.MOVE_DOWN,
+                MarkdownToolbarItem.HELP,
+            ),
+            MARKDOWN_TOOLBAR,
+        )
+        // "?" muss ganz rechts hinter den Zeilen-Pfeilen stehen.
+        assertEquals(MarkdownToolbarItem.HELP, MARKDOWN_TOOLBAR.last())
+        // Beide Zeilen-Verschiebe-Pfeile sind vorhanden.
+        assert(MARKDOWN_TOOLBAR.containsAll(listOf(MarkdownToolbarItem.MOVE_UP, MarkdownToolbarItem.MOVE_DOWN)))
+    }
 }
