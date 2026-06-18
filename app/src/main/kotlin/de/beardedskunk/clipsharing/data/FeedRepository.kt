@@ -421,6 +421,32 @@ class FeedRepository(
         )
     }
 
+    /**
+     * Feed-Ids, in denen die Suche etwas findet: per FTS in Posttext/Bildtiteln ODER
+     * deren Feed-Name passt. Für die Suche in der Feed-Übersicht.
+     */
+    fun feedsMatching(query: String): Set<String> {
+        val q = query.trim()
+        if (q.isBlank()) return emptySet()
+        val out = HashSet<String>()
+        val ids = ArrayList<String>()
+        runCatching {
+            db.rawQuery("SELECT post_id FROM post_fts WHERE text MATCH ?", arrayOf(ftsQuery(q))).use {
+                while (it.moveToNext()) ids += it.getString(0)
+            }
+        }
+        if (ids.isNotEmpty()) {
+            val ph = ids.joinToString(",") { "?" }
+            db.rawQuery("SELECT DISTINCT feed_id FROM post_current WHERE deleted = 0 AND post_id IN ($ph)", ids.toTypedArray()).use {
+                while (it.moveToNext()) out += it.getString(0)
+            }
+        }
+        db.rawQuery("SELECT feed_id FROM feeds WHERE deleted = 0 AND name LIKE ?", arrayOf("%$q%")).use {
+            while (it.moveToNext()) out += it.getString(0)
+        }
+        return out
+    }
+
     // -------------------------------------------------------------- Internals
 
     private fun currentHeads(postId: String): Set<String> =

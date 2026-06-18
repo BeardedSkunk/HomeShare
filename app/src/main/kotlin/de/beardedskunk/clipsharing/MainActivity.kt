@@ -85,6 +85,7 @@ fun ClipTheme(content: @Composable () -> Unit) {
 @Composable
 fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
+    var openFeedQuery by remember { mutableStateOf<String?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
     var showSettings by remember { mutableStateOf(false) }
     var sharingFeed by remember { mutableStateOf<Feed?>(null) }
@@ -145,7 +146,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             onToggleWeb = { graph.web.toggle() },
             onOpenSettings = { showSettings = true },
             onOpenShare = { sharingFeed = it },
-            onOpenFeed = { openFeed = it },
+            onOpenFeed = { f, q -> openFeed = f; openFeedQuery = q },
         )
     } else {
         FeedScreen(
@@ -153,8 +154,9 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             blobStore = graph.blobStore,
             feed = feed,
             settings = graph.settings,
+            initialQuery = openFeedQuery,
             onRequestCalendarSync = { graph.calendarSync.requestSync() },
-            onBack = { openFeed = null },
+            onBack = { openFeed = null; openFeedQuery = null },
         )
     }
 }

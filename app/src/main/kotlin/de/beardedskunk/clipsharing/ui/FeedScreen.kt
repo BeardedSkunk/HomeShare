@@ -72,6 +72,7 @@ fun FeedScreen(
     blobStore: BlobStore,
     feed: Feed,
     settings: de.beardedskunk.clipsharing.data.Settings,
+    initialQuery: String? = null,
     onRequestCalendarSync: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -93,8 +94,9 @@ fun FeedScreen(
         runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
     }
     var posts by remember { mutableStateOf<List<PostState>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    // Aus der Übersichts-Suche mit Suchwort geöffnet -> Suche gleich aktiv.
+    var searching by remember { mutableStateOf(initialQuery != null) }
+    var query by remember { mutableStateOf(initialQuery ?: "") }
     var editing by remember { mutableStateOf<PostState?>(null) }
     var creatingNew by remember { mutableStateOf(false) }
     var resolving by remember { mutableStateOf<PostState?>(null) }
@@ -187,8 +189,8 @@ fun FeedScreen(
                 blobStore = blobStore,
                 feed = feed,
                 post = current,
-                // #5-lite: aus einem Suchtreffer geoeffnet -> direkt in Edit an der Fundstelle.
-                jumpToQuery = if (current != null && searching && query.isNotBlank()) query else null,
+                // Aus der Suche geöffnet: im RENDER-Modus mit aktiver Suche + gleichem Suchwort.
+                searchQuery = if (current != null && searching && query.isNotBlank()) query else null,
                 readOnly = !canWrite, // Fremdfeed ohne Schreibrecht -> nur ansehen
                 onClose = { editing = null; creatingNew = false; reload() },
             )

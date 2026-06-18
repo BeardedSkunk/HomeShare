@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -59,7 +61,7 @@ fun FeedListScreen(
     onToggleWeb: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenShare: (Feed) -> Unit = {},
-    onOpenFeed: (Feed) -> Unit,
+    onOpenFeed: (Feed, String?) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
@@ -67,6 +69,9 @@ fun FeedListScreen(
     var feedToDelete by remember { mutableStateOf<Feed?>(null) }
     var actionFeed by remember { mutableStateOf<Feed?>(null) }
     var showAddShared by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var matchedIds by remember { mutableStateOf<Set<String>?>(null) }
 
     fun reload() {
         scope.launch { feeds = withContext(Dispatchers.IO) { repo.listFeeds() } }
@@ -74,27 +79,48 @@ fun FeedListScreen(
     // Bei JEDER Aenderung (auch per Sync empfangen) automatisch neu laden.
     val revision by repo.revision.collectAsState()
     LaunchedEffect(revision) { reload() }
+    // Übersichts-Suche: schränkt die Feeds auf die ein, in denen (oder deren Namen) der Begriff vorkommt.
+    LaunchedEffect(searching, query, revision) {
+        matchedIds = if (searching && query.isNotBlank()) withContext(Dispatchers.IO) { repo.feedsMatching(query) } else null
+    }
+    val shownFeeds = matchedIds?.let { ids -> feeds.filter { it.id in ids } } ?: feeds
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("Feeds")
-                        if (statusText.isNotBlank()) {
-                            Text(statusText, style = MaterialTheme.typography.labelSmall)
+                    if (searching) {
+                        OutlinedTextField(
+                            value = query, onValueChange = { query = it },
+                            placeholder = { Text("Feeds durchsuchen…") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Column {
+                            Text("Feeds")
+                            if (statusText.isNotBlank()) {
+                                Text(statusText, style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showAddShared = true }) {
-                        Icon(Icons.Filled.Share, contentDescription = "Geteilten Feed hinzufügen")
+                    IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
+                        Icon(
+                            if (searching) Icons.Filled.Close else Icons.Filled.Search,
+                            contentDescription = if (searching) "Suche schließen" else "Feeds durchsuchen",
+                        )
                     }
-                    TextButton(onClick = onToggleWeb) {
-                        Text(if (webUrl == null) "Web starten" else "Web stoppen")
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
+                    if (!searching) {
+                        IconButton(onClick = { showAddShared = true }) {
+                            Icon(Icons.Filled.Share, contentDescription = "Geteilten Feed hinzufügen")
+                        }
+                        TextButton(onClick = onToggleWeb) {
+                            Text(if (webUrl == null) "Web starten" else "Web stoppen")
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
+                        }
                     }
                 },
             )
@@ -114,19 +140,19 @@ fun FeedListScreen(
                     fontWeight = FontWeight.Medium,
                 )
             }
-            if (feeds.isEmpty()) {
+            if (shownFeeds.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Noch keine Feeds. Mit + einen anlegen.")
+                    Text(if (searching && query.isNotBlank()) "Keine Feeds mit „$query“." else "Noch keine Feeds. Mit + einen anlegen.")
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                items(feeds, key = { it.id }) { feed ->
+                items(shownFeeds, key = { it.id }) { feed ->
                     Card(
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                             .combinedClickable(
-                                onClick = { onOpenFeed(feed) },
+                                onClick = { onOpenFeed(feed, if (searching && query.isNotBlank()) query else null) },
                                 onLongClick = { actionFeed = feed }, // lang drücken -> Aktionen
                             ),
                     ) {
