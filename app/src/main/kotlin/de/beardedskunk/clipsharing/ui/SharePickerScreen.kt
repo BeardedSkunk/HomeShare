@@ -32,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import de.beardedskunk.clipsharing.calendar.IcsParser
+import de.beardedskunk.clipsharing.calendar.importIcsToFeed
 import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.data.FeedRepository
@@ -67,10 +69,16 @@ fun SharePickerScreen(
         busy = true
         scope.launch {
             withContext(Dispatchers.IO) {
-                val images = shared.imageUri?.let { uri ->
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { listOf(blobStore.put(it)) }
-                } ?: emptyList()
-                repo.createPost(feed.id, shared.text?.trim().orEmpty(), images)
+                val text = shared.text?.trim().orEmpty()
+                // Geteilter Kalender-Inhalt (VEVENT/.ics als Text) -> als Termin importieren (Tbd a).
+                if (shared.imageUri == null && text.isNotBlank() && IcsParser.parse(text) != null) {
+                    importIcsToFeed(repo, feed.id, text)
+                } else {
+                    val images = shared.imageUri?.let { uri ->
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { listOf(blobStore.put(it)) }
+                    } ?: emptyList()
+                    repo.createPost(feed.id, text, images)
+                }
             }
             onShared(feed)
         }
