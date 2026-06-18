@@ -91,17 +91,13 @@ import java.io.File
  * Die erste Zeile ist immer der markup-freie Titel.
  */
 /**
- * Offset des ZEILENENDES der ersten Zeile, die [query] (case-insensitive) enthaelt;
- * sonst das Textende. Fuer #5-lite (Sprung aus einem Suchtreffer in den Editor).
+ * Offset des ZEILENENDES der Zeile, die [offset] enthaelt. Fuer #5-lite: Tipp auf
+ * gerenderten Text -> Edit-Modus mit Cursor am Ende genau dieser Zeile.
  */
-private fun endOfLineContaining(text: String, query: String): Int {
-    if (query.isBlank()) return text.length
-    var lineStart = 0
-    for (line in text.split('\n')) {
-        if (line.contains(query, ignoreCase = true)) return lineStart + line.length
-        lineStart += line.length + 1 // +1 fuer das '\n'
-    }
-    return text.length
+private fun endOfLineAt(text: String, offset: Int): Int {
+    val o = offset.coerceIn(0, text.length)
+    val nl = text.indexOf('\n', o)
+    return if (nl < 0) text.length else nl
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -209,11 +205,13 @@ fun PostDetailEditor(
         }
     }
 
-    // #5-lite: aus Suchtreffer geoeffnet -> direkt in Edit, Cursor ans Ende der Treffer-Zeile.
+    // Bonus: aus einem Suchtreffer geoeffnet -> direkt in Edit, der Treffer ist MARKIERT
+    // (Cursor-/Auswahlposition dadurch eindeutig).
     LaunchedEffect(Unit) {
         if (post != null && !jumpToQuery.isNullOrBlank()) {
-            val off = endOfLineContaining(tfv.text, jumpToQuery).coerceIn(0, tfv.text.length)
-            tfv = tfv.copy(selection = TextRange(off))
+            val idx = tfv.text.indexOf(jumpToQuery, ignoreCase = true)
+            val sel = if (idx >= 0) TextRange(idx, idx + jumpToQuery.length) else TextRange(tfv.text.length)
+            tfv = tfv.copy(selection = sel)
             sourceMode = true
             pendingEditFocus = true
         }
@@ -452,7 +450,9 @@ fun PostDetailEditor(
                 text = tfv.text,
                 onToggleTask = { toggleTask(it) },
                 onEditAt = { off ->
-                    tfv = tfv.copy(selection = TextRange(off.coerceIn(0, tfv.text.length)))
+                    // #5-lite: Tipp auf gerenderten Text (NICHT auf eine Aufgaben-Checkbox,
+                    // die toggelt separat) -> Edit-Modus, Cursor ans Ende DIESER Zeile.
+                    tfv = tfv.copy(selection = TextRange(endOfLineAt(tfv.text, off)))
                     sourceMode = true
                     pendingEditFocus = true
                 },
