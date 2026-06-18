@@ -227,7 +227,8 @@ fun MarkdownBody(
                 }
                 is MdBlock.Task -> Row(
                     Modifier.fillMaxWidth().padding(vertical = 1.dp).padding(start = (b.indent * 8).dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    // Bei mehrzeiligen Aufgaben Kästchen oben (auf Höhe der ersten Zeile) statt mittig.
+                    verticalAlignment = Alignment.Top,
                 ) {
                     Checkbox(
                         checked = b.checked,
