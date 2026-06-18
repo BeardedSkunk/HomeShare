@@ -38,6 +38,15 @@ class FeedRepository(
     private companion object {
         /** Reservierte Feed-Id: darunter liegen die Feed-Metadaten als Ops. */
         const val FEEDS_FEED = "__feeds__"
+
+        /**
+         * Version der MATERIALISIERUNGS-Logik (Ableitung von feeds/post_current aus dem
+         * Op-Log). Hochzaehlen, wenn sich die Dekodierung aendert (z. B. Kalender-Marker im
+         * Feed-Namen). Bei einem Anstieg werden feeds + post_current EINMALIG komplett neu
+         * aus dem Log aufgebaut – sonst bleiben alt-materialisierte Zeilen stehen (Symptom:
+         * Kalender-Feed nach Update als „cal\n::kalender::" / nicht als Kalender erkannt).
+         */
+        const val MATERIALIZATION_VERSION = 1
     }
 
     // ---------------------------------------------------------------- Feeds
@@ -361,6 +370,44 @@ class FeedRepository(
                 arrayOf(FEEDS_FEED, fid),
             ).use { it.moveToFirst() }
             if (!hasOp) author(FEEDS_FEED, fid, emptySet(), PostContent(text = name))
+        }
+        rematerializeIfStale()
+    }
+
+    /**
+     * Baut feeds + post_current EINMALIG komplett aus dem Op-Log neu auf, wenn sich die
+     * Materialisierungs-Logik geaendert hat ([MATERIALIZATION_VERSION]). Die Cache-Tabellen
+     * werden beim Ingest mit der DAMALIGEN Code-Version befuellt; aendert sich spaeter die
+     * Dekodierung (z. B. Kalender-Marker), bleiben Altzeilen sonst falsch stehen. Idempotent
+     * (rein aus dem unveraenderlichen Log abgeleitet).
+     */
+    private fun rematerializeIfStale() {
+        db.execSQL("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
+        val current = db.rawQuery("SELECT value FROM app_meta WHERE key = 'mat_version'", null).use {
+            if (it.moveToFirst()) it.getString(0).toIntOrNull() ?: 0 else 0
+        }
+        if (current >= MATERIALIZATION_VERSION) return
+        db.beginTransaction()
+        try {
+            val feedIds = ArrayList<String>()
+            db.rawQuery("SELECT DISTINCT post_id FROM ops WHERE feed_id = ?", arrayOf(FEEDS_FEED)).use {
+                while (it.moveToNext()) feedIds.add(it.getString(0))
+            }
+            for (fid in feedIds) rebuildFeedState(fid)
+
+            val posts = ArrayList<Pair<String, String>>()
+            db.rawQuery("SELECT DISTINCT feed_id, post_id FROM ops WHERE feed_id <> ?", arrayOf(FEEDS_FEED)).use {
+                while (it.moveToNext()) posts.add(it.getString(0) to it.getString(1))
+            }
+            for ((feed, post) in posts) rebuildPostState(feed, post)
+
+            db.execSQL(
+                "INSERT OR REPLACE INTO app_meta(key, value) VALUES('mat_version', ?)",
+                arrayOf(MATERIALIZATION_VERSION.toString()),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
