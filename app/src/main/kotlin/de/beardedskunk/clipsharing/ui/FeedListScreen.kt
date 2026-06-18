@@ -1,6 +1,7 @@
 package de.beardedskunk.clipsharing.ui
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,11 +24,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,7 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FeedListScreen(
     repo: FeedRepository,
@@ -57,11 +60,14 @@ fun FeedListScreen(
     val scope = rememberCoroutineScope()
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var showCreate by remember { mutableStateOf(false) }
+    var feedToDelete by remember { mutableStateOf<Feed?>(null) }
 
     fun reload() {
         scope.launch { feeds = withContext(Dispatchers.IO) { repo.listFeeds() } }
     }
-    LaunchedEffect(Unit) { reload() }
+    // Bei JEDER Aenderung (auch per Sync empfangen) automatisch neu laden.
+    val revision by repo.revision.collectAsState()
+    LaunchedEffect(revision) { reload() }
 
     Scaffold(
         topBar = {
@@ -110,7 +116,10 @@ fun FeedListScreen(
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .clickable { onOpenFeed(feed) },
+                            .combinedClickable(
+                                onClick = { onOpenFeed(feed) },
+                                onLongClick = { feedToDelete = feed }, // lang drücken -> löschen
+                            ),
                     ) {
                         Text(
                             (if (feed.calendar) "📅 " else "") + feed.name.ifBlank { "(ohne Namen)" },
@@ -122,6 +131,30 @@ fun FeedListScreen(
             }
             }
         }
+    }
+
+    feedToDelete?.let { feed ->
+        AlertDialog(
+            onDismissRequest = { feedToDelete = null },
+            title = { Text("Feed löschen?") },
+            text = {
+                Text(
+                    "„${feed.name.ifBlank { "(ohne Namen)" }}" + "“ wird für alle Geräte deiner Gruppe gelöscht " +
+                        "(inkl. aller Einträge). Das lässt sich nicht rückgängig machen.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val id = feed.id
+                    feedToDelete = null
+                    scope.launch {
+                        withContext(Dispatchers.IO) { repo.deleteFeed(id) }
+                        reload()
+                    }
+                }) { Text("Löschen") }
+            },
+            dismissButton = { TextButton(onClick = { feedToDelete = null }) { Text("Abbrechen") } },
+        )
     }
 
     if (showCreate) {
