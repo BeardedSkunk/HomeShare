@@ -1,5 +1,7 @@
 package de.beardedskunk.clipsharing.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,11 +18,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -70,27 +79,36 @@ fun taskCounts(text: String): Pair<Int, Int>? {
 }
 
 private sealed interface MdBlock {
-    data class Heading(val level: Int, val spans: AnnotatedString) : MdBlock
-    data class Para(val spans: AnnotatedString) : MdBlock
-    data class Bullet(val indent: Int, val spans: AnnotatedString) : MdBlock
-    data class Numbered(val indent: Int, val number: Int, val spans: AnnotatedString) : MdBlock
-    data class Task(val indent: Int, val checked: Boolean, val spans: AnnotatedString, val sourceLine: Int) : MdBlock
-    data class Quote(val spans: AnnotatedString) : MdBlock
-    data class Code(val text: String) : MdBlock
+    data class Heading(val level: Int, val inline: Inline) : MdBlock
+    data class Para(val inline: Inline) : MdBlock
+    data class Bullet(val indent: Int, val inline: Inline) : MdBlock
+    data class Numbered(val indent: Int, val number: Int, val inline: Inline) : MdBlock
+    data class Task(val indent: Int, val checked: Boolean, val inline: Inline, val sourceLine: Int) : MdBlock
+    data class Quote(val inline: Inline) : MdBlock
+    data class Code(val text: String, val srcStart: Int) : MdBlock
     data object Rule : MdBlock
     data object Blank : MdBlock
 }
 
-/** Parst [body] in Blöcke; [lineOffset] = absolute Zeilennummer der ersten Körperzeile im Gesamttext. */
-private fun parseBlocks(body: String, lineOffset: Int): List<MdBlock> {
+/**
+ * Parst [body] in Blöcke; [lineOffset] = absolute Zeilennummer der ersten Körperzeile im
+ * Gesamttext, [bodyStart] = absoluter Zeichen-Offset des Körpers im Gesamttext (für die
+ * Tipp-zur-Quellstelle-Karte).
+ */
+private fun parseBlocks(body: String, lineOffset: Int, bodyStart: Int): List<MdBlock> {
     if (body.isEmpty()) return emptyList()
     val lines = body.split("\n")
+    // Zeichen-Offset jeder Zeile im Körper.
+    val lineStart = IntArray(lines.size)
+    run { var acc = 0; for (k in lines.indices) { lineStart[k] = acc; acc += lines[k].length + 1 } }
+    fun col(m: MatchResult, group: Int) = m.groups[group]!!.range.first
     val out = ArrayList<MdBlock>()
     var i = 0
     var numberCounter = 0
     var lastWasNumber = false
     while (i < lines.size) {
         val line = lines[i]
+        val abs = bodyStart + lineStart[i]
         if (line.trim().startsWith("```")) {
             // Codeblock bis zum schließenden ``` (oder Ende).
             val sb = StringBuilder()
@@ -100,7 +118,7 @@ private fun parseBlocks(body: String, lineOffset: Int): List<MdBlock> {
                 sb.append(lines[i]); i++
             }
             if (i < lines.size) i++ // schließendes ``` überspringen
-            out += MdBlock.Code(sb.toString())
+            out += MdBlock.Code(sb.toString(), abs)
             lastWasNumber = false
             continue
         }
@@ -112,19 +130,19 @@ private fun parseBlocks(body: String, lineOffset: Int): List<MdBlock> {
         when {
             line.isBlank() -> { out += MdBlock.Blank; lastWasNumber = false }
             RULE_RE.matchEntire(line) != null -> { out += MdBlock.Rule; lastWasNumber = false }
-            head != null -> { out += MdBlock.Heading(head.groupValues[1].length, parseInline(head.groupValues[2])); lastWasNumber = false }
+            head != null -> { out += MdBlock.Heading(head.groupValues[1].length, buildInline(head.groupValues[2], abs + col(head, 2))); lastWasNumber = false }
             task != null -> {
-                out += MdBlock.Task(task.groupValues[1].length, task.groupValues[2].lowercase() == "x", parseInline(task.groupValues[3]), lineOffset + i)
+                out += MdBlock.Task(task.groupValues[1].length, task.groupValues[2].lowercase() == "x", buildInline(task.groupValues[3], abs + col(task, 3)), lineOffset + i)
                 lastWasNumber = false
             }
             num != null -> {
                 numberCounter = if (lastWasNumber) numberCounter + 1 else 1
-                out += MdBlock.Numbered(num.groupValues[1].length, numberCounter, parseInline(num.groupValues[3]))
+                out += MdBlock.Numbered(num.groupValues[1].length, numberCounter, buildInline(num.groupValues[3], abs + col(num, 3)))
                 lastWasNumber = true
             }
-            bullet != null -> { out += MdBlock.Bullet(bullet.groupValues[1].length, parseInline(bullet.groupValues[2])); lastWasNumber = false }
-            quote != null -> { out += MdBlock.Quote(parseInline(quote.groupValues[1])); lastWasNumber = false }
-            else -> { out += MdBlock.Para(parseInline(line)); lastWasNumber = false }
+            bullet != null -> { out += MdBlock.Bullet(bullet.groupValues[1].length, buildInline(bullet.groupValues[2], abs + col(bullet, 2))); lastWasNumber = false }
+            quote != null -> { out += MdBlock.Quote(buildInline(quote.groupValues[1], abs + col(quote, 1))); lastWasNumber = false }
+            else -> { out += MdBlock.Para(buildInline(line, abs)); lastWasNumber = false }
         }
         i++
     }
@@ -137,15 +155,44 @@ private val italicStyle = SpanStyle(fontStyle = FontStyle.Italic)
 private val strikeStyle = SpanStyle(textDecoration = TextDecoration.LineThrough)
 private val linkStyle = SpanStyle(color = Color(0xFF185FA5), textDecoration = TextDecoration.Underline)
 
-/** Inline-Markup -> AnnotatedString. Rekursiv für Verschachtelung (z. B. **fett *kursiv***). */
-fun parseInline(text: String): AnnotatedString = buildAnnotatedString {
-    appendInline(text, SpanStyle())
+/**
+ * Aufbereitetes Inline-Stück: die gerenderte [spans] plus eine Karte [map], die jede
+ * gerenderte Zeichenposition auf den Quell-Offset (relativ zu [srcStart]) zurückrechnet –
+ * damit ein Tipp in der gerenderten Ansicht möglichst zeichengenau die Stelle im Quelltext
+ * trifft (die Markdown-Zeichen wie ** oder - [ ] sind herausgerechnet). [srcLen] = Länge des
+ * Quell-Inline-Strings (für Tipp ans Zeilenende).
+ */
+class Inline(val spans: AnnotatedString, val srcStart: Int, val map: IntArray, val srcLen: Int) {
+    /** Quell-Offset (absolut) für eine gerenderte Zeichenposition. */
+    fun sourceOffset(rendered: Int): Int =
+        srcStart + (if (rendered in map.indices) map[rendered] else srcLen)
 }
 
-private fun AnnotatedString.Builder.appendInline(text: String, base: SpanStyle) {
-    val plain = StringBuilder()
+/** Inline-Markup -> AnnotatedString (ohne Karte; für einfache Fälle/Tests). */
+fun parseInline(text: String): AnnotatedString = buildInline(text, 0).spans
+
+/** Wie [parseInline], aber mit Offset-Karte; [srcStart] = absoluter Quell-Offset des Strings. */
+fun buildInline(text: String, srcStart: Int): Inline {
+    val b = AnnotatedString.Builder()
+    val map = ArrayList<Int>(text.length)
+    appendInline(b, text, 0, SpanStyle(), map)
+    return Inline(b.toAnnotatedString(), srcStart, map.toIntArray(), text.length)
+}
+
+private fun appendInline(b: AnnotatedString.Builder, text: String, base: Int, style: SpanStyle, map: MutableList<Int>) {
+    val run = StringBuilder()
+    val runSrc = ArrayList<Int>()
     fun flush() {
-        if (plain.isNotEmpty()) { withStyle(base) { append(plain.toString()) }; plain.clear() }
+        if (run.isNotEmpty()) {
+            b.withStyle(style) { append(run.toString()) }
+            map.addAll(runSrc)
+            run.clear(); runSrc.clear()
+        }
+    }
+    fun appendRun(s: String, srcBase: Int, st: SpanStyle) {
+        flush()
+        b.withStyle(st) { append(s) }
+        for (k in s.indices) map.add(srcBase + k)
     }
     var i = 0
     val n = text.length
@@ -153,77 +200,82 @@ private fun AnnotatedString.Builder.appendInline(text: String, base: SpanStyle) 
         when {
             text.startsWith("`", i) -> {
                 val end = text.indexOf('`', i + 1)
-                if (end > i) { flush(); withStyle(base.merge(codeStyle)) { append(text.substring(i + 1, end)) }; i = end + 1; continue }
+                if (end > i) { appendRun(text.substring(i + 1, end), base + i + 1, style.merge(codeStyle)); i = end + 1; continue }
             }
             text.startsWith("***", i) -> {
                 // fett + kursiv gleichzeitig (vor ** und * prüfen, sonst gewinnt **).
                 val end = text.indexOf("***", i + 3)
-                if (end > i + 2) { flush(); appendInline(text.substring(i + 3, end), base.merge(boldStyle).merge(italicStyle)); i = end + 3; continue }
+                if (end > i + 2) { flush(); appendInline(b, text.substring(i + 3, end), base + i + 3, style.merge(boldStyle).merge(italicStyle), map); i = end + 3; continue }
             }
             text.startsWith("**", i) -> {
                 val end = text.indexOf("**", i + 2)
-                if (end > i + 1) { flush(); appendInline(text.substring(i + 2, end), base.merge(boldStyle)); i = end + 2; continue }
+                if (end > i + 1) { flush(); appendInline(b, text.substring(i + 2, end), base + i + 2, style.merge(boldStyle), map); i = end + 2; continue }
             }
             text.startsWith("~~", i) -> {
                 val end = text.indexOf("~~", i + 2)
-                if (end > i + 1) { flush(); appendInline(text.substring(i + 2, end), base.merge(strikeStyle)); i = end + 2; continue }
+                if (end > i + 1) { flush(); appendInline(b, text.substring(i + 2, end), base + i + 2, style.merge(strikeStyle), map); i = end + 2; continue }
             }
             text.startsWith("*", i) -> {
                 val end = text.indexOf("*", i + 1)
-                if (end > i) { flush(); appendInline(text.substring(i + 1, end), base.merge(italicStyle)); i = end + 1; continue }
+                if (end > i) { flush(); appendInline(b, text.substring(i + 1, end), base + i + 1, style.merge(italicStyle), map); i = end + 1; continue }
             }
             text.startsWith("[", i) -> {
                 val close = text.indexOf(']', i + 1)
                 if (close > i && close + 1 < n && text[close + 1] == '(') {
                     val pend = text.indexOf(')', close + 2)
                     if (pend > close + 1) {
-                        flush()
-                        withStyle(base.merge(linkStyle)) { append(text.substring(i + 1, close)) }
+                        appendRun(text.substring(i + 1, close), base + i + 1, style.merge(linkStyle))
                         i = pend + 1; continue
                     }
                 }
             }
         }
-        plain.append(text[i]); i++
+        run.append(text[i]); runSrc.add(base + i); i++
     }
     flush()
 }
 
 /**
- * Rendert den Markdown-Körper. [onToggleTask] (sofern gesetzt) macht Haken antippbar;
- * der Parameter ist die absolute Zeilennummer im Gesamttext.
+ * Rendert den Markdown-Körper. [onToggleTask] (sofern gesetzt) macht Haken antippbar (Parameter =
+ * absolute Zeilennummer). [onEditAt] (sofern gesetzt) öffnet bei Tipp auf Text die Edit-Ansicht
+ * an der getippten Quellstelle (Parameter = absoluter Zeichen-Offset im Gesamttext, Tbd #2).
  */
 @Composable
 fun MarkdownBody(
     text: String,
     modifier: Modifier = Modifier,
     onToggleTask: ((sourceLine: Int) -> Unit)? = null,
+    onEditAt: ((sourceOffset: Int) -> Unit)? = null,
 ) {
-    val blocks = parseBlocks(postBody(text), lineOffset = 1)
+    val nl = text.indexOf('\n')
+    val bodyStart = if (nl < 0) text.length else nl + 1
+    val blocks = parseBlocks(postBody(text), lineOffset = 1, bodyStart = bodyStart)
+    val body = MaterialTheme.typography.bodyLarge
     Column(modifier) {
         for (b in blocks) {
             when (b) {
                 is MdBlock.Blank -> Spacer(Modifier.height(6.dp))
                 is MdBlock.Rule -> HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                is MdBlock.Heading -> Text(
-                    b.spans,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                is MdBlock.Heading -> MdText(
+                    b.inline,
+                    MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                    onEditAt,
+                    Modifier.padding(top = 4.dp, bottom = 2.dp),
                 )
-                is MdBlock.Para -> Text(b.spans, style = MaterialTheme.typography.bodyLarge)
-                is MdBlock.Bullet -> ListRow(b.indent, bulletGlyph(b.indent)) { Text(b.spans, style = MaterialTheme.typography.bodyLarge) }
-                is MdBlock.Numbered -> ListRow(b.indent, "${b.number}.") { Text(b.spans, style = MaterialTheme.typography.bodyLarge) }
+                is MdBlock.Para -> MdText(b.inline, body, onEditAt)
+                is MdBlock.Bullet -> ListRow(b.indent, bulletGlyph(b.indent)) { MdText(b.inline, body, onEditAt) }
+                is MdBlock.Numbered -> ListRow(b.indent, "${b.number}.") { MdText(b.inline, body, onEditAt) }
                 is MdBlock.Quote -> Row(Modifier.padding(vertical = 2.dp)) {
                     Surface(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.width(3.dp).height(20.dp)) {}
-                    Text(b.spans, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+                    MdText(b.inline, body, onEditAt, Modifier.padding(start = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 is MdBlock.Code -> Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(6.dp),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                 ) {
-                    Text(b.text, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(10.dp))
+                    val codeMod = Modifier.padding(10.dp).let { if (onEditAt != null) it.clickable { onEditAt(b.srcStart) } else it }
+                    Text(b.text, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = codeMod)
                 }
                 is MdBlock.Task -> Row(
                     Modifier.fillMaxWidth().padding(vertical = 1.dp).padding(start = (b.indent * 8).dp),
@@ -237,18 +289,50 @@ fun MarkdownBody(
                         modifier = Modifier.size(28.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    val spans = if (b.checked) {
-                        buildAnnotatedString { withStyle(strikeStyle) { append(b.spans) } }
-                    } else b.spans
-                    Text(
-                        spans,
-                        style = MaterialTheme.typography.bodyLarge,
+                    MdText(
+                        b.inline,
+                        body,
+                        onEditAt,
                         color = if (b.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        strike = b.checked,
                     )
                 }
             }
         }
     }
+}
+
+/**
+ * Text eines Inline-Blocks. Bei gesetztem [onEditAt] öffnet ein Tipp die Edit-Ansicht möglichst
+ * zeichengenau an der getippten Quellstelle (über die Offset-Karte des [Inline]).
+ */
+@Composable
+private fun MdText(
+    inline: Inline,
+    style: TextStyle,
+    onEditAt: ((Int) -> Unit)?,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    strike: Boolean = false,
+) {
+    var layout by remember(inline) { mutableStateOf<TextLayoutResult?>(null) }
+    val tapMod = if (onEditAt != null) {
+        modifier.pointerInput(inline, onEditAt) {
+            detectTapGestures { pos ->
+                val rendered = layout?.getOffsetForPosition(pos) ?: 0
+                onEditAt(inline.sourceOffset(rendered))
+            }
+        }
+    } else {
+        modifier
+    }
+    Text(
+        inline.spans,
+        style = if (strike) style.copy(textDecoration = TextDecoration.LineThrough) else style,
+        color = color,
+        modifier = tapMod,
+        onTextLayout = { layout = it },
+    )
 }
 
 @Composable
