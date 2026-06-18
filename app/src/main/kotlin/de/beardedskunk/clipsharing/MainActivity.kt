@@ -28,6 +28,7 @@ import de.beardedskunk.clipsharing.ui.FeedShareScreen
 import de.beardedskunk.clipsharing.ui.SettingsScreen
 import de.beardedskunk.clipsharing.ui.SharePickerScreen
 import de.beardedskunk.clipsharing.ui.SharedContent
+import de.beardedskunk.clipsharing.sync.SyncForegroundService
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +44,9 @@ class MainActivity : ComponentActivity() {
         graph.repo.onLocalChange = { graph.autoSync.trigger() }
         // JEDE Aenderung (lokal + Sync-Ingest) -> Kalender-Sync in den Android-Kalender.
         graph.repo.onAnyChange = { graph.calendarSync.requestSync() }
-        graph.autoSync.start()
+        // Sync über einen Vordergrund-Service halten (läuft auch im Standby weiter, W8).
+        // Ist der Sync-Schalter aus, kein Service/Notification – nur AutoSync (deaktiviert sich selbst).
+        if (graph.settings.syncEnabled) SyncForegroundService.start(this) else graph.autoSync.start()
         graph.calendarSync.requestSync()
         val shared = parseShared(intent)
         setContent {
@@ -61,12 +64,8 @@ class MainActivity : ComponentActivity() {
         appGraph.autoSync.trigger()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (isFinishing) {
-            appGraph.autoSync.stop() // stoppt auch den SyncManager
-        }
-    }
+    // Kein autoSync.stop() mehr beim Schliessen: der Vordergrund-Service haelt den Sync am
+    // Leben (W8). Beendet wird er nur ueber den Sync-Aus-Schalter (stoppt Service + Sync).
 
     private fun parseShared(intent: Intent?): SharedContent? {
         if (intent?.action != Intent.ACTION_SEND) return null
