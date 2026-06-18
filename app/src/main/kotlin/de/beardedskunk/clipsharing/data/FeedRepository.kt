@@ -61,7 +61,7 @@ class FeedRepository(
          * aus dem Log aufgebaut – sonst bleiben alt-materialisierte Zeilen stehen (Symptom:
          * Kalender-Feed nach Update als „cal\n::kalender::" / nicht als Kalender erkannt).
          */
-        const val MATERIALIZATION_VERSION = 1
+        const val MATERIALIZATION_VERSION = 2 // v2: shared-Flag (#10) in feeds materialisieren
     }
 
     // ---------------------------------------------------------------- Feeds
@@ -91,11 +91,16 @@ class FeedRepository(
         ensureMigrated()
         val out = ArrayList<Feed>()
         db.rawQuery(
-            "SELECT feed_id, name, created_wall, created_counter, deleted, calendar FROM feeds WHERE deleted = 0 ORDER BY created_wall, created_counter",
+            "SELECT feed_id, name, created_wall, created_counter, deleted, calendar, shared, foreign_origin, foreign_right " +
+                "FROM feeds WHERE deleted = 0 ORDER BY created_wall, created_counter",
             null,
         ).use { c ->
             while (c.moveToNext()) {
-                out += Feed(c.getString(0), c.getString(1), Hlc(c.getLong(2), c.getInt(3)), c.getInt(4) != 0, c.getInt(5) != 0)
+                out += Feed(
+                    id = c.getString(0), name = c.getString(1), created = Hlc(c.getLong(2), c.getInt(3)),
+                    deleted = c.getInt(4) != 0, calendar = c.getInt(5) != 0, shared = c.getInt(6) != 0,
+                    foreignOrigin = c.getString(7), foreignRight = FeedRight.from(c.getString(8)),
+                )
             }
         }
         return out
@@ -307,6 +312,83 @@ class FeedRepository(
         )
     }
 
+    fun addShare(feedId: String, grant: ShareGrant) =
+        setFeedShares(feedId, feedShares(feedId).filter { it.capId != grant.capId } + grant)
+
+    fun setShareRight(feedId: String, capId: String, right: FeedRight) =
+        setFeedShares(feedId, feedShares(feedId).map { if (it.capId == capId) it.copy(right = right) else it })
+
+    fun revokeShare(feedId: String, capId: String) =
+        setFeedShares(feedId, feedShares(feedId).filter { it.capId != capId })
+
+    /** Recht einer Freigabe (für die Original-Seite beim Cross-Group-Sync). null = unbekannt/widerrufen. */
+    fun grantFor(feedId: String, capId: String): ShareGrant? = feedShares(feedId).firstOrNull { it.capId == capId }
+
+    // ------------------------------ Fremdfeeds (Fremdgerät) ------------------------------
+
+    /** Registriert/aktualisiert einen abonnierten Fremdfeed lokal (nicht als Feed-Op – fremde Gruppe). */
+    fun registerForeignFeed(ref: ForeignFeedRef, name: String, calendar: Boolean) {
+        ensureMigrated()
+        val h = identity.nextHlc()
+        db.insertWithOnConflict(
+            "feeds", null,
+            ContentValues().apply {
+                put("feed_id", ref.feedId)
+                put("name", name)
+                put("created_wall", h.wallMillis)
+                put("created_counter", h.counter)
+                put("deleted", 0)
+                put("calendar", if (calendar) 1 else 0)
+                put("shared", 0)
+                put("foreign_origin", ref.originGroup)
+                put("cap_id", ref.capId)
+                put("cap_secret", ref.capSecret)
+                put("foreign_right", ref.right.name)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+        bumpRevision()
+        onAnyChange?.invoke()
+    }
+
+    fun listForeignFeeds(): List<ForeignFeedRef> {
+        ensureMigrated()
+        val out = ArrayList<ForeignFeedRef>()
+        db.rawQuery(
+            "SELECT feed_id, foreign_origin, cap_id, cap_secret, foreign_right FROM feeds WHERE foreign_origin <> '' AND deleted = 0",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                out += ForeignFeedRef(c.getString(0), c.getString(1), c.getString(2), c.getString(3), FeedRight.from(c.getString(4)))
+            }
+        }
+        return out
+    }
+
+    fun foreignFeedRef(feedId: String): ForeignFeedRef? = listForeignFeeds().firstOrNull { it.feedId == feedId }
+
+    /** Aktualisiert das vom Original mitgeteilte Recht eines Fremdfeeds (für UI-Gating). */
+    fun updateForeignRight(feedId: String, right: FeedRight) {
+        db.execSQL("UPDATE feeds SET foreign_right = ? WHERE feed_id = ? AND foreign_origin <> ''", arrayOf(right.name, feedId))
+        bumpRevision()
+    }
+
+    /** „Freigabe verlassen": Fremdfeed lokal komplett entfernen (kein Upstream-Eingriff). */
+    fun leaveForeignFeed(feedId: String) {
+        db.beginTransaction()
+        try {
+            db.delete("post_fts", "post_id IN (SELECT DISTINCT post_id FROM ops WHERE feed_id = ?)", arrayOf(feedId))
+            db.delete("post_current", "feed_id = ?", arrayOf(feedId))
+            db.delete("ops", "feed_id = ?", arrayOf(feedId))
+            db.delete("feeds", "feed_id = ? AND foreign_origin <> ''", arrayOf(feedId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        bumpRevision()
+        onAnyChange?.invoke()
+    }
+
     // -------------------------------------------------------------- Reading
 
     fun listPosts(feedId: String): List<PostState> =
@@ -452,6 +534,7 @@ class FeedRepository(
             put("created_counter", root.hlc.counter)
             put("deleted", if (shown.content.deleted) 1 else 0)
             put("calendar", if (FeedMeta.decodeCalendar(shown.content.text)) 1 else 0)
+            put("shared", if (FeedShareCodec.isShared(shown.content.text)) 1 else 0)
         }
         db.insertWithOnConflict("feeds", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }

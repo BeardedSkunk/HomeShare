@@ -2,13 +2,32 @@ package de.beardedskunk.clipsharing.data
 
 import de.beardedskunk.clipsharing.core.Hlc
 
-/** Ein benannter Feed. [calendar] = Feed enthält ausschließlich Kalendereinträge. */
+/**
+ * Ein benannter Feed. [calendar] = nur Kalendereinträge.
+ * [shared] = eigener Feed, der an Fremdgruppen freigegeben ist (#10).
+ * [foreignOrigin] != "" = dies ist ein FREMDFEED (von Gruppe [foreignOrigin] geteilt);
+ * dann gilt [foreignRight] als hiesige Rechtestufe.
+ */
 data class Feed(
     val id: String,
     val name: String,
     val created: Hlc,
     val deleted: Boolean = false,
     val calendar: Boolean = false,
+    val shared: Boolean = false,
+    val foreignOrigin: String = "",
+    val foreignRight: FeedRight = FeedRight.READ,
+) {
+    val isForeign: Boolean get() = foreignOrigin.isNotEmpty()
+}
+
+/** Lokaler Datensatz eines abonnierten Fremdfeeds (auf dem Fremdgerät). */
+data class ForeignFeedRef(
+    val feedId: String,
+    val originGroup: String,
+    val capId: String,
+    val capSecret: String,
+    val right: FeedRight,
 )
 
 /**
