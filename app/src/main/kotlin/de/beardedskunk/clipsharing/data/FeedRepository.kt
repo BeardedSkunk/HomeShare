@@ -164,7 +164,27 @@ class FeedRepository(
         }
         bumpRevision()
         onAnyChange?.invoke()
+        // Nach dem Einspeisen: lässt sich ein dadurch entstandener Konflikt automatisch
+        // (3-Wege) mergen? Dann lautlos tun – der Nutzer sieht ihn gar nicht erst.
+        if (feedId != FEEDS_FEED) maybeAutoResolve(feedId, version.postId)
         return true
+    }
+
+    /**
+     * Hintergrund-Auto-Merge: kann der aktuelle Konflikt dieses Posts ohne menschliche
+     * Entscheidung zusammengeführt werden ([Post.autoMergeContent]), erzeugen wir die
+     * Merge-Version wie eine normale lokale Op (eigenes Gerät/Seq/HLC) und propagieren sie.
+     *
+     * Mehrere Geräte können das unabhängig tun: dank des deterministischen Merge-Inhalts
+     * sind die Fassungen inhaltsgleich -> kein Konflikt mehr ([Post.hasContentConflict]),
+     * und beim nächsten echten Edit kollabieren sie zu einem Kopf. Kein Ping-Pong.
+     */
+    private fun maybeAutoResolve(feedId: String, postId: String) {
+        // Fremdfeeds (#10) NICHT auto-mergen: Konflikte dort werden nur stromaufwärts in der
+        // Originalgruppe aufgelöst; ein lokaler Merge hier dürfte gar nicht gepusht werden.
+        if (foreignFeedRef(feedId) != null) return
+        val merged = runCatching { loadPost(postId).autoMergeContent() }.getOrNull() ?: return
+        author(feedId, postId, currentHeads(postId), merged)
     }
 
     /** Wissensstand dieses Geraets: hoechste Seq + Luecken je Autor-Geraet. */
