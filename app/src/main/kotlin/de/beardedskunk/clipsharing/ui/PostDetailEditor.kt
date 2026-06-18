@@ -9,6 +9,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -577,6 +579,8 @@ private fun RenderedView(
     onShare: (String) -> Unit,
     onToggleImageTask: (Int, Int) -> Unit,
 ) {
+    // Aufgeklappte Bild-Beschreibungen (Tbd #12): per Default nur der Titel, Pfeil klappt Details auf.
+    val descExpanded = remember { mutableStateMapOf<Int, Boolean>() }
     Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(12.dp)) {
         val title = postTitle(text)
         if (title.isNotBlank()) {
@@ -604,10 +608,28 @@ private fun RenderedView(
             }
             val desc = imageTitles.getOrNull(index)?.text ?: ""
             val dTitle = postTitle(desc)
-            if (dTitle.isNotBlank()) {
-                Text(dTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
+            val hasBody = postBody(desc).isNotBlank()
+            val isOpen = descExpanded[index] == true
+            if (dTitle.isNotBlank() || hasBody) {
+                Row(
+                    Modifier.fillMaxWidth().let { if (hasBody) it.clickable { descExpanded[index] = !isOpen } else it },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        dTitle.ifBlank { "Details" },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f).padding(top = 4.dp),
+                    )
+                    if (hasBody) {
+                        Icon(
+                            if (isOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = if (isOpen) "Einklappen" else "Aufklappen",
+                        )
+                    }
+                }
             }
-            if (postBody(desc).isNotBlank()) {
+            if (hasBody && isOpen) {
                 MarkdownBody(desc, onToggleTask = { line -> onToggleImageTask(index, line) })
             }
         }
