@@ -41,6 +41,37 @@ fun wrapSelection(v: TextFieldValue, marker: String): TextFieldValue {
 }
 
 /**
+ * Wie [wrapSelection], aber ein Umschalter: ist die Auswahl bereits mit [marker] umgeben,
+ * wird der Marker wieder entfernt (statt erneut zu umschließen). Erkennt zwei Fälle:
+ *  - die Marker sind Teil der Auswahl (z. B. man hat `~~Wort~~` inkl. Tilden markiert),
+ *  - die Marker stehen direkt außerhalb der Auswahl (`~~` links und rechts vom markierten Wort).
+ * In beiden Fällen wird die Formatierung aufgehoben. Bleibt die Auswahl leer, verhält es sich
+ * wie [wrapSelection] (Paar einfügen, Cursor in die Mitte).
+ */
+fun toggleWrap(v: TextFieldValue, marker: String): TextFieldValue {
+    val start = min(v.selection.start, v.selection.end)
+    val end = max(v.selection.start, v.selection.end)
+    val t = v.text
+    if (start == end) return wrapSelection(v, marker)
+    val m = marker.length
+    val sel = t.substring(start, end)
+    // Fall A: Marker innerhalb der Auswahl -> entfernen.
+    if (sel.length >= 2 * m && sel.startsWith(marker) && sel.endsWith(marker)) {
+        val inner = sel.substring(m, sel.length - m)
+        val nt = t.substring(0, start) + inner + t.substring(end)
+        return TextFieldValue(nt, TextRange(start, start + inner.length))
+    }
+    // Fall B: Marker direkt außerhalb der Auswahl -> entfernen.
+    if (start >= m && end + m <= t.length &&
+        t.substring(start - m, start) == marker && t.substring(end, end + m) == marker
+    ) {
+        val nt = t.substring(0, start - m) + sel + t.substring(end + m)
+        return TextFieldValue(nt, TextRange(start - m, start - m + sel.length))
+    }
+    return wrapSelection(v, marker)
+}
+
+/**
  * Code-Knopf: Auswahl über mehrere Zeilen -> umschließender ```-Block; sonst inline `…`.
  * Leere Auswahl -> inline-Paar mit Cursor in der Mitte.
  */

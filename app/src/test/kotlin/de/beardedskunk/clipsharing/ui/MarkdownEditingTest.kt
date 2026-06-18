@@ -39,6 +39,30 @@ class MarkdownEditingTest {
         assertEquals(7, r.selection.end)
     }
 
+    @Test fun toggleWrap_wrapsThenUnwraps() {
+        val wrapped = toggleWrap(TextFieldValue("hello", TextRange(0, 5)), "**")
+        assertEquals("**hello**", wrapped.text)
+        // Innenauswahl: Marker stehen außerhalb -> entfernen.
+        val unwrapInner = toggleWrap(TextFieldValue("**hello**", TextRange(2, 7)), "**")
+        assertEquals("hello", unwrapInner.text)
+        assertEquals(0, unwrapInner.selection.start)
+        assertEquals(5, unwrapInner.selection.end)
+    }
+
+    @Test fun toggleWrap_unwrapsWhenMarkersInSelection() {
+        // Auswahl umfasst die Tilden mit -> trotzdem entfernen.
+        val r = toggleWrap(TextFieldValue("~~Wort~~", TextRange(0, 8)), "~~")
+        assertEquals("Wort", r.text)
+        assertEquals(0, r.selection.start)
+        assertEquals(4, r.selection.end)
+    }
+
+    @Test fun toggleWrap_emptySelectionInsertsPair() {
+        val r = toggleWrap(TextFieldValue("ab", TextRange(1)), "*")
+        assertEquals("a**b", r.text)
+        assertEquals(2, r.selection.start)
+    }
+
     @Test fun applyCode_blockWhenMultiline_inlineOtherwise() {
         val multi = TextFieldValue("x\ny", TextRange(0, 3))
         assertEquals("```\nx\ny\n```", applyCode(multi).text)
