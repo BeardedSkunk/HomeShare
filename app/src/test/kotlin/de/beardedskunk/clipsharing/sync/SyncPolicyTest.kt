@@ -21,6 +21,13 @@ class SyncPolicyTest {
         assertFalse(p.syncFritz)
     }
 
+    @Test fun syncDisabled_noSyncAtAll_evenWithWifiAndFritz() {
+        // Schalter aus: dieses Gerät ist komplett aus dem Abgleich – egal ob WLAN/FRITZ!Box da sind.
+        val p = SyncPolicy.plan(wifiConnected = true, fritzConfigured = true, fritzBusy = false, syncEnabled = false)
+        assertFalse(p.syncPeers)
+        assertFalse(p.syncFritz)
+    }
+
     @Test fun wifi_fritzOnlyWhenConfiguredAndNotBusy() {
         assertEquals(true, SyncPolicy.plan(true, fritzConfigured = true, fritzBusy = false).syncFritz)
         assertFalse(SyncPolicy.plan(true, fritzConfigured = true, fritzBusy = true).syncFritz)

@@ -121,6 +121,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             identity = graph.identity,
             fritz = graph.fritz,
             blobStore = graph.blobStore,
+            onSyncEnabledChanged = { graph.autoSync.setSyncEnabled(it) },
             onBack = { showSettings = false },
         )
         return

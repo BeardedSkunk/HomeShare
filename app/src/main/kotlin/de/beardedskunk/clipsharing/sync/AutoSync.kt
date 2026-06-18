@@ -44,7 +44,8 @@ class AutoSync(
             .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                // WLAN da: SyncManager (NSD) hochfahren bzw. Discovery auffrischen, dann syncen.
+                // WLAN da: nur hochfahren, wenn der Sync-Schalter an ist.
+                if (!settings.syncEnabled) { syncManager.disable(); return }
                 syncManager.start()
                 syncManager.refresh()
                 trigger()
@@ -58,9 +59,29 @@ class AutoSync(
         netCallback = cb
         runCatching { cm?.registerNetworkCallback(request, cb) }
         // Falls bereits WLAN besteht, sofort starten (onAvailable kommt nicht garantiert sofort).
-        if (wifiConnected()) {
+        if (settings.syncEnabled && wifiConnected()) {
             syncManager.start()
             trigger()
+        } else if (!settings.syncEnabled) {
+            syncManager.disable()
+        } else {
+            syncManager.pause()
+        }
+    }
+
+    /**
+     * Sync-Schalter umlegen (Einstellungen). Persistiert und wirkt sofort: AUS faehrt den
+     * SyncManager komplett herunter (Server/Beacon/Verbindungen weg – wie offline), AN
+     * faehrt ihn bei vorhandenem WLAN wieder hoch und stoesst einen Durchlauf an.
+     */
+    fun setSyncEnabled(enabled: Boolean) {
+        settings.syncEnabled = enabled
+        if (enabled) {
+            if (wifiConnected()) {
+                syncManager.start()
+                syncManager.refresh()
+                trigger()
+            }
         } else {
             syncManager.pause()
         }
@@ -75,7 +96,7 @@ class AutoSync(
 
     /** Einen Sync-Durchlauf anstoßen (Peers + FRITZ!Box) – nur bei aktivem WLAN. */
     fun trigger() {
-        val plan = SyncPolicy.plan(wifiConnected(), settings.fritzConfigured(), fritzBusy)
+        val plan = SyncPolicy.plan(wifiConnected(), settings.fritzConfigured(), fritzBusy, settings.syncEnabled)
         if (!plan.syncPeers && !plan.syncFritz) {
             syncManager.pause()
             return
