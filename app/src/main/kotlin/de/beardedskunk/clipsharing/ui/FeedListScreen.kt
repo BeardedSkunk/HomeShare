@@ -61,7 +61,10 @@ fun FeedListScreen(
     onToggleWeb: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenShare: (Feed) -> Unit = {},
-    onOpenFeed: (Feed, String?) -> Unit,
+    /** Geteilter Suchzustand (siehe [onSearchQueryChange]): null = Suche zu, sonst offen. */
+    searchQuery: String? = null,
+    onSearchQueryChange: (String?) -> Unit = {},
+    onOpenFeed: (Feed) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
@@ -69,8 +72,8 @@ fun FeedListScreen(
     var feedToDelete by remember { mutableStateOf<Feed?>(null) }
     var actionFeed by remember { mutableStateOf<Feed?>(null) }
     var showAddShared by remember { mutableStateOf(false) }
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    val searching = searchQuery != null
+    val query = searchQuery ?: ""
     var matchedIds by remember { mutableStateOf<Set<String>?>(null) }
 
     fun reload() {
@@ -91,7 +94,7 @@ fun FeedListScreen(
                 title = {
                     if (searching) {
                         OutlinedTextField(
-                            value = query, onValueChange = { query = it },
+                            value = query, onValueChange = { onSearchQueryChange(it) },
                             placeholder = { Text("Feeds durchsuchen…") }, singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -105,7 +108,7 @@ fun FeedListScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
+                    IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }) {
                         Icon(
                             if (searching) Icons.Filled.Close else Icons.Filled.Search,
                             contentDescription = if (searching) "Suche schließen" else "Feeds durchsuchen",
@@ -152,7 +155,7 @@ fun FeedListScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                             .combinedClickable(
-                                onClick = { onOpenFeed(feed, if (searching && query.isNotBlank()) query else null) },
+                                onClick = { onOpenFeed(feed) },
                                 onLongClick = { actionFeed = feed }, // lang drücken -> Aktionen
                             ),
                     ) {

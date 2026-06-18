@@ -17,7 +17,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -28,6 +31,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -70,6 +75,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -117,6 +123,11 @@ fun PostDetailEditor(
      * markiertem Treffer.
      */
     searchQuery: String? = null,
+    /**
+     * Geteilter Suchzustand: `null` = Suche zu, sonst offen (ggf. leerer String). Wird über alle
+     * Navigationsebenen geteilt; Schließen (null) leert ihn und propagiert nach oben.
+     */
+    onSearchQueryChange: (String?) -> Unit = {},
     /** #10: Nur-Lese-Ansicht (Fremdfeed ohne Schreibrecht) – keine Bearbeitung möglich. */
     readOnly: Boolean = false,
     onClose: () -> Unit,
@@ -124,6 +135,10 @@ fun PostDetailEditor(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val maxImageHeight = (LocalConfiguration.current.screenHeightDp * 0.2f).dp
+    // Tastaturhöhe hier (noch unkonsumiert) als Zahl lesen: begrenzt unten das Viewport UND liefert
+    // den gleichen Wert als Scroll-Puffer, damit der Cursor des letzten Felds nie hinter der Tastatur landet.
+    val density = LocalDensity.current
+    val imeBottom = with(density) { WindowInsets.ime.getBottom(density).toDp() }
 
     var sourceMode by remember { mutableStateOf(post == null) }
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
@@ -132,8 +147,9 @@ fun PostDetailEditor(
         mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> TextFieldValue(post?.imageTitles?.getOrNull(i) ?: "") })
     }
     var currentPostId by remember { mutableStateOf(post?.postId) }
-    var findOpen by remember { mutableStateOf(false) }
-    var findQuery by remember { mutableStateOf("") }
+    // Suche ist geteilter Zustand (siehe onSearchQueryChange): null = zu, sonst offen.
+    val findOpen = searchQuery != null
+    val findQuery = searchQuery ?: ""
     var matchIdx by remember { mutableStateOf(0) }
     var helpOpen by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
@@ -224,13 +240,8 @@ fun PostDetailEditor(
         }
     }
 
-    // Aus der Suche geoeffnet: im RENDER-Modus die Suche gleich aktivieren (gleiches Suchwort).
-    LaunchedEffect(Unit) {
-        if (!searchQuery.isNullOrBlank()) {
-            findQuery = searchQuery
-            findOpen = true
-        }
-    }
+    // Neue Suche / geänderter Begriff -> Trefferzähler von vorne.
+    LaunchedEffect(searchQuery) { matchIdx = 0 }
 
     val editTargets = remember { imageEditTargets(context) }
     var imageMenuFor by remember { mutableStateOf<Int?>(null) }
@@ -387,9 +398,18 @@ fun PostDetailEditor(
                     }
                 },
                 actions = {
+                    // Suche in BEIDEN Modi (gerendert + Quelltext). Schließen leert den Begriff
+                    // und propagiert nach oben (siehe onSearchQueryChange).
+                    IconButton(onClick = { onSearchQueryChange(if (findOpen) null else "") }) {
+                        Icon(
+                            if (findOpen) Icons.Filled.Close else Icons.Filled.Search,
+                            contentDescription = if (findOpen) "Suche schließen" else "Im Text suchen",
+                        )
+                    }
+                    // Markdown-Hilfe: im Quelltext-Modus immer sichtbar (früher in der Toolbar versteckt).
                     if (sourceMode) {
-                        IconButton(onClick = { findOpen = !findOpen }) {
-                            Icon(Icons.Filled.Search, contentDescription = "Im Text suchen")
+                        IconButton(onClick = { helpOpen = true }) {
+                            Text("?", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         }
                     }
                     if (!readOnly) {
@@ -430,21 +450,28 @@ fun PostDetailEditor(
             if (findOpen) {
                 FindBar(
                     query = findQuery,
-                    onQuery = { findQuery = it; matchIdx = 0 },
+                    onQuery = { onSearchQueryChange(it); matchIdx = 0 },
                     label = if (matchCount == 0) "0/0" else "${matchIdx + 1}/$matchCount",
                     hasMatches = matchCount > 0,
                     onPrev = { stepMatch(-1) },
                     onNext = { stepMatch(1) },
                 )
             }
-            Box(Modifier.weight(1f).fillMaxWidth().imePadding()) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(bottom = imeBottom)) {
                 if (sourceMode) {
                     SourceEditor(
                         tfv = tfv,
                         onTfvChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
                         focusRequester = focusRequester,
-                        onHelp = { helpOpen = true },
                         applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
+                        // Bildtext-Toolbar wirkt auf das jeweilige Beschreibungsfeld (gleiche Mechanik wie Haupttext).
+                        titleApply = { idx, transform ->
+                            imageTitles = imageTitles.toMutableList().also {
+                                while (it.size <= idx) it.add(TextFieldValue(""))
+                                it[idx] = transform(it[idx])
+                            }
+                            titleFocusers.getOrNull(idx)?.requestFocus()
+                        },
                         images = images,
                         imageTitles = imageTitles,
                         titleFocusers = titleFocusers,
@@ -466,6 +493,7 @@ fun PostDetailEditor(
                                 it[idx] = handleEnter(it[idx], nv) ?: nv
                             }
                         },
+                        bottomInset = imeBottom,
                     )
                 } else {
                     RenderedView(
@@ -533,15 +561,15 @@ private fun FindBar(
     }
 }
 
-/** Quelltext-Editor mit Toolbar (Aufgabe/Fett/Kursiv/Durchgestrichen/Code/↑/↓/?) und Bild-Feldern. */
+/** Quelltext-Editor: Haupttext-Feld + Bild-Felder, jeweils mit der gleichen [MarkdownToolbar]. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun SourceEditor(
     tfv: TextFieldValue,
     onTfvChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester,
-    onHelp: () -> Unit,
     applyToTfv: ((TextFieldValue) -> TextFieldValue) -> Unit,
+    titleApply: (Int, (TextFieldValue) -> TextFieldValue) -> Unit,
     images: List<String>,
     imageTitles: List<TextFieldValue>,
     titleFocusers: List<FocusRequester>,
@@ -555,12 +583,12 @@ private fun SourceEditor(
     onShare: (String) -> Unit,
     onRemove: (Int) -> Unit,
     onTitleChange: (Int, TextFieldValue) -> Unit,
+    bottomInset: androidx.compose.ui.unit.Dp,
 ) {
-    // Auf der Titelzeile (1. Zeile) sind die Format-Knöpfe inaktiv.
-    val firstNl = tfv.text.indexOf('\n').let { if (it < 0) tfv.text.length else it }
-    val onTitleLine = tfv.selection.start <= firstNl
-    val hasLineSelection = !tfv.selection.collapsed && minOf(tfv.selection.start, tfv.selection.end) > firstNl
-
+    val scope = rememberCoroutineScope()
+    // Pro Bildbeschreibungsfeld ein Requester: beim Tippen aktiv ins Sichtfeld holen, da Composes
+    // automatisches bringIntoView nur beim Fokussieren feuert, nicht beim Wachsen durch Eingabe.
+    val titleBivrs = remember(images.size) { List(images.size) { BringIntoViewRequester() } }
     // Editier-Flaeche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         OutlinedTextField(
@@ -569,26 +597,7 @@ private fun SourceEditor(
             placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).focusRequester(focusRequester),
         )
-
-        // Markdown-Toolbar.
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TbButton("☐ Aufgabe", enabled = !onTitleLine) { applyToTfv(::insertTask) }
-            TbButton("B", enabled = !onTitleLine, bold = true) { applyToTfv { toggleWrap(it, "**") } }
-            TbButton("I", enabled = !onTitleLine, italic = true) { applyToTfv { toggleWrap(it, "*") } }
-            TbButton("S", enabled = !onTitleLine, strike = true) { applyToTfv { toggleWrap(it, "~~") } }
-            TbButton("</>", enabled = !onTitleLine) { applyToTfv { applyCode(it) } }
-            IconButton(enabled = hasLineSelection, onClick = { applyToTfv { moveLines(it, up = true) } }) {
-                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Zeile(n) nach oben")
-            }
-            IconButton(enabled = hasLineSelection, onClick = { applyToTfv { moveLines(it, up = false) } }) {
-                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Zeile(n) nach unten")
-            }
-            TbButton("?", enabled = true) { onHelp() }
-        }
+        MarkdownToolbar(value = tfv, apply = applyToTfv)
 
         images.forEachIndexed { index, sha ->
             Column(Modifier.fillMaxWidth().padding(8.dp)) {
@@ -611,14 +620,56 @@ private fun SourceEditor(
                         onRemove = { onImageMenu(null); onRemove(index) },
                     )
                 }
+                val titleValue = imageTitles.getOrElse(index) { TextFieldValue("") }
                 OutlinedTextField(
-                    value = imageTitles.getOrElse(index) { TextFieldValue("") },
-                    onValueChange = { onTitleChange(index, it) },
+                    value = titleValue,
+                    onValueChange = { onTitleChange(index, it); scope.launch { titleBivrs[index].bringIntoView() } },
                     placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                        .bringIntoViewRequester(titleBivrs[index])
                         .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
                 )
+                // Gleiche Toolbar wie beim Haupttext – wirkt auf genau dieses Beschreibungsfeld.
+                MarkdownToolbar(value = titleValue, apply = { transform -> titleApply(index, transform) })
             }
+        }
+        // Tastaturhoher Puffer: das letzte (Bild-)Feld kann so über die Tastatur gescrollt
+        // werden, damit der Cursor beim Tippen nie dahinter verschwindet.
+        Spacer(Modifier.height(bottomInset))
+    }
+}
+
+/**
+ * Markdown-Toolbar (Aufgabe/Fett/Kursiv/Durchgestrichen/Code/Zeile↑↓). Wird sowohl für den
+ * Haupttext als auch für jede Bildbeschreibung verwendet – damit beide identisch funktionieren.
+ * [value] dient der Aktiv/Inaktiv-Logik (Titelzeile, Zeilenauswahl), [apply] wendet eine
+ * Transformation auf das zugehörige Feld an (und fokussiert es danach wieder).
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun MarkdownToolbar(
+    value: TextFieldValue,
+    apply: ((TextFieldValue) -> TextFieldValue) -> Unit,
+) {
+    // Auf der Titelzeile (1. Zeile) sind die Format-Knöpfe inaktiv.
+    val firstNl = value.text.indexOf('\n').let { if (it < 0) value.text.length else it }
+    val onTitleLine = value.selection.start <= firstNl
+    val hasLineSelection = !value.selection.collapsed && minOf(value.selection.start, value.selection.end) > firstNl
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TbButton("☐ Aufgabe", enabled = !onTitleLine) { apply(::insertTask) }
+        TbButton("B", enabled = !onTitleLine, bold = true) { apply { toggleWrap(it, "**") } }
+        TbButton("I", enabled = !onTitleLine, italic = true) { apply { toggleWrap(it, "*") } }
+        TbButton("S", enabled = !onTitleLine, strike = true) { apply { toggleWrap(it, "~~") } }
+        TbButton("</>", enabled = !onTitleLine) { apply { applyCode(it) } }
+        IconButton(enabled = hasLineSelection, onClick = { apply { moveLines(it, up = true) } }) {
+            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Zeile(n) nach oben")
+        }
+        IconButton(enabled = hasLineSelection, onClick = { apply { moveLines(it, up = false) } }) {
+            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Zeile(n) nach unten")
         }
     }
 }
