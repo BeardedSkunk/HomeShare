@@ -31,12 +31,15 @@ class AutoSync(
     private val fritz: FritzController,
     private val syncManager: SyncManager,
 ) {
+    private val appContext = context.applicationContext
     private val cm = context.applicationContext.getSystemService(ConnectivityManager::class.java)
     private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var fritzBusy = false
 
     fun start() {
+        // Idempotent: wird vom Foreground-Service (ggf. mehrfach) aufgerufen.
+        if (netCallback != null) { trigger(); return }
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         // Nur WLAN-Netze beobachten – Mobilfunk löst keinen Sync aus.
         val request = NetworkRequest.Builder()
@@ -77,13 +80,15 @@ class AutoSync(
     fun setSyncEnabled(enabled: Boolean) {
         settings.syncEnabled = enabled
         if (enabled) {
+            SyncForegroundService.start(appContext) // Service (wieder) hochfahren -> haelt Sync im Standby wach
             if (wifiConnected()) {
                 syncManager.start()
                 syncManager.refresh()
                 trigger()
             }
         } else {
-            syncManager.pause()
+            syncManager.disable()
+            SyncForegroundService.stop(appContext) // Sync aus -> Service + Notification weg
         }
     }
 

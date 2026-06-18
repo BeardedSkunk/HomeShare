@@ -69,6 +69,7 @@ class SyncManager(
     private var regListener: NsdManager.RegistrationListener? = null
     private var discListener: NsdManager.DiscoveryListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private val knownPeers = java.util.concurrent.ConcurrentHashMap<String, InetSocketAddress>()
 
     // #10: zuletzt gesehene Adresse je FREMDER Gruppe (fuer Cross-Group-Push aus syncNow).
@@ -103,6 +104,12 @@ class SyncManager(
         if (status.value.running) return
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         multicastLock = wifi.createMulticastLock("clipsharing-disc").apply {
+            setReferenceCounted(false)
+            runCatching { acquire() }
+        }
+        // Hält das WLAN-Radio wach, damit der Server auch im Standby erreichbar bleibt (W8).
+        @Suppress("DEPRECATION")
+        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "clipsharing-sync").apply {
             setReferenceCounted(false)
             runCatching { acquire() }
         }
@@ -155,6 +162,8 @@ class SyncManager(
         beaconSocket = null
         runCatching { multicastLock?.release() }
         multicastLock = null
+        runCatching { wifiLock?.release() }
+        wifiLock = null
         knownPeers.clear()
         gate.clear()
         scope.cancel()
