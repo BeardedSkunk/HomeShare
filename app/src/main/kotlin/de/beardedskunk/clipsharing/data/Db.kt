@@ -27,7 +27,12 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
               created_wall INTEGER NOT NULL,
               created_counter INTEGER NOT NULL,
               deleted INTEGER NOT NULL DEFAULT 0,
-              calendar INTEGER NOT NULL DEFAULT 0
+              calendar INTEGER NOT NULL DEFAULT 0,
+              shared INTEGER NOT NULL DEFAULT 0,
+              foreign_origin TEXT NOT NULL DEFAULT '',
+              cap_id TEXT NOT NULL DEFAULT '',
+              cap_secret TEXT NOT NULL DEFAULT '',
+              foreign_right TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -106,10 +111,18 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
             db.execSQL("ALTER TABLE feeds ADD COLUMN calendar INTEGER NOT NULL DEFAULT 0")
             createCalendarLink(db)
         }
+        if (oldVersion < 5) {
+            // v4 -> v5: Feed-Sharing (#10). Markierungen + Fremdfeed-Ablage.
+            db.execSQL("ALTER TABLE feeds ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE feeds ADD COLUMN foreign_origin TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE feeds ADD COLUMN cap_id TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE feeds ADD COLUMN cap_secret TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE feeds ADD COLUMN foreign_right TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     companion object {
         const val DB_NAME = "clipsharing.db"
-        const val DB_VERSION = 4
+        const val DB_VERSION = 5
     }
 }
