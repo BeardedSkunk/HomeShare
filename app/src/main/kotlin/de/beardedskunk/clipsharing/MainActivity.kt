@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -39,6 +40,11 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        // Edge-to-Edge (decorFitsSystemWindows=false) pant das Fenster bei offener Tastatur
+        // sonst nach oben (Default ~adjustPan) und kollidiert mit imePadding() -> TopAppBar
+        // fliegt raus, der Cursor verschwindet hinter der Tastatur. adjustResize -> nur die
+        // IME-Inset wird gemeldet, imePadding() federt sie sauber ab.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val graph = appGraph
         // AutoSync besitzt den SyncManager-Lebenszyklus: NSD/Sync laufen nur bei WLAN.
         graph.repo.onLocalChange = { graph.autoSync.trigger() }
@@ -85,7 +91,9 @@ fun ClipTheme(content: @Composable () -> Unit) {
 @Composable
 fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     var openFeed by remember { mutableStateOf<Feed?>(null) }
-    var openFeedQuery by remember { mutableStateOf<String?>(null) }
+    // EINE geteilte Suche über alle Ebenen (Feeds-Liste / Feed / Eintrag): null = zu, sonst offen.
+    // Beim Zurückgehen bleibt sie erhalten, außer sie wurde in der Ebene darunter geschlossen (-> null).
+    var searchQuery by remember { mutableStateOf<String?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
     var showSettings by remember { mutableStateOf(false) }
     var sharingFeed by remember { mutableStateOf<Feed?>(null) }
@@ -146,7 +154,9 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             onToggleWeb = { graph.web.toggle() },
             onOpenSettings = { showSettings = true },
             onOpenShare = { sharingFeed = it },
-            onOpenFeed = { f, q -> openFeed = f; openFeedQuery = q },
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
+            onOpenFeed = { f -> openFeed = f },
         )
     } else {
         FeedScreen(
@@ -154,9 +164,11 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             blobStore = graph.blobStore,
             feed = feed,
             settings = graph.settings,
-            initialQuery = openFeedQuery,
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
             onRequestCalendarSync = { graph.calendarSync.requestSync() },
-            onBack = { openFeed = null; openFeedQuery = null },
+            // Zurück zur Übersicht: Suche bleibt erhalten (außer sie wurde hier geschlossen).
+            onBack = { openFeed = null },
         )
     }
 }

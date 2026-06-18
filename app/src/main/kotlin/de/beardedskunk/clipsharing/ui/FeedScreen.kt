@@ -72,7 +72,9 @@ fun FeedScreen(
     blobStore: BlobStore,
     feed: Feed,
     settings: de.beardedskunk.clipsharing.data.Settings,
-    initialQuery: String? = null,
+    /** Geteilter Suchzustand (siehe [onSearchQueryChange]): null = Suche zu, sonst offen. */
+    searchQuery: String? = null,
+    onSearchQueryChange: (String?) -> Unit = {},
     onRequestCalendarSync: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -94,9 +96,9 @@ fun FeedScreen(
         runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
     }
     var posts by remember { mutableStateOf<List<PostState>>(emptyList()) }
-    // Aus der Übersichts-Suche mit Suchwort geöffnet -> Suche gleich aktiv.
-    var searching by remember { mutableStateOf(initialQuery != null) }
-    var query by remember { mutableStateOf(initialQuery ?: "") }
+    // Suche ist geteilter Zustand: null = zu, sonst offen (ggf. leer). Bleibt beim Navigieren erhalten.
+    val searching = searchQuery != null
+    val query = searchQuery ?: ""
     var editing by remember { mutableStateOf<PostState?>(null) }
     var creatingNew by remember { mutableStateOf(false) }
     var resolving by remember { mutableStateOf<PostState?>(null) }
@@ -189,8 +191,10 @@ fun FeedScreen(
                 blobStore = blobStore,
                 feed = feed,
                 post = current,
-                // Aus der Suche geöffnet: im RENDER-Modus mit aktiver Suche + gleichem Suchwort.
-                searchQuery = if (current != null && searching && query.isNotBlank()) query else null,
+                // Bestehender Eintrag: geteilten Suchzustand durchreichen (gleiches Suchwort, durchsteppbar).
+                // Neuer Eintrag: keine Suche.
+                searchQuery = if (current != null) searchQuery else null,
+                onSearchQueryChange = onSearchQueryChange,
                 readOnly = !canWrite, // Fremdfeed ohne Schreibrecht -> nur ansehen
                 onClose = { editing = null; creatingNew = false; reload() },
             )
@@ -208,7 +212,7 @@ fun FeedScreen(
                     if (searching) {
                         OutlinedTextField(
                             value = query,
-                            onValueChange = { query = it },
+                            onValueChange = { onSearchQueryChange(it) },
                             placeholder = { Text("Im Feed suchen…") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
@@ -223,10 +227,8 @@ fun FeedScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        searching = !searching
-                        if (!searching) query = ""
-                    }) {
+                    // Schließen leert den Begriff (null) -> propagiert nach oben, andere Ebenen sind dann auch zu.
+                    IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }) {
                         Icon(
                             if (searching) Icons.Filled.Close else Icons.Filled.Search,
                             contentDescription = if (searching) "Suche schließen" else "Suchen",
