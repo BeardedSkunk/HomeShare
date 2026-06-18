@@ -47,12 +47,18 @@ class WebServer(
             uri == "/api/post" && post -> {
                 val b = JSONObject(readBody(session))
                 val images = decodeImages(b)
-                repo.createPost(b.getString("feed"), b.optString("text"), images)
+                repo.createPost(b.getString("feed"), b.optString("text"), images, strList(b.optJSONArray("imageTitles")))
                 ok()
             }
             uri == "/api/post/edit" && post -> {
                 val b = JSONObject(readBody(session))
-                repo.editPost(b.getString("feed"), b.getString("postId"), b.optString("text"), strList(b.optJSONArray("images")))
+                repo.editPost(
+                    b.getString("feed"),
+                    b.getString("postId"),
+                    b.optString("text"),
+                    strList(b.optJSONArray("images")),
+                    strList(b.optJSONArray("imageTitles")),
+                )
                 ok()
             }
             uri == "/api/post/delete" && post -> {
@@ -66,7 +72,11 @@ class WebServer(
                 val content = if (b.optBoolean("deleted")) {
                     PostContent(deleted = true)
                 } else {
-                    PostContent(text = b.optString("text"), imageHashes = strList(b.optJSONArray("images")))
+                    PostContent(
+                        text = b.optString("text"),
+                        imageHashes = strList(b.optJSONArray("images")),
+                        imageTitles = strList(b.optJSONArray("imageTitles")),
+                    )
                 }
                 repo.resolveConflict(b.getString("feed"), b.getString("postId"), content)
                 ok()
@@ -93,6 +103,7 @@ class WebServer(
                     .put("postId", p.postId)
                     .put("text", p.text)
                     .put("images", JSONArray(p.imageHashes))
+                    .put("imageTitles", JSONArray(p.imageTitles))
                     .put("deleted", p.deleted)
                     .put("conflicted", p.conflicted)
                     .put("created", p.created.wallMillis),
