@@ -7,6 +7,16 @@ class Settings(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("clip_settings", Context.MODE_PRIVATE)
 
+    /**
+     * Geraete-Abgleich (Gerät-zu-Gerät + FRITZ!Box) aktiv. Standard AN. Aus = dieses
+     * Gerät nimmt sich komplett aus dem Sync: kein Server, kein Beacon, keine Verbindung,
+     * kein FRITZ!Box-Push/Pull – als waere es offline (ohne das WLAN abzuschalten).
+     * Dient auch zum gezielten Testen von Offline-Konflikten.
+     */
+    var syncEnabled: Boolean
+        get() = prefs.getBoolean(K_SYNC_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(K_SYNC_ENABLED, v).apply()
+
     /** Gruppen-Passphrase: verschluesselt den Sync und authentifiziert die Gruppe. */
     var groupPassphrase: String
         get() = prefs.getString(K_PASSPHRASE, "") ?: ""
@@ -79,6 +89,7 @@ class Settings(context: Context) {
     fun fritzConfigured(): Boolean = fritzUser.isNotBlank() && fritzHost.isNotBlank()
 
     companion object {
+        private const val K_SYNC_ENABLED = "sync_enabled"
         private const val K_PASSPHRASE = "group_passphrase"
         private const val K_FALLBACK_PEERS = "fallback_peers"
         private const val K_HOST = "fritz_host"

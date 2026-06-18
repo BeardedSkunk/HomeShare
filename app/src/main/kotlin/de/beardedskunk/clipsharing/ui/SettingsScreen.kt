@@ -56,12 +56,14 @@ fun SettingsScreen(
     identity: DeviceIdentity,
     fritz: FritzController,
     blobStore: BlobStore,
+    onSyncEnabledChanged: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     // Leer = Android-Systemname (als grauer Platzhalter sichtbar) gilt automatisch.
+    var syncEnabled by remember { mutableStateOf(settings.syncEnabled) }
     var deviceName by remember { mutableStateOf(identity.explicitDeviceName ?: "") }
     var groupName by remember { mutableStateOf(identity.groupName) }
     var passphrase by remember { mutableStateOf(settings.groupPassphrase) }
@@ -116,6 +118,26 @@ fun SettingsScreen(
             Modifier.fillMaxSize().padding(padding).imePadding().padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Text("Geräte-Abgleich", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Sync aktiv")
+                    Text(
+                        "Aus = dieses Gerät synct mit keinem anderen und nicht mit der FRITZ!Box " +
+                            "(wie offline, ohne WLAN abzuschalten).",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = syncEnabled,
+                    onCheckedChange = {
+                        syncEnabled = it
+                        onSyncEnabledChanged(it)
+                        Toast.makeText(context, if (it) "Sync aktiviert" else "Sync deaktiviert", Toast.LENGTH_SHORT).show()
+                    },
+                )
+            }
+
             Text("Dieses Gerät", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 deviceName, { deviceName = it }, label = { Text("Gerätename (z. B. F101, Pixel)") },

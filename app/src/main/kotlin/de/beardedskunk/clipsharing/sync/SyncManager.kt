@@ -104,6 +104,16 @@ class SyncManager(
         status.value = SyncStatus(running = false, lastMessage = NO_WIFI)
     }
 
+    /**
+     * Wie [pause], aber vom Nutzer gewollt (Sync-Schalter aus). Eigener Status-Text,
+     * damit nicht faelschlich „Kein WLAN" angezeigt wird.
+     */
+    @Synchronized
+    fun disable() {
+        teardown()
+        status.value = SyncStatus(running = false, lastMessage = DISABLED)
+    }
+
     private fun teardown() {
         runCatching { discListener?.let { nsd.stopServiceDiscovery(it) } }
         runCatching { regListener?.let { nsd.unregisterService(it) } }
@@ -369,6 +379,7 @@ class SyncManager(
         // des manuellen IP-Fallbacks vorübergehend auf false setzen.
         private const val AUTO_DISCOVERY = true
         private const val NO_WIFI = "Kein WLAN – Sync pausiert"
+        private const val DISABLED = "Sync deaktiviert"
         private const val DEFAULT_PASSPHRASE = "clipsharing-default"
         private const val SERVICE_TYPE = "_clipfeed._tcp."
         private const val ATTR_GROUP = "grp"
