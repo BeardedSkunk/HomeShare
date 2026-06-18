@@ -90,6 +90,20 @@ import java.io.File
  * Tippen auf den grünen Haken -> Quelltext; tippen auf ✎ -> speichern + zurück zu gerendert.
  * Die erste Zeile ist immer der markup-freie Titel.
  */
+/**
+ * Offset des ZEILENENDES der ersten Zeile, die [query] (case-insensitive) enthaelt;
+ * sonst das Textende. Fuer #5-lite (Sprung aus einem Suchtreffer in den Editor).
+ */
+private fun endOfLineContaining(text: String, query: String): Int {
+    if (query.isBlank()) return text.length
+    var lineStart = 0
+    for (line in text.split('\n')) {
+        if (line.contains(query, ignoreCase = true)) return lineStart + line.length
+        lineStart += line.length + 1 // +1 fuer das '\n'
+    }
+    return text.length
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PostDetailEditor(
@@ -97,6 +111,12 @@ fun PostDetailEditor(
     blobStore: BlobStore,
     feed: Feed,
     post: PostState?,
+    /**
+     * #5-lite: Wurde der Beitrag aus einem Suchtreffer geoeffnet, hier der Suchbegriff.
+     * Dann oeffnet die Ansicht direkt im Edit-Modus mit dem Cursor am ENDE der ersten
+     * Zeile, die den Begriff enthaelt (statt voller Suche in der gerenderten Ansicht).
+     */
+    jumpToQuery: String? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -186,6 +206,16 @@ fun PostDetailEditor(
             kotlinx.coroutines.delay(120)
             runCatching { focusRequester.requestFocus() }
             pendingEditFocus = false
+        }
+    }
+
+    // #5-lite: aus Suchtreffer geoeffnet -> direkt in Edit, Cursor ans Ende der Treffer-Zeile.
+    LaunchedEffect(Unit) {
+        if (post != null && !jumpToQuery.isNullOrBlank()) {
+            val off = endOfLineContaining(tfv.text, jumpToQuery).coerceIn(0, tfv.text.length)
+            tfv = tfv.copy(selection = TextRange(off))
+            sourceMode = true
+            pendingEditFocus = true
         }
     }
 
