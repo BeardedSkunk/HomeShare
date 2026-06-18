@@ -25,6 +25,10 @@ class SecureChannel(
     fun writeText(s: String) = writeMessage(s.toByteArray(Charsets.UTF_8))
     fun readText(): String = String(readMessage(), Charsets.UTF_8)
 
+    /** Roh-Bytes (z. B. Bild-Blobs) – ohne base64-Aufblaehung. */
+    fun writeBytes(b: ByteArray) = writeMessage(b)
+    fun readBytes(): ByteArray = readMessage()
+
     private fun writeMessage(plain: ByteArray) {
         val enc = GroupCrypto.encrypt(key, plain)
         dout.writeInt(enc.size)

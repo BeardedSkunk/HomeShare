@@ -75,6 +75,47 @@ class PeerProtocolSocketTest {
         assertEquals("Zeile\nmit Umbruch, Komma", b.ops.values.first { it.deviceId == "A" && it.seq == 2L }.text)
     }
 
+    /** In-Memory-Blobspeicher: prueft den SHA beim Speichern wie der echte BlobStore. */
+    private class MemBlobs(have: Map<String, ByteArray> = emptyMap(), val want: Set<String> = emptySet()) : BlobSync {
+        val store = HashMap<String, ByteArray>(have)
+        override fun wanted(): Set<String> = want
+        override fun has(sha: String): Boolean = store.containsKey(sha)
+        override fun read(sha: String): ByteArray? = store[sha]
+        override fun store(sha: String, bytes: ByteArray) {
+            require(de.beardedskunk.clipsharing.core.Hashing.sha256Hex(bytes) == sha) { "SHA passt nicht" }
+            store[sha] = bytes
+        }
+    }
+
+    @Test
+    fun blobsTransferBothDirections_overEncryptedChannel() {
+        val a = MemSource(); val b = MemSource()
+        val imgA = ByteArray(5000) { (it % 251).toByte() }   // groesser als ein paar Bytes
+        val imgB = "ein bild von b".toByteArray()
+        val shaA = de.beardedskunk.clipsharing.core.Hashing.sha256Hex(imgA)
+        val shaB = de.beardedskunk.clipsharing.core.Hashing.sha256Hex(imgB)
+        // A hat imgA und will imgB; B hat imgB und will imgA.
+        val blobsA = MemBlobs(have = mapOf(shaA to imgA), want = setOf(shaB))
+        val blobsB = MemBlobs(have = mapOf(shaB to imgB), want = setOf(shaA))
+        val server = ServerSocket(0, 0, InetAddress.getLoopbackAddress())
+
+        val responder = thread {
+            server.use {
+                it.accept().use { s ->
+                    PeerProtocol.runResponder(b, SecureChannel(s.getInputStream(), s.getOutputStream(), key("g")), blobsB)
+                }
+            }
+        }
+        Socket(InetAddress.getLoopbackAddress(), server.localPort).use { s ->
+            PeerProtocol.runInitiator(a, SecureChannel(s.getInputStream(), s.getOutputStream(), key("g")), blobsA)
+        }
+        responder.join(5000)
+        assertFalse("kein Deadlock im Blob-Austausch", responder.isAlive)
+
+        assertTrue("A hat imgB empfangen", blobsA.store[shaB]?.contentEquals(imgB) == true)
+        assertTrue("B hat imgA (5000 Byte) empfangen", blobsB.store[shaA]?.contentEquals(imgA) == true)
+    }
+
     @Test
     fun wrongPassphrase_failsHandshake_andLeaksNothing() {
         val a = MemSource().apply { ingestOp(op("A", 1, "geheim")) }
