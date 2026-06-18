@@ -151,6 +151,30 @@ class PostConflictTest {
     }
 
     @Test
+    fun missingAncestor_isIncompleteHistory_notRealConflict() {
+        // Zwei Heads mit unterschiedlichem Inhalt, ABER ein Head verweist auf einen (noch)
+        // fehlenden Vorgaenger -> unvollstaendige Historie, KEIN echter Konflikt (loest sich
+        // beim naechsten Sync). Genau das hat frueher Phantom-Konflikte erzeugt.
+        val base = v(emptySet(), "A", 1, "Plan")
+        val onA = v(setOf(base.versionId), "A", 2, "Plan A")
+        val onB = v(setOf("fehlender-vorgaenger"), "B", 2, "Plan B")
+        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        assertTrue(post.hasContentConflict())     // Inhalt unterscheidet sich
+        assertTrue(post.hasMissingAncestors())    // aber Vorfahr fehlt
+        // -> rebuildPostState: realConflict = hasContentConflict && !hasMissingAncestors = false
+    }
+
+    @Test
+    fun completeHistory_hasNoMissingAncestors_andRealConflictStands() {
+        val base = v(emptySet(), "A", 1, "x")
+        val onA = v(setOf(base.versionId), "A", 2, "xa")
+        val onB = v(setOf(base.versionId), "B", 2, "xb")
+        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        assertFalse(post.hasMissingAncestors())
+        assertTrue(post.hasContentConflict())
+    }
+
+    @Test
     fun ingest_isIdempotent_andOrderIndependent() {
         val base = v(emptySet(), "A", 1, "x")
         val onA = v(setOf(base.versionId), "A", 2, "xa")

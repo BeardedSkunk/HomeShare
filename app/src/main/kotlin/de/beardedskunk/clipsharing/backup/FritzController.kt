@@ -31,7 +31,8 @@ class FritzController(
     fun sync(): Result<ReplicaResult> = runCatching {
         FritzReplica(config(), source, blobStore).sync()
     }.onSuccess {
-        status.value = "FRITZ!Box ok: +${it.pulledOps} empfangen, ${it.pushedOps} Ops / ${it.pushedBlobs} Bilder gesendet"
+        val warn = if (it.droppedOps > 0) " ⚠ ${it.droppedOps} nicht ladbar" else ""
+        status.value = "FRITZ!Box ok: +${it.pulledOps} empfangen, ${it.pushedOps} Ops / ${it.pushedBlobs} Bilder gesendet$warn"
     }.onFailure {
         status.value = "FRITZ!Box-Fehler: ${it.message}"
     }
@@ -45,6 +46,7 @@ class FritzController(
     fun testAndSync(): Result<String> = runCatching {
         val r = FritzReplica(config(), source, blobStore).sync()
         "Backup läuft. Gesendet: ${r.pushedOps} Einträge / ${r.pushedBlobs} Bilder · " +
-            "Empfangen: ${r.pulledOps} Einträge / ${r.pulledBlobs} Bilder."
+            "Empfangen: ${r.pulledOps} Einträge / ${r.pulledBlobs} Bilder." +
+            if (r.droppedOps > 0) " ⚠ ${r.droppedOps} Einträge nicht ladbar (FTP-Abbruch) – erneut versuchen." else ""
     }
 }
