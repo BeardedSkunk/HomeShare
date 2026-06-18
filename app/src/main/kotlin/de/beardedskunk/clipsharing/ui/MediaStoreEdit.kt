@@ -31,7 +31,7 @@ object MediaStoreEdit {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ClipSharing")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HomeShare")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val uri = runCatching { resolver.insert(collection, values) }.getOrNull() ?: return null

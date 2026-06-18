@@ -68,7 +68,7 @@ class SyncForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return Notification.Builder(this, CHANNEL)
-            .setContentTitle("ClipSharing")
+            .setContentTitle("HomeShare")
             .setContentText("Geräte-Abgleich aktiv")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)
