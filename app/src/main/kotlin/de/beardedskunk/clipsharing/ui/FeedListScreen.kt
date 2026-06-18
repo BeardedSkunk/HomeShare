@@ -41,8 +41,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.material.icons.filled.Share
 import de.beardedskunk.clipsharing.data.Feed
 import de.beardedskunk.clipsharing.data.FeedRepository
+import de.beardedskunk.clipsharing.sync.SyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,16 +53,20 @@ import kotlinx.coroutines.withContext
 @Composable
 fun FeedListScreen(
     repo: FeedRepository,
+    sync: SyncManager,
     statusText: String = "",
     webUrl: String? = null,
     onToggleWeb: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenShare: (Feed) -> Unit = {},
     onOpenFeed: (Feed) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var showCreate by remember { mutableStateOf(false) }
     var feedToDelete by remember { mutableStateOf<Feed?>(null) }
+    var actionFeed by remember { mutableStateOf<Feed?>(null) }
+    var showAddShared by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch { feeds = withContext(Dispatchers.IO) { repo.listFeeds() } }
@@ -81,6 +87,9 @@ fun FeedListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showAddShared = true }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Geteilten Feed hinzufügen")
+                    }
                     TextButton(onClick = onToggleWeb) {
                         Text(if (webUrl == null) "Web starten" else "Web stoppen")
                     }
@@ -118,11 +127,16 @@ fun FeedListScreen(
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                             .combinedClickable(
                                 onClick = { onOpenFeed(feed) },
-                                onLongClick = { feedToDelete = feed }, // lang drücken -> löschen
+                                onLongClick = { actionFeed = feed }, // lang drücken -> Aktionen
                             ),
                     ) {
+                        val prefix = buildString {
+                            if (feed.calendar) append("📅 ")
+                            if (feed.shared) append("📤 ")       // eigener, geteilter Feed
+                            if (feed.isForeign) append("🔗 ")    // fremder, abonnierter Feed
+                        }
                         Text(
-                            (if (feed.calendar) "📅 " else "") + feed.name.ifBlank { "(ohne Namen)" },
+                            prefix + feed.name.ifBlank { "(ohne Namen)" },
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.padding(16.dp),
                         )
@@ -131,6 +145,32 @@ fun FeedListScreen(
             }
             }
         }
+    }
+
+    actionFeed?.let { feed ->
+        AlertDialog(
+            onDismissRequest = { actionFeed = null },
+            title = { Text(feed.name.ifBlank { "(ohne Namen)" }) },
+            text = {
+                Column {
+                    if (feed.isForeign) {
+                        TextButton(onClick = {
+                            val id = feed.id; actionFeed = null
+                            scope.launch { withContext(Dispatchers.IO) { repo.leaveForeignFeed(id) }; reload() }
+                        }) { Text("Freigabe verlassen (lokal entfernen)") }
+                    } else {
+                        TextButton(onClick = { val f = feed; actionFeed = null; onOpenShare(f) }) { Text("Mit Gruppe teilen / Freigaben…") }
+                        TextButton(onClick = { val f = feed; actionFeed = null; feedToDelete = f }) { Text("Feed löschen") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { actionFeed = null }) { Text("Abbrechen") } },
+        )
+    }
+
+    if (showAddShared) {
+        AddSharedFeedDialog(sync = sync, onDone = { showAddShared = false; reload() }, onDismiss = { showAddShared = false })
     }
 
     feedToDelete?.let { feed ->
