@@ -11,7 +11,7 @@ val WEB_UI_HTML: String = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ClipSharing</title>
+<title>HomeShare</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; background: #fafafa; color: #222; }
   header { background: #1565c0; color: #fff; padding: 10px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -30,7 +30,7 @@ val WEB_UI_HTML: String = """
 </head>
 <body>
 <header>
-  <strong>ClipSharing</strong>
+  <strong>HomeShare</strong>
   <select id="feed" onchange="loadPosts()"></select>
   <button onclick="newFeed()">+ Feed</button>
   <input id="q" placeholder="Suchen..." oninput="onSearch()">
