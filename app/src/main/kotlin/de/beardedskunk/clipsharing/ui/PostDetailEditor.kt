@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -432,7 +433,11 @@ private fun SourceEditor(
     val onTitleLine = tfv.selection.start <= firstNl
     val hasLineSelection = !tfv.selection.collapsed && minOf(tfv.selection.start, tfv.selection.end) > firstNl
 
-    Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState())) {
+    // Aeusserste Spalte scrollt NICHT: die Such-Leiste bleibt oben fix (#7). consumeWindowInsets
+    // verhindert den weissen Streifen (#8): sonst zaehlen Scaffold-Navbar-Inset UND imePadding
+    // doppelt. imePadding hier verkleinert die Editier-Flaeche, sodass der Cursor ueber der
+    // Tastatur sichtbar bleibt (#9).
+    Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
         if (findOpen) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -449,6 +454,7 @@ private fun SourceEditor(
             }
         }
 
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
         OutlinedTextField(
             value = tfv,
             onValueChange = onTfvChange,
@@ -505,6 +511,7 @@ private fun SourceEditor(
                         .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
                 )
             }
+        }
         }
     }
 }
