@@ -182,6 +182,22 @@ interface OpSource {
 data class SyncResult(val pulled: Int, val pushed: Int)
 
 /**
+ * Feed-bezogene Quelle/Senke fuer den **gruppenuebergreifenden** Sync (#10): nur die Ops
+ * EINES Feeds, mit Rechtedurchsetzung beim Annehmen von Fremd-Pushes.
+ */
+interface FeedScopedSource {
+    fun feedVersionVector(feedId: String): Map<String, PeerState>
+    fun feedMissingFor(feedId: String, remote: Map<String, PeerState>): List<OpDto>
+    /** Vom Original empfangene Op uebernehmen (nur Feed-Zugehoerigkeit pruefen). @return true=neu. */
+    fun acceptIncomingOp(op: OpDto, feedId: String): Boolean
+    /**
+     * Fremd-Push gemaess Recht uebernehmen: nur bei write/merge; Merge-Ops (mehrere Eltern)
+     * nur bei merge. @return true=uebernommen (neu).
+     */
+    fun acceptForeignOp(op: OpDto, feedId: String, right: de.beardedskunk.clipsharing.data.FeedRight): Boolean
+}
+
+/**
  * Reconciliation per Versions-Vektor (reine Logik, ohne Transport):
  * beide Seiten tauschen, was der jeweils anderen fehlt. Idempotent und konvergent.
  */

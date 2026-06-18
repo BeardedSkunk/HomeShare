@@ -7,6 +7,7 @@ import de.beardedskunk.clipsharing.core.Hlc
 import de.beardedskunk.clipsharing.core.Post
 import de.beardedskunk.clipsharing.core.PostContent
 import de.beardedskunk.clipsharing.core.PostVersion
+import de.beardedskunk.clipsharing.sync.FeedScopedSource
 import de.beardedskunk.clipsharing.sync.OpCodec
 import de.beardedskunk.clipsharing.sync.OpDto
 import de.beardedskunk.clipsharing.sync.OpSource
@@ -27,7 +28,7 @@ import java.util.UUID
 class FeedRepository(
     private val db: SQLiteDatabase,
     private val identity: DeviceIdentity,
-) : OpSource {
+) : OpSource, FeedScopedSource {
 
     /** Wird nach jeder LOKALEN Aenderung aufgerufen (nicht beim Sync-Ingest) -> Auto-Sync. */
     var onLocalChange: (() -> Unit)? = null
@@ -220,6 +221,90 @@ class FeedRepository(
     override fun ingestOp(op: OpDto): Boolean {
         if (!op.isConsistent()) return false
         return ingest(op.toVersion(), op.feedId, op.seq, op.deviceName)
+    }
+
+    // ------------------------------ Gruppenuebergreifender Sync (#10) ------------------------------
+
+    private fun seqStates(seqs: Map<String, MutableList<Long>>): Map<String, PeerState> {
+        val out = HashMap<String, PeerState>()
+        for ((device, list) in seqs) {
+            val present = list.toHashSet()
+            val max = list.max()
+            out[device] = PeerState(max, (1L..max).filter { it !in present })
+        }
+        return out
+    }
+
+    override fun feedVersionVector(feedId: String): Map<String, PeerState> {
+        val seqs = HashMap<String, MutableList<Long>>()
+        db.rawQuery("SELECT device_id, seq FROM ops WHERE feed_id = ?", arrayOf(feedId)).use { c ->
+            while (c.moveToNext()) seqs.getOrPut(c.getString(0)) { ArrayList() }.add(c.getLong(1))
+        }
+        return seqStates(seqs)
+    }
+
+    override fun feedMissingFor(feedId: String, remote: Map<String, PeerState>): List<OpDto> {
+        val remoteGaps = remote.mapValues { it.value.gaps.toHashSet() }
+        val out = ArrayList<OpDto>()
+        db.rawQuery(
+            "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles, device_name " +
+                "FROM ops WHERE feed_id = ? ORDER BY device_id, seq",
+            arrayOf(feedId),
+        ).use { c ->
+            while (c.moveToNext()) {
+                val device = c.getString(3)
+                val seq = c.getLong(4)
+                val st = remote[device]
+                if (st != null && seq <= st.maxSeq && seq !in (remoteGaps[device] ?: emptySet())) continue
+                out += readOpDto(c)
+            }
+        }
+        return out
+    }
+
+    override fun acceptIncomingOp(op: OpDto, feedId: String): Boolean {
+        if (op.feedId != feedId || !op.isConsistent()) return false
+        return ingest(op.toVersion(), op.feedId, op.seq, op.deviceName)
+    }
+
+    override fun acceptForeignOp(op: OpDto, feedId: String, right: FeedRight): Boolean {
+        if (op.feedId != feedId || !op.isConsistent()) return false
+        if (!right.canWrite()) return false
+        if (op.parents.size > 1 && !right.canMerge()) return false // Merge-Op nur mit merge-Recht
+        return ingest(op.toVersion(), op.feedId, op.seq, op.deviceName)
+    }
+
+    /** Liest eine OpDto aus dem Standard-Spaltenlayout (siehe missingFor/feedMissingFor). */
+    private fun readOpDto(c: Cursor): OpDto = OpDto(
+        versionId = c.getString(0),
+        feedId = c.getString(1),
+        postId = c.getString(2),
+        deviceId = c.getString(3),
+        seq = c.getLong(4),
+        hlcWall = c.getLong(5),
+        hlcCounter = c.getInt(6),
+        deleted = c.getInt(8) != 0,
+        text = c.getString(9),
+        parents = splitCsv(c.getString(7)),
+        imageHashes = splitCsv(c.getString(10)),
+        imageTitles = OpCodec.decodeTitles(c.getString(11)),
+        deviceName = c.getString(12) ?: "",
+    )
+
+    // ------------------------------ Freigaben (Original-Gruppe) ------------------------------
+
+    private fun feedText(feedId: String): String = loadPost(feedId).shownHead()?.content?.text ?: ""
+
+    /** Aktuelle Freigaben dieses (Original-)Feeds. */
+    fun feedShares(feedId: String): List<ShareGrant> = FeedShareCodec.decode(feedText(feedId))
+
+    /** Schreibt die Freigabeliste als neue Feed-Op (Name + Kalender-Flag bleiben erhalten); synct in der Gruppe. */
+    fun setFeedShares(feedId: String, grants: List<ShareGrant>) {
+        val text = feedText(feedId)
+        author(
+            FEEDS_FEED, feedId, currentHeads(feedId),
+            PostContent(text = FeedShareCodec.feedText(FeedMeta.decodeName(text), FeedMeta.decodeCalendar(text), grants)),
+        )
     }
 
     // -------------------------------------------------------------- Reading
