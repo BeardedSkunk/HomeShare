@@ -1,6 +1,7 @@
 package de.beardedskunk.clipsharing.crypto
 
 import java.security.SecureRandom
+import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
@@ -49,4 +50,21 @@ object GroupCrypto {
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, nonce))
         return cipher.doFinal(ct)
     }
+
+    // ---- Helfer fuer das Feed-Sharing (#10): Tokens + String-Krypto -----------------
+
+    /** Zufaelliges Token (base64, kein ':' im Alphabet -> sicher in unseren '::'-Feldern). */
+    fun randomToken(bytes: Int = 32): String =
+        ByteArray(bytes).also { SecureRandom().nextBytes(it) }.let { Base64.getEncoder().encodeToString(it) }
+
+    /** AES-Schluessel direkt aus einem 16/24/32-Byte-Token (z. B. capSecret) als Kanal-Schluessel. */
+    fun keyFromToken(token: String): SecretKey = SecretKeySpec(Base64.getDecoder().decode(token), "AES")
+
+    /** Verschluesselt einen String -> base64 (zum Ablegen verschluesselter Secrets im Feed-Text). */
+    fun encryptString(key: SecretKey, plaintext: String): String =
+        Base64.getEncoder().encodeToString(encrypt(key, plaintext.toByteArray(Charsets.UTF_8)))
+
+    /** Gegenstueck zu [encryptString]; wirft bei falschem Schluessel. */
+    fun decryptString(key: SecretKey, b64: String): String =
+        String(decrypt(key, Base64.getDecoder().decode(b64)), Charsets.UTF_8)
 }
