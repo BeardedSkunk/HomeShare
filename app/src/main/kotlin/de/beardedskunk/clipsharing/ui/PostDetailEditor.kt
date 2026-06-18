@@ -463,9 +463,9 @@ private fun SourceEditor(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TbButton("☐ Aufgabe", enabled = !onTitleLine) { applyToTfv(::insertTask) }
-            TbButton("B", enabled = !onTitleLine, bold = true) { applyToTfv { wrapSelection(it, "**") } }
-            TbButton("I", enabled = !onTitleLine, italic = true) { applyToTfv { wrapSelection(it, "*") } }
-            TbButton("S", enabled = !onTitleLine, strike = true) { applyToTfv { wrapSelection(it, "~~") } }
+            TbButton("B", enabled = !onTitleLine, bold = true) { applyToTfv { toggleWrap(it, "**") } }
+            TbButton("I", enabled = !onTitleLine, italic = true) { applyToTfv { toggleWrap(it, "*") } }
+            TbButton("S", enabled = !onTitleLine, strike = true) { applyToTfv { toggleWrap(it, "~~") } }
             TbButton("</>", enabled = !onTitleLine) { applyToTfv { applyCode(it) } }
             IconButton(enabled = hasLineSelection, onClick = { applyToTfv { moveLines(it, up = true) } }) {
                 Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Zeile(n) nach oben")
