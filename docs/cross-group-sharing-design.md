@@ -1,7 +1,23 @@
 # Design: Feeds mit Fremdgruppen teilen (#10)
 
-Status: **Entwurf zur Review** — noch nicht implementiert. Grundlage: die mit dem Nutzer
-abgestimmten Entscheidungen (siehe unten „Bestätigt").
+Status: **In Umsetzung.** Getesteter Kern steht; Integration + UI + Geräte-E2E folgen.
+
+### Implementierungsstand (2026-06-18)
+**Fertig + unit-getestet:**
+- Krypto-Capability (capSecret = Kanal-Schlüssel, String-Krypto, Tokens) — `crypto/GroupCrypto.kt`.
+- `FeedRight` (read/write/merge) + `ShareGrant` + Freigabe-Codec (Variante A) + QR-Pairing-Payload — `data/FeedShare.kt`.
+- Cross-Group-Sync-Protokoll (feed-begrenzt, Rechtedurchsetzung) — `sync/CrossGroupProtocol.kt` + `FeedScopedSource` im Repo (`feedVersionVector`/`feedMissingFor`/`acceptIncomingOp`/`acceptForeignOp`).
+- Freigabe-Verwaltung im Feed-Op — `FeedRepository.feedShares/setFeedShares`.
+- Tests: `FeedShareTest`, `CrossGroupProtocolTest`.
+
+**Noch offen (Integration + UI + Test):**
+- DB: Fremdfeed-Ablage auf dem Fremdgerät (feeds-Spalten `foreign_origin/cap_id/cap_secret/foreign_right`, DB_VERSION-Migration) + Repo-Methoden (registrieren/auflisten/Recht aktualisieren/„Freigabe verlassen").
+- `SyncManager`: Klartext-**Modus-Präambel** vor der Verschlüsselung (`GROUP` vs `FEED <feedId> <capId>`), Branch auf `CrossGroupProtocol`, Cross-Group-Discovery (zu Peers der Origin-Gruppe verbinden).
+- Pairing-Orchestrierung (QR erzeugen/anzeigen mit 2-min-Ablauf + Auto-Close; Scan/Code → verbinden → Gruppenname melden → Grant eintragen).
+- UI: Share-Icon, Feed-Einstellungen (Grant-Liste, write/merge-Schalter, „Gruppe hinzufügen"=QR, „Zugriff entziehen"), Scan-Screen (ZXing) **+ manuelle Code-Eingabe** (zum Testen ohne Kamera), Konflikt-Hinweis ohne merge-Recht, „Freigabe verlassen".
+- Geräte-E2E (Tablet/F101/Armo 8) mit gefaktem QR über manuelle Code-Eingabe; diverse Rechte-/Sync-Szenarien.
+
+Grundlage: die mit dem Nutzer abgestimmten Entscheidungen (siehe unten „Bestätigt").
 
 ## Ziel
 Ein Feed bleibt in seiner **Originalgruppe** beheimatet, kann aber für andere Gruppen
@@ -51,14 +67,18 @@ Jeder gehaltene Fremdfeed wird lokal getaggt mit:
 == `originGroupName` ist (kein Broadcast aller Fremd-Requests an Fremde).
 
 ## 2. Krypto / Capability
-- **Feed-Inhalts-Schlüssel `K_F`** (symmetrisch, pro Feed): verschlüsselt die Ops dieses Feeds
-  feed-spezifisch, damit eine Fremdgruppe sie lesen kann, **ohne** den Originalgruppen-Schlüssel.
-- **Capability** je Fremdgruppe: `capId` (öffentlich, identifiziert) + `capSecret` (geheim).
-  Dient als gegenseitiges Auth-Geheimnis für den Feed-Kanal (Challenge-Response), sodass
-  - das Fremdgerät beweist „ich bin Inhaber dieser Freigabe" und
-  - das Fremdgerät prüft, dass es wirklich mit der Originalgruppe redet.
+**Vereinfachung beim Implementieren:** Ein separater Feed-Inhalts-Schlüssel `K_F` ist NICHT nötig.
+Eine Fremdgruppe bekommt den Feed ohnehin nur über den **capSecret-verschlüsselten Direktkanal**
+von einem Originalgerät (sie kann die FRITZ!Box nicht lesen) und speichert die Ops lokal wie
+eigene Daten. Also reicht **eine Capability je Fremdgruppe**:
+- `capId` (öffentlich, identifiziert die Freigabe/Gruppe) + `capSecret` (32 Zufalls-Bytes, base64).
+- `capSecret` ist direkt der **AES-Kanal-Schlüssel** (`GroupCrypto.keyFromToken`) → Transport-
+  verschlüsselung UND gegenseitige Auth (wer das capSecret hat, kommt rein; das Original kennt es
+  pro `capId`).
+- Im Feed-Op steht `capSecret` mit dem **Originalgruppen-Schlüssel verschlüsselt** (`encSecret`),
+  damit es in der Originalgruppe (inkl. FRITZ!Box) synct, aber dort nur als Chiffrat liegt.
 - Revocation: Originalgerät löscht die `capId` aus der Freigabeliste → bedient diese Capability
-  nicht mehr. (K_F-Rotation optional, ändert aber Altbestand nicht.)
+  nicht mehr (Altbestand bei der Fremdgruppe bleibt — siehe Bestätigt).
 
 ## 3. Pairing-Protokoll (einmaliger QR)
 1. Eigentümer: Feed-Einstellungen → „Gruppe hinzufügen" → App erzeugt frische `capId/capSecret`,
