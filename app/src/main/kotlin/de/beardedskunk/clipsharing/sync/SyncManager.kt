@@ -341,7 +341,7 @@ class SyncManager(
                 ch.writeText(identity.groupName)
                 ch.readText() == "OK"
             } ?: false
-        }.getOrDefault(false)
+        }.onFailure { Log.w(TAG, "Pairing fehlgeschlagen: ${it.javaClass.simpleName}: ${it.message}") }.getOrDefault(false)
         if (ok) {
             repo.registerForeignFeed(
                 ForeignFeedRef(payload.feedId, payload.originGroup, payload.capId, payload.capSecret, FeedRight.READ),
