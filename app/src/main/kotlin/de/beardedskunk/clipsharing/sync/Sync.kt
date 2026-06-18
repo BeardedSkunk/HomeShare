@@ -122,18 +122,28 @@ object OpCodec {
     fun encodeOpLine(op: OpDto): String = b64(encodeOp(op))
     fun decodeOpLine(line: String): OpDto = decodeOp(unb64(line))
 
-    /** Versions-Vektor: je Zeile "deviceId seq". */
-    fun encodeVv(vv: Map<String, Long>): String =
-        vv.entries.joinToString("\n") { "${it.key} ${it.value}" }
+    /**
+     * Wissensstand: je Zeile "deviceId maxSeq[ gap1,gap2,...]". Die optionalen Luecken
+     * (fehlende Seqs unter maxSeq) ermoeglichen das Schliessen von Loechern beim Sync.
+     * deviceId enthaelt nie Leerzeichen (UUID bzw. feste Namen).
+     */
+    fun encodeVv(vv: Map<String, PeerState>): String =
+        vv.entries.joinToString("\n") { (dev, st) ->
+            if (st.gaps.isEmpty()) "$dev ${st.maxSeq}"
+            else "$dev ${st.maxSeq} ${st.gaps.joinToString(",")}"
+        }
 
-    fun decodeVv(s: String): Map<String, Long> {
+    fun decodeVv(s: String): Map<String, PeerState> {
         if (s.isBlank()) return emptyMap()
-        val out = HashMap<String, Long>()
+        val out = HashMap<String, PeerState>()
         for (line in s.split('\n')) {
             if (line.isBlank()) continue
-            val sp = line.lastIndexOf(' ')
-            if (sp <= 0) continue
-            out[line.substring(0, sp)] = line.substring(sp + 1).toLong()
+            val parts = line.split(' ')
+            if (parts.size < 2) continue
+            val dev = parts[0]
+            val max = parts[1].toLongOrNull() ?: continue
+            val gaps = parts.getOrNull(2)?.split(',')?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+            out[dev] = PeerState(max, gaps)
         }
         return out
     }
@@ -144,15 +154,23 @@ object OpCodec {
 }
 
 /**
+ * Wissensstand je Autor-Geraet: hoechste bekannte Seq **plus** die Luecken darunter
+ * (fehlende Seqs). Ohne die Luecken kann ein reiner „hoechste-Seq"-Vektor fehlende
+ * Ops in der MITTE nicht erkennen – dann konvergieren Geraete nie (genau der Fehler,
+ * der haengende Konflikte verursacht hat). [gaps] ist normalerweise leer.
+ */
+data class PeerState(val maxSeq: Long, val gaps: List<Long> = emptyList())
+
+/**
  * Quelle/Senke von Operationen fuer einen Sync. Wird vom Repository implementiert;
  * im Test durch eine In-Memory-Variante ersetzt.
  */
 interface OpSource {
-    /** Hoechste bekannte Seq je Autor-Geraet. */
-    fun versionVector(): Map<String, Long>
+    /** Wissensstand je Autor-Geraet (hoechste Seq + Luecken). */
+    fun versionVector(): Map<String, PeerState>
 
-    /** Alle lokalen Ops, die der Gegenseite (gegeben deren VV) fehlen. */
-    fun missingFor(remote: Map<String, Long>): List<OpDto>
+    /** Alle lokalen Ops, die der Gegenseite (gegeben deren Wissensstand) fehlen. */
+    fun missingFor(remote: Map<String, PeerState>): List<OpDto>
 
     /** Speist eine empfangene Op ein. @return true, wenn neu. */
     fun ingestOp(op: OpDto): Boolean

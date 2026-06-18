@@ -5,6 +5,7 @@ import de.beardedskunk.clipsharing.core.PostContent
 import de.beardedskunk.clipsharing.core.PostVersion
 import de.beardedskunk.clipsharing.crypto.GroupCrypto
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetAddress
@@ -22,10 +23,16 @@ class PeerProtocolSocketTest {
 
     private class MemSource : OpSource {
         val ops = LinkedHashMap<String, OpDto>()
-        override fun versionVector(): Map<String, Long> =
-            ops.values.groupBy { it.deviceId }.mapValues { e -> e.value.maxOf { it.seq } }
-        override fun missingFor(remote: Map<String, Long>): List<OpDto> =
-            ops.values.filter { it.seq > (remote[it.deviceId] ?: 0L) }
+        override fun versionVector(): Map<String, PeerState> =
+            ops.values.groupBy { it.deviceId }.mapValues { e ->
+                val seqs = e.value.map { it.seq }
+                PeerState(seqs.max(), (1L..seqs.max()).filter { it !in seqs.toHashSet() })
+            }
+        override fun missingFor(remote: Map<String, PeerState>): List<OpDto> =
+            ops.values.filter { op ->
+                val st = remote[op.deviceId]
+                st == null || op.seq > st.maxSeq || op.seq in st.gaps
+            }
         override fun ingestOp(op: OpDto): Boolean {
             if (ops.containsKey(op.versionId)) return false
             ops[op.versionId] = op; return true
@@ -60,6 +67,7 @@ class PeerProtocolSocketTest {
             assertEquals(2, res.pushed) // B bekommt a1, a2
         }
         responder.join(5000)
+        assertFalse("Responder-Thread muss terminieren (kein Handshake-Deadlock)", responder.isAlive)
 
         assertEquals(a.ops.keys, b.ops.keys)
         assertEquals(3, a.ops.size)

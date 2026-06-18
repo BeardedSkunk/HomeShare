@@ -13,11 +13,19 @@ class SyncTest {
     /** Minimalistische In-Memory-Quelle fuer den Reconciler-Test. */
     private class MemSource : OpSource {
         val ops = LinkedHashMap<String, OpDto>()
-        override fun versionVector(): Map<String, Long> =
-            ops.values.groupBy { it.deviceId }.mapValues { e -> e.value.maxOf { it.seq } }
+        override fun versionVector(): Map<String, PeerState> =
+            ops.values.groupBy { it.deviceId }.mapValues { e ->
+                val seqs = e.value.map { it.seq }
+                val present = seqs.toHashSet()
+                val max = seqs.max()
+                PeerState(max, (1L..max).filter { it !in present })
+            }
 
-        override fun missingFor(remote: Map<String, Long>): List<OpDto> =
-            ops.values.filter { it.seq > (remote[it.deviceId] ?: 0L) }
+        override fun missingFor(remote: Map<String, PeerState>): List<OpDto> =
+            ops.values.filter { op ->
+                val st = remote[op.deviceId]
+                st == null || op.seq > st.maxSeq || op.seq in st.gaps
+            }
 
         override fun ingestOp(op: OpDto): Boolean {
             if (ops.containsKey(op.versionId)) return false
@@ -80,9 +88,9 @@ class SyncTest {
 
     @Test
     fun vvCodec_roundTrips() {
-        val vv = mapOf("devA" to 5L, "devB" to 2L)
+        val vv = mapOf("devA" to PeerState(5, listOf(2, 4)), "devB" to PeerState(2))
         assertEquals(vv, OpCodec.decodeVv(OpCodec.encodeVv(vv)))
-        assertEquals(emptyMap<String, Long>(), OpCodec.decodeVv(OpCodec.encodeVv(emptyMap())))
+        assertEquals(emptyMap<String, PeerState>(), OpCodec.decodeVv(OpCodec.encodeVv(emptyMap())))
     }
 
     @Test
@@ -102,6 +110,30 @@ class SyncTest {
         assertEquals(1, result.pulled) // A bekommt b1
         assertEquals(2, result.pushed) // B bekommt a1, a2
         assertEquals(a.ops.keys, b.ops.keys)
+        assertEquals(3, a.ops.size)
+    }
+
+    @Test
+    fun vvCarriesGaps_andEncodeDecodeRoundTrips() {
+        // Quelle mit Loch: device X hat Seq 1 und 3, aber NICHT 2.
+        val s = MemSource().apply { ingestOp(op("X", 1, "x1")); ingestOp(op("X", 3, "x3")) }
+        val vv = s.versionVector()
+        assertEquals(3L, vv["X"]!!.maxSeq)
+        assertEquals(listOf(2L), vv["X"]!!.gaps)
+        assertEquals(vv, OpCodec.decodeVv(OpCodec.encodeVv(vv)))
+    }
+
+    @Test
+    fun reconcile_fillsSequenceGap_notJustNewerOps() {
+        // Regression gegen den Konvergenz-Killer: A hat eine Luecke in der MITTE
+        // (X:1, X:3 – Seq 2 fehlt), B hat alle drei. Mit reinem "hoechste-Seq"-Vektor
+        // wuerde B nichts senden (A meldet max=3) und A bliebe fuer immer unvollstaendig.
+        val a = MemSource().apply { ingestOp(op("X", 1, "x1")); ingestOp(op("X", 3, "x3")) }
+        val b = MemSource().apply {
+            ingestOp(op("X", 1, "x1")); ingestOp(op("X", 2, "x2")); ingestOp(op("X", 3, "x3"))
+        }
+        SyncReconciler.reconcile(a, b)
+        assertEquals("A muss die Luecke (Seq 2) geschlossen bekommen", b.ops.keys, a.ops.keys)
         assertEquals(3, a.ops.size)
     }
 

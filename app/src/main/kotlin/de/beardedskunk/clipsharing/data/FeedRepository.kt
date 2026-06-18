@@ -10,6 +10,7 @@ import de.beardedskunk.clipsharing.core.PostVersion
 import de.beardedskunk.clipsharing.sync.OpCodec
 import de.beardedskunk.clipsharing.sync.OpDto
 import de.beardedskunk.clipsharing.sync.OpSource
+import de.beardedskunk.clipsharing.sync.PeerState
 import java.util.UUID
 
 /**
@@ -135,19 +136,28 @@ class FeedRepository(
         return true
     }
 
-    /** Versions-Vektor dieses Geraets: hoechste bekannte Seq je Autor-Geraet. */
-    override fun versionVector(): Map<String, Long> {
+    /** Wissensstand dieses Geraets: hoechste Seq + Luecken je Autor-Geraet. */
+    override fun versionVector(): Map<String, PeerState> {
         ensureMigrated()
-        val out = HashMap<String, Long>()
-        db.rawQuery("SELECT device_id, MAX(seq) FROM ops GROUP BY device_id", null).use { c ->
-            while (c.moveToNext()) out[c.getString(0)] = c.getLong(1)
+        val seqs = HashMap<String, MutableList<Long>>()
+        db.rawQuery("SELECT device_id, seq FROM ops", null).use { c ->
+            while (c.moveToNext()) seqs.getOrPut(c.getString(0)) { ArrayList() }.add(c.getLong(1))
+        }
+        val out = HashMap<String, PeerState>()
+        for ((device, list) in seqs) {
+            val present = list.toHashSet()
+            val max = list.max()
+            // Luecken (fehlende Seqs unter max) – damit der Gegenpart sie nachliefern kann.
+            val gaps = (1L..max).filter { it !in present }
+            out[device] = PeerState(max, gaps)
         }
         return out
     }
 
-    /** Alle lokalen Ops, die der Gegenseite (gegeben deren VV) fehlen. */
-    override fun missingFor(remote: Map<String, Long>): List<OpDto> {
+    /** Alle lokalen Ops, die der Gegenseite (gegeben deren Wissensstand inkl. Luecken) fehlen. */
+    override fun missingFor(remote: Map<String, PeerState>): List<OpDto> {
         ensureMigrated()
+        val remoteGaps = remote.mapValues { it.value.gaps.toHashSet() }
         val out = ArrayList<OpDto>()
         db.rawQuery(
             "SELECT version_id, feed_id, post_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, text, image_hashes, image_titles, device_name " +
@@ -157,7 +167,10 @@ class FeedRepository(
             while (c.moveToNext()) {
                 val device = c.getString(3)
                 val seq = c.getLong(4)
-                if (seq <= (remote[device] ?: 0L)) continue
+                val st = remote[device]
+                // Senden, wenn der Gegenpart das Geraet gar nicht kennt, die Seq ueber
+                // seinem Maximum liegt ODER genau eine seiner Luecken fuellt.
+                if (st != null && seq <= st.maxSeq && seq !in (remoteGaps[device] ?: emptySet())) continue
                 out += OpDto(
                     versionId = c.getString(0),
                     feedId = c.getString(1),

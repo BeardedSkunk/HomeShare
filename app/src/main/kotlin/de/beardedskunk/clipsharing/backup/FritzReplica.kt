@@ -4,6 +4,7 @@ import android.util.Log
 import de.beardedskunk.clipsharing.data.BlobStore
 import de.beardedskunk.clipsharing.sync.OpDto
 import de.beardedskunk.clipsharing.sync.OpSource
+import de.beardedskunk.clipsharing.sync.PeerState
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
@@ -103,14 +104,18 @@ class FritzReplica(
     // ------------------------------------------------------------- Schritte
 
     private fun pullOps(c: FTPClient): Int {
-        val localVv = source.versionVector()
+        val local = source.versionVector()
+        val localGaps = local.mapValues { it.value.gaps.toHashSet() }
         val names = (c.listNames(logDir) ?: emptyArray()).map { it.substringAfterLast('/') }
             .filter { it.endsWith(".json") }
-        Log.i(TAG, "pullOps: ${names.size} Dateien im log, lokalVv=$localVv")
+        Log.i(TAG, "pullOps: ${names.size} Dateien im log, lokal=$local")
         var pulled = 0
         for (name in names) {
             val (device, seq) = parseLogName(name) ?: continue
-            if (seq <= (localVv[device] ?: 0L)) continue
+            val st = local[device]
+            // Vorhanden = bekanntes Geraet, Seq <= max UND nicht in einer Luecke.
+            // -> Luecken (fehlende Seqs in der Mitte) werden so von der Box nachgeladen.
+            if (st != null && seq <= st.maxSeq && seq !in (localGaps[device] ?: emptySet())) continue
             val text = retrieveText(c, "$logDir/$name") ?: continue
             val op = runCatching { opFromJson(text) }.getOrNull() ?: continue
             if (source.ingestOp(op)) pulled++
@@ -119,9 +124,9 @@ class FritzReplica(
     }
 
     private fun pushOps(c: FTPClient): Int {
-        val remoteVv = remoteVersionVector(c)
-        val toPush = source.missingFor(remoteVv)
-        Log.i(TAG, "pushOps: ${toPush.size} zu senden, remoteVv=$remoteVv")
+        val remote = remoteState(c)
+        val toPush = source.missingFor(remote)
+        Log.i(TAG, "pushOps: ${toPush.size} zu senden, remote=$remote")
         var pushed = 0
         for (op in toPush) {
             val path = "$logDir/${op.deviceId}__${op.seq}.json"
@@ -163,14 +168,19 @@ class FritzReplica(
         return pulled
     }
 
-    private fun remoteVersionVector(c: FTPClient): Map<String, Long> {
-        val vv = HashMap<String, Long>()
+    /** Wissensstand der Box (hoechste Seq + Luecken je Geraet), aus dem Datei-Listing. */
+    private fun remoteState(c: FTPClient): Map<String, PeerState> {
+        val seqs = HashMap<String, MutableList<Long>>()
         val names = (c.listNames(logDir) ?: emptyArray()).map { it.substringAfterLast('/') }
         for (name in names) {
             val (device, seq) = parseLogName(name) ?: continue
-            if (seq > (vv[device] ?: 0L)) vv[device] = seq
+            seqs.getOrPut(device) { ArrayList() }.add(seq)
         }
-        return vv
+        return seqs.mapValues { (_, list) ->
+            val max = list.max()
+            val present = list.toHashSet()
+            PeerState(max, (1L..max).filter { it !in present })
+        }
     }
 
     private fun parseLogName(name: String): Pair<String, Long>? {
