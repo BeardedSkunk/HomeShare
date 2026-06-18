@@ -155,6 +155,11 @@ private fun AnnotatedString.Builder.appendInline(text: String, base: SpanStyle) 
                 val end = text.indexOf('`', i + 1)
                 if (end > i) { flush(); withStyle(base.merge(codeStyle)) { append(text.substring(i + 1, end)) }; i = end + 1; continue }
             }
+            text.startsWith("***", i) -> {
+                // fett + kursiv gleichzeitig (vor ** und * prüfen, sonst gewinnt **).
+                val end = text.indexOf("***", i + 3)
+                if (end > i + 2) { flush(); appendInline(text.substring(i + 3, end), base.merge(boldStyle).merge(italicStyle)); i = end + 3; continue }
+            }
             text.startsWith("**", i) -> {
                 val end = text.indexOf("**", i + 2)
                 if (end > i + 1) { flush(); appendInline(text.substring(i + 2, end), base.merge(boldStyle)); i = end + 2; continue }
