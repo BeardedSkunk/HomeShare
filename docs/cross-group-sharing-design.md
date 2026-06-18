@@ -9,11 +9,13 @@ freigegeben werden — mit Rechten **lesen** (immer, Minimum), **schreiben** (op
 **mergen** (opt-in). Konflikte löst nur die Originalgruppe; Fremdgruppen sehen sie nur.
 
 ## Bestätigte Entscheidungen
-- Pairing per **einmaligem QR** (in Person, beide im selben WLAN), alles aus der App-UI.
+- Pairing per **einmaligem QR** (in Person, beide im selben WLAN), alles aus der App-UI. **QR-Ablauf: 2 Minuten.**
 - **Jede Fremdgruppe bekommt eine eigene Feed-Capability** (eigener Schlüssel) für denselben Originalfeed.
 - Capability = Identität + Auth; angesagter Gruppenname ist nur Label.
+- **Rechtestufen:** `read` = sehen (Minimum, immer). `write` = Einträge hinzufügen/bearbeiten (pushen). `merge` = **darf Konflikte selbst lösen** — das ist der EINZIGE Zweck dieses Rechts. Ohne `merge` löst nur die Originalgruppe Konflikte.
 - Rechte nach Pairing in der UI änderbar, werden **über das Netz** an die Fremdgruppe übermittelt (UI-Gating) und von Originalgeräten **autoritativ** durchgesetzt.
 - Widerruf = ab jetzt keine neuen Updates mehr (Altbestand bleibt bei der Fremdgruppe).
+- **Capability-Secrets SYNCEN innerhalb der Originalgruppe** (verschlüsselt mit dem Originalgruppen-Schlüssel), damit ein zweites Originalgerät die Freigabe auch dann bedienen kann, wenn Sync nur über die FRITZ!Box läuft. Die Box ist vertrauter passiver Teilnehmer aller Gruppen (siehe Security-Hinweis).
 - FRITZ!Box hält nur das Original (eigene Gruppe), nie Fremdkopien.
 - Ganze Feeds (keine Einzel-Posts). Whole-feed **Delete** existiert jetzt (Eigengruppe) + „Freigabe verlassen" für Fremdfeeds.
 
@@ -31,11 +33,16 @@ share:
   - ...
 ```
 Vorschlag: als zusätzlicher, klar abgegrenzter Block im Feed-Op-Text (analog `::kalender::`),
-oder sauberer als eigene Spalten/Tabelle, die als Feed-Op mitsynct. **Die Capability-Secrets
-selbst stehen NICHT im syncbaren Klartext** (sie sind das Geheimnis) — sie liegen lokal
-verschlüsselt je Originalgerät; synchronisiert wird nur `{capId, label, rights}` plus der
-**verschlüsselte Feed-Schlüssel** (mit dem Gruppen-Schlüssel der Originalgruppe verschlüsselt),
-damit alle Originalgeräte dieselbe Freigabe bedienen können.
+oder sauberer als eigene Struktur, die als Feed-Op mitsynct (siehe „Offene Punkte").
+Mitsynchronisiert werden `{capId, label, rights}` **plus `capSecret` und `K_F`**, beides — wie
+alle Gruppendaten — mit dem **Originalgruppen-Schlüssel verschlüsselt**. So lernt jedes zweite
+Originalgerät die Freigabe, auch wenn der Abgleich nur über die FRITZ!Box läuft.
+
+> **Security-Hinweis (für die FRITZ!Box-Doku merken):** Damit liegen die Feed-Freigabe-Secrets
+> (verschlüsselt mit dem Gruppen-Schlüssel) auch auf der FRITZ!Box. Die Box ist ein vertrauter,
+> passiver Voll-Replik-Teilnehmer aller Gruppen; sie sieht nur mit dem Gruppen-Schlüssel
+> verschlüsselte Daten. Wem das zu heikel ist, schaltet die FRITZ!Box-Replik ab — dann syncen
+> nur die Geräte direkt. Dieser Trade-off gehört in die FRITZ!Box-Feature-Doku.
 
 ### 1b. Fremdfeed-Markierung (auf dem Fremdgerät)
 Jeder gehaltene Fremdfeed wird lokal getaggt mit:
@@ -69,9 +76,11 @@ Jeder gehaltene Fremdfeed wird lokal getaggt mit:
 - Eigener Kanal je Feed, verschlüsselt/authentifiziert per Capability statt per Gruppen-Schlüssel.
 - Reconcile wie gehabt (gap-aware Versions-Vektor), aber **gefiltert auf den freigegebenen Feed**.
 - **Push** nur, wenn `rights ∈ {write, merge}`; ein Merge-Op wird nur akzeptiert, wenn `rights == merge`.
-- **Konflikt:** Fremdgruppe materialisiert wie heute, zeigt `conflicted`, aber die Resolve-Aktion
-  ist ausgeblendet (read/write ohne merge). Es wird ein Anzeige-Head gewählt (höchste Uhr),
-  bis der Konflikt upstream gelöst ist.
+- **Konflikt ohne merge-Recht:** Die Fremdgruppe zeigt ihren **lokalen letzten Stand** (Anzeige-Head,
+  höchste Uhr) und blendet einen **Hinweis** ein „Upstream in der Originalgruppe ist noch ein
+  Konflikt offen" — die Resolve-Aktion bleibt ausgeblendet, bis die Originalgruppe (oder eine
+  Gruppe mit merge-Recht) ihn löst und das Merge-Ergebnis synct.
+- **Konflikt mit merge-Recht:** Fremdgruppe darf wie die Originalgruppe auflösen.
 
 ## 5. Rechtedurchsetzung
 - **Autoritativ** auf den Originalgeräten: prüfen `capId → rights` vor Bedienen (read) /
@@ -97,8 +106,27 @@ Jeder gehaltene Fremdfeed wird lokal getaggt mit:
 - UI: Feed-Einstellungen, Share-Icon, Scan-Screen, „Freigabe verlassen".
 - Tests: Pairing-Roundtrip, Rechtedurchsetzung (read/write/merge), Konflikt-nur-Anzeige, Revocation.
 
+## QR-Bibliotheken (Erzeugen + Scannen)
+**Erzeugen** des QR ist trivial (ZXing-`core`, ein paar Zeilen, keine UI/Kamera nötig) — das ist
+unstrittig. Die Wahl betrifft v. a. das **Scannen** (Kamera + Decoder):
+
+| Option | Was | Verbreitung | Eignung hier |
+|---|---|---|---|
+| **ZXing core + eigene CameraX-Vorschau** | reine Decoder-Lib + selbst gebaute Kamera-UI | sehr hoch (De-facto-Standard, alt & stabil) | volle Kontrolle, aber wir bauen die Scan-UI selbst |
+| **zxing-android-embedded** (journeyapps) | fertige Scan-Activity/-View um ZXing | sehr hoch, der Klassiker für „QR scannen" | **am einfachsten**, sofort fertige Scanner-UI, keine Play-Services nötig (gut fürs Sideloaden) |
+| **ML Kit Barcode Scanning** (Google, gebündelt) | on-device ML-Decoder, mit CameraX | hoch, modern | sehr robust, aber größere App, du baust Kamera-UI selbst |
+| **Google Code Scanner** (Play-Services ML Kit) | fertige System-Scan-UI, kein Kamera-Code | hoch | minimal Code, aber **braucht Google Play Services** — schlecht, wenn ein Gerät die nicht hat |
+
+**Empfehlung:** **zxing-android-embedded** zum Scannen + **ZXing core** zum Erzeugen.
+Gründe: keine Play-Services-Abhängigkeit (wichtig fürs Sideloaden/F101 etc.), fertige Scanner-UI,
+minimaler eigener Code, riesige Verbreitung/Stabilität. ML Kit nur, falls du modernere Erkennung
+willst und die App-Größe egal ist. Kamera-Permission (`CAMERA`) wird in jedem Fall nötig.
+
 ## Offene Punkte für die Review
-- Freigabeliste **im Feed-Op-Text** (einfach, aber Text wird „technischer") **oder** eigene
-  syncbare Struktur (sauberer, mehr Aufwand)?
-- QR-Lib-Wahl (z. B. ZXing) + Kamera-Permission — ok?
-- Reicht „pending grant verfällt bei Abbruch" so, oder zusätzlich Ablaufzeit für den QR?
+1. **Freigabeliste-Speicherort** (siehe Erklärung in der Chat-Antwort): Variante A = die Freigaben
+   in den bestehenden Feed-Op-Text packen (der heute nur „Name [\n::kalender::]" enthält) —
+   wenig Code, aber der Feed-„Name"-Op trägt dann strukturierte Daten. Variante B = ein eigenes,
+   sauber getrenntes Feld/Format im Feed-Op (klarer, aber Op-Format + Parser + Migration anpassen).
+   Beide synchronisieren gleich gut. **Entscheidung offen.**
+2. QR: **zxing-android-embedded + ZXing core** (Empfehlung oben) ok?
+- QR-Ablauf: **2 Minuten** (entschieden), zusätzlich „pending grant verfällt bei Abbruch".
