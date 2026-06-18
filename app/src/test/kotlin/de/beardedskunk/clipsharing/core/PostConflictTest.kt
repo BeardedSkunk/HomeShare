@@ -175,6 +175,52 @@ class PostConflictTest {
     }
 
     @Test
+    fun autoMerge_nonOverlappingEdits_resolveSilently() {
+        // Zwei Geräte ändern denselben Post an VERSCHIEDENEN Zeilen -> Hintergrund-Merge,
+        // kein manueller Konflikt. (Genau der Fall, den git/kdiff3 automatisch löst.)
+        val base = v(emptySet(), "A", 1, "Zeile1\nZeile2\nZeile3")
+        val onA = v(setOf(base.versionId), "A", 2, "Zeile1-NEU\nZeile2\nZeile3")
+        val onB = v(setOf(base.versionId), "B", 2, "Zeile1\nZeile2\nZeile3-NEU")
+        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        assertTrue(post.hasContentConflict())
+        val merged = post.autoMergeContent()
+        assertNotNull("nicht-überlappend -> automatisch mergebar", merged)
+        assertEquals("Zeile1-NEU\nZeile2\nZeile3-NEU", merged!!.text)
+    }
+
+    @Test
+    fun autoMerge_overlappingEdits_stayManual() {
+        val base = v(emptySet(), "A", 1, "Treffen um 18 Uhr")
+        val onA = v(setOf(base.versionId), "A", 2, "Treffen um 19 Uhr")
+        val onB = v(setOf(base.versionId), "B", 2, "Treffen um 20 Uhr")
+        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        assertNull("dieselbe Zeile unterschiedlich -> Mensch entscheidet", post.autoMergeContent())
+    }
+
+    @Test
+    fun autoMerge_deleteVsEdit_stayManual() {
+        val base = v(emptySet(), "A", 1, "wichtig")
+        val del = v(setOf(base.versionId), "A", 2, deleted = true)
+        val edit = v(setOf(base.versionId), "B", 2, "wichtig (neu)")
+        val post = Post(postId).apply { listOf(base, del, edit).forEach { ingest(it) } }
+        assertNull("Löschen-vs-Edit wird nicht auto-gemergt", post.autoMergeContent())
+    }
+
+    @Test
+    fun autoMerge_isDeterministic_acrossDevicesAndIngestOrder() {
+        // Konvergenz-Garantie: zwei Replikate (andere Ingest-Reihenfolge) berechnen denselben
+        // Merge-Inhalt -> gleiche versionId -> kein Ping-Pong.
+        val base = v(emptySet(), "A", 1, "a\nb\nc")
+        val onA = v(setOf(base.versionId), "A", 2, "a-x\nb\nc")
+        val onB = v(setOf(base.versionId), "B", 2, "a\nb\nc-y")
+        val p1 = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        val p2 = Post(postId).apply { listOf(onB, base, onA).forEach { ingest(it) } }
+        val m1 = p1.autoMergeContent(); val m2 = p2.autoMergeContent()
+        assertNotNull(m1); assertEquals(m1, m2)
+        assertEquals("a-x\nb\nc-y", m1!!.text)
+    }
+
+    @Test
     fun ingest_isIdempotent_andOrderIndependent() {
         val base = v(emptySet(), "A", 1, "x")
         val onA = v(setOf(base.versionId), "A", 2, "xa")
