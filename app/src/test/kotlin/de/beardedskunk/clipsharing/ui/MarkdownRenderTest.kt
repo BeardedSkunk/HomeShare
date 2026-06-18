@@ -20,6 +20,16 @@ class MarkdownRenderTest {
         assertEquals("fett+kursiv".length, span.end)
     }
 
+    @Test fun inlineOffsetMap_pointsToSourceCharsBehindMarkers() {
+        // Quelle: "**fett** x"  ->  gerendert: "fett x"
+        val inline = buildInline("**fett** x", 100)
+        assertEquals("fett x", inline.spans.text)
+        // gerendertes 'x' steht an Index 5; im Quelltext an Index 9 (+ srcStart 100).
+        assertEquals(100 + 9, inline.sourceOffset(5))
+        // gerendertes erstes 'f' (Index 0) -> Quelle Index 2 (hinter '**').
+        assertEquals(100 + 2, inline.sourceOffset(0))
+    }
+
     @Test fun plainBoldStillWorks() {
         val a = parseInline("a **b** c")
         assertEquals("a b c", a.text)

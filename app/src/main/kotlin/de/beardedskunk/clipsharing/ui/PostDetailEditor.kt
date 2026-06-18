@@ -140,6 +140,8 @@ fun PostDetailEditor(
 
     // Nach Bildauswahl in der Renderview: zum neuen Bild springen + dessen Titel-Feld fokussieren (Tbd #6).
     var pendingFocusImage by remember { mutableStateOf<Int?>(null) }
+    // Tipp auf gerenderten Text -> Quelltext fokussieren (Cursor sitzt schon an der Quellstelle, Tbd #2).
+    var pendingEditFocus by remember { mutableStateOf(false) }
     // Mehrfachauswahl: man kann gleich mehrere Bilder picken, ohne extra "OK" (Tbd #11).
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) {
@@ -174,6 +176,14 @@ fun PostDetailEditor(
             kotlinx.coroutines.delay(150)
             runCatching { titleFocusers[idx].requestFocus() }
             pendingFocusImage = null
+        }
+    }
+    // Tipp auf gerenderten Text: Quelltext-Feld fokussieren (Cursor wurde schon gesetzt, Tbd #2).
+    LaunchedEffect(pendingEditFocus, sourceMode) {
+        if (pendingEditFocus && sourceMode) {
+            kotlinx.coroutines.delay(120)
+            runCatching { focusRequester.requestFocus() }
+            pendingEditFocus = false
         }
     }
 
@@ -409,6 +419,11 @@ fun PostDetailEditor(
                 padding = padding,
                 text = tfv.text,
                 onToggleTask = { toggleTask(it) },
+                onEditAt = { off ->
+                    tfv = tfv.copy(selection = TextRange(off.coerceIn(0, tfv.text.length)))
+                    sourceMode = true
+                    pendingEditFocus = true
+                },
                 images = images,
                 imageTitles = imageTitles,
                 maxImageHeight = maxImageHeight,
@@ -550,6 +565,7 @@ private fun RenderedView(
     padding: androidx.compose.foundation.layout.PaddingValues,
     text: String,
     onToggleTask: (Int) -> Unit,
+    onEditAt: (Int) -> Unit,
     images: List<String>,
     imageTitles: List<TextFieldValue>,
     maxImageHeight: androidx.compose.ui.unit.Dp,
@@ -566,7 +582,7 @@ private fun RenderedView(
         if (title.isNotBlank()) {
             Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 6.dp))
         }
-        MarkdownBody(text, onToggleTask = onToggleTask)
+        MarkdownBody(text, onToggleTask = onToggleTask, onEditAt = onEditAt)
 
         images.forEachIndexed { index, sha ->
             Spacer(Modifier.size(12.dp))
