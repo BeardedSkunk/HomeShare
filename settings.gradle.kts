@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ClipSharing"
+rootProject.name = "HomeShare"
 include(":app")
