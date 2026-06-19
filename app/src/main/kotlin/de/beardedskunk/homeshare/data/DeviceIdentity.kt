@@ -101,7 +101,7 @@ class DeviceIdentity(context: Context) {
     }
 
     companion object {
-        private const val DEFAULT_GROUP = "meine-gruppe"
+        private const val DEFAULT_GROUP = "homeshare"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_GROUP = "group_name"
