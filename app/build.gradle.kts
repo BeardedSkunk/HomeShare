@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "de.beardedskunk.clipsharing"
+    namespace = "de.beardedskunk.homeshare"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "de.beardedskunk.clipsharing"
+        applicationId = "de.beardedskunk.homeshare"
         minSdk = 29
         targetSdk = 36
         versionCode = 1

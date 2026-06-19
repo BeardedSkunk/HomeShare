@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HomeShare: weißes Haus mit drei verbundenen Knoten (geteilte Geräte im Heimnetz). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Haus-Silhouette -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,27 L83,51 L83,84 L25,84 L25,51 Z" />
+    <!-- Verbindungslinien (Share-Glyph) -->
+    <path
+        android:strokeColor="#6750A4"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M54,41 L44,68" />
+    <path
+        android:strokeColor="#6750A4"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M54,41 L64,68" />
+    <!-- Knoten -->
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M54,41 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0 Z" />
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M44,68 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0 Z" />
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M64,68 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0 Z" />
+</vector>
