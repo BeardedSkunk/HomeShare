@@ -1,74 +1,89 @@
-# ClipSharing
+# HomeShare
 
-Eine sideloadbare Android-App (min. Android 10 / API 29) für einen geteilten, chat-artigen Feed
-über alle eigenen Geräte – **ohne Login, ohne Cloud**. Replikation läuft Gerät-zu-Gerät im LAN
-(Auto-Discovery), mit git-artiger Versionierung pro Beitrag, manueller Konfliktauflösung,
-Webbrowser-Zugriff vom PC und einer FRITZ!Box als passivem Voll-Backup.
+Eine sideloadbare Android-App (min. Android 10 / API 29) für **geteilte, chat-artige Feeds über alle
+eigenen Geräte** – ohne Login, ohne Cloud, ohne fremden Server. Replikation läuft Gerät-zu-Gerät im
+LAN (Auto-Discovery), mit git-artiger Versionierung pro Beitrag, **automatischer** Konfliktauflösung
+im Hintergrund (manuell nur bei echten Überlappungen), Zugriff per Webbrowser vom PC und einer
+FRITZ!Box als passivem Voll-Backup.
+
+> Persönliches Projekt. Läuft bewusst **ohne Google Play Services** – also auch auf
+> de-googelten Systemen wie LineageOS ohne Play Store.
+
+## Was es kann
+
+- **Beliebig viele benannte Feeds**, kein ausgezeichneter Hauptfeed; alle eigenen Geräte sehen alle Feeds.
+- **Text- und Bildbeiträge** mit Markdown (Editor mit Toolbar, Aufgabenlisten, In-Beitrag-Suche),
+  Bildbeschreibungen, Teilen aus anderen Apps (Share-Intent).
+- **Git-artige Versionierung** pro Beitrag (DAG aus inhaltsadressierten Versionen). Nebenläufige
+  Bearbeitung wird per **deterministischem 3-Wege-Merge** (diff3) im Hintergrund zusammengeführt;
+  nur echte, überlappende Konflikte landen in der manuellen Auflösung (farbiger Wort-Diff). Eine
+  einmal getroffene Auflösung gilt danach für alle Geräte.
+- **LAN-Sync** per NSD/mDNS + Versions-Vektoren (lückenbewusst), funktioniert in **jedem** gemeinsamen
+  WLAN – Heimnetz oder fremd.
+- **Verschlüsselte Übertragung** (AES-GCM, Schlüssel via PBKDF2 aus der Gruppen-Passphrase). Es koppeln
+  nur Geräte mit gleichem Gruppennamen + Passphrase.
+- **Bilder** content-adressiert (SHA-256, Dedup), Thumbnails immer lokal, Voll-Bilder per Budget;
+  Peer-zu-Peer-Übertragung direkt zwischen Geräten **oder** über die FRITZ!Box.
+- **FRITZ!Box als Voll-Replik** über FTPES (Op-Log + Blobs als Dateien) – primärer Anlaufpunkt im
+  Heimnetz, kein Single Point of Truth: fällt sie aus, rekonstruieren die Geräte alles untereinander.
+- **Kalender-Feeds**, die in den Android-Kalender gespiegelt werden; .ics-Import.
+- **Feed-Sharing mit anderen Gruppen** (lesen/schreiben/mergen, Rechte beim Eigentümer).
+- **Webbrowser-Zugriff** vom PC (manuell startbar): ansehen, suchen, editieren, Screenshot aus der
+  Zwischenablage einfügen.
 
 ## Architektur (Kurzüberblick)
 
 Quelle der Wahrheit ist ein **append-only Op-Log**: jeder Beitrag hat eine git-artige History aus
-inhaltsadressierten Versionsknoten (SHA-256). Mehrere „Heads“ = nebenläufige Bearbeitung = Konflikt.
+inhaltsadressierten Versionsknoten (`versionId = SHA-256(Inhalt + Eltern + Gerät + HLC)`). Mehrere
+„Heads" = nebenläufige Bearbeitung. Versionen werden nie gelöscht, nur überholt – alte Stände bleiben
+rekonstruierbar.
 
-- `core/` – reine, Android-freie Logik (JVM-getestet): `Model`/`Post` (Versions-DAG, Heads,
-  LCA, Merge), `Hashing`, `TextDiff` (Wort-Diff).
+- `core/` – reine, Android-freie Logik (JVM-getestet): `Post` (Versions-DAG, Heads, LCA,
+  Konflikt/Merge), `ThreeWayMerge` (deterministischer diff3), `Hashing`, `TextDiff`.
 - `data/` – Persistenz (Framework-SQLite, kein Room): `Db`, `FeedRepository` (Autoring, Sync-Ingest,
-  FTS4-Suche, Versions-Vektor), `BlobStore` (content-adressiert, Thumbnails), `EvictionPlanner`,
-  `DeviceIdentity`, `Settings`.
-- `sync/` – `Sync` (Wire-Codec + `SyncReconciler`, JVM-getestet), `PeerProtocol` (Socket-Protokoll),
-  `SyncManager` (NSD/mDNS-Discovery + TCP-Server/Client, Gruppenfilter).
+  Auto-Merge, FTS4-Suche, Versions-Vektor), `BlobStore` (content-adressiert, Thumbnails),
+  `EvictionPlanner`, `DeviceIdentity`, `Settings`.
+- `sync/` – `Sync` (Wire-Codec + Reconciler), `SecureChannel` (AES-GCM), `PeerProtocol` /
+  `CrossGroupProtocol` (inkl. Blob-Austausch), `SyncManager` (NSD/mDNS + TCP, Gruppenfilter),
+  `SyncForegroundService` (Hintergrundbetrieb).
 - `web/` – `WebServer` (NanoHTTPD, JSON-API + Blob-Serving) + `WebUi` (Single-Page, Clipboard-Paste).
 - `backup/` – `FritzReplica` (FTPES) + `FritzController` (Voll-Backup auf der FRITZ!Box).
-- `ui/` – Compose-UI: Feed-Liste, Feed-Ansicht, Editor (mit In-Post-Suche), Konfliktauflösung
-  (farbiger Diff), Teilen-Auswahl, Einstellungen.
+- `ui/` – Jetpack-Compose-UI: Feed-Liste, Feed-Ansicht, Markdown-Editor (geteilte Toolbar für Text
+  und Bildbeschreibungen, In-Beitrag-Suche), Konfliktauflösung, Kalender-Editor, Einstellungen.
 
-### Bewusste Abweichungen vom ursprünglichen Plan
-Pragmatisch gewählt, um auf diesem Rechner ohne Versions-Raten robust zu bauen (gleiche Funktion):
+### Bewusste Abweichungen (gleiche Funktion, robuster Build)
 - **Framework-SQLite statt Room** (kein KSP/Annotation-Processing).
 - **FTS4 statt FTS5** (auf allen Zielversionen garantiert verfügbar).
 - **NanoHTTPD statt Ktor** für den eingebetteten Webserver (leichtgewichtig).
+- **ZXing-android-embedded** für QR (eigene Scanner-Activity, **kein** Play-Services-Vision).
 
 ## Bauen & Installieren
 
-Toolchain (maschinen-erprobt): AGP 9.0.1, Gradle 9.1.0, Kotlin 2.3.20, JDK 21 (Android Studio JBR).
-Das JDK wird **nur projektlokal** über `gradle.properties` gesetzt – keine globalen Pfade.
+Toolchain (erprobt): AGP 9.0.1, Gradle 9.1, Kotlin 2.3.20, JDK 21 (Android Studio JBR). Das JDK wird
+**nur projektlokal** gesetzt – keine globalen Pfade.
 
 ```bash
-# Bauen (JBR nur für diesen Aufruf):
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleDebug
+# Bauen:
+./gradlew :app:assembleDebug
 
-# Unit-Tests (reine Logik: Konflikte, Sync, Diff, Blobs):
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:testDebugUnitTest
+# Unit-Tests (reine Logik: Merge/Konflikte, Sync, Diff, Blobs, Markdown):
+./gradlew :app:testDebugUnitTest
 
 # Auf ein angeschlossenes Gerät installieren:
-"$HOME/AppData/Local/Android/sdk/platform-tools/adb.exe" install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Status
+`applicationId` / Namespace: `de.beardedskunk.homeshare`.
 
-Implementiert und (wo ohne Gerät möglich) per Unit-Test verifiziert:
-- Beliebig viele benannte Feeds; Text- und Bild-Beiträge; Editieren/Löschen.
-- Git-artige Versionierung, Konflikterkennung, manuelle Auflösung mit Wort-Diff (Auflösung gilt für alle).
-- LAN-Sync per NSD + Versions-Vektoren; funktioniert in jedem gemeinsamen WLAN.
-- **Verschlüsselte Übertragung** (AES-GCM, Schlüssel via PBKDF2 aus der Gruppen-Passphrase);
-  nur Geräte mit gleicher Passphrase koppeln (Gruppen-Authentifizierung, auch in fremden WLANs).
-- Bilder content-adressiert + Thumbnails; Eviction-Strategie (Budget) als Logik vorhanden.
-- Webbrowser-Zugriff (manuell startbar, IP-Anzeige) inkl. Einfügen aus der Zwischenablage.
-- Share-to-App (Text/Bild) mit Feed-Auswahl.
-- FRITZ!Box-Voll-Backup über FTPES (Ops + Blobs als Dateien).
+## Lizenz
 
-### Muss auf echten Geräten getestet werden (hier kein Emulator verfügbar)
-- App-UI insgesamt; LAN-Sync zwischen zwei Geräten (auch im fremden WLAN); Webserver vom PC;
-  Share-Intent; FRITZ!Box-FTPES (ggf. SMB/SBM-Cipher-Feintuning, Box-Option „Nur sichere
-  FTP-Verbindungen (FTPS)“ aktivieren, Benutzer mit NAS-Recht).
+[PolyForm Noncommercial License 1.0.0](LICENSE.md).
 
-### Offen / nächste Schritte
-- **Peer-zu-Peer-Bildübertragung:** zwischen Handys werden derzeit nur Beiträge/Metadaten
-  (inkl. Bild-Hashes) synchronisiert, die Bild-Bytes selbst laufen über die FRITZ!Box. Direktes
-  On-Demand-Holen eines Voll-Bildes von einem anderen Handy fehlt noch.
-- **QR-Pairing + Forward Secrecy:** Gruppenbeitritt per QR-Code; aktuell statischer, aus der
-  Passphrase abgeleiteter Schlüssel (kein per-Session-Schlüssel). Für ein privates LAN ausreichend.
-- Foreground-Service für dauerhaften Hintergrundbetrieb von Sync/Webserver.
-- Automatisches Auslösen der Bild-Eviction inkl. „anderswo gesichert?“-Prüfung + Warnung.
+Klartext: **Du darfst HomeShare kostenlos nutzen, kopieren, verändern und weitergeben – für jeden
+nicht-kommerziellen Zweck** (privat, Hobby, Lernen, gemeinnützig). **Nicht erlaubt ist die
+kommerzielle Nutzung** (damit Geld verdienen) durch Dritte. Die Software kommt **ohne jede Gewähr**.
 
-Persönliches Projekt – privates Repo `BeardedSkunk/ClipSharing`.
+## Mitwirken
+
+Pull Requests für nicht-kommerzielle Verbesserungen sind willkommen. Mit einem Beitrag stimmst du zu,
+dass er unter derselben Lizenz steht.
