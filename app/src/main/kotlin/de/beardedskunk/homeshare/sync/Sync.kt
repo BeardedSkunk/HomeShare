@@ -1,82 +1,110 @@
 package de.beardedskunk.homeshare.sync
 
 import de.beardedskunk.homeshare.core.Hlc
-import de.beardedskunk.homeshare.core.PostContent
-import de.beardedskunk.homeshare.core.PostVersion
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.core.NodeVersion
 import java.util.Base64
 
 /**
- * Eine Operation (Versionsknoten) im uebertragbaren Format. Enthaelt zusaetzlich
- * zur reinen [PostVersion] die Routing-/Sync-Metadaten [feedId] und [seq].
+ * Eine Operation (Knoten-Versionsknoten) im übertragbaren Format. Enthält zusätzlich zur reinen
+ * [NodeVersion] das Routing-Metadatum [rootId] (oberster Vorfahr-Knoten = Feed) und [seq].
+ * [rootId]/[seq]/[deviceName] fließen NICHT in die versionId.
  */
 data class OpDto(
     val versionId: String,
-    val feedId: String,
-    val postId: String,
+    val nodeId: String,
+    val parentId: String,
+    val rootId: String,
     val deviceId: String,
     val seq: Long,
     val hlcWall: Long,
     val hlcCounter: Int,
     val deleted: Boolean,
+    val type: NodeType,
+    val orderKey: String,
+    val color: Int?,
+    val childDefault: NodeType?,
+    val done: Boolean,
+    val blobHash: String?,
+    val fileName: String?,
+    val mime: String?,
+    val tags: List<String>,
     val text: String,
     val parents: List<String>,
-    val imageHashes: List<String>,
-    val imageTitles: List<String> = emptyList(),
-    /** Menschlicher Name des Autor-Geraets (Metadatum, fliesst NICHT in versionId). */
     val deviceName: String = "",
 ) {
-    fun toVersion(): PostVersion = PostVersion(
-        postId = postId,
+    fun toVersion(): NodeVersion = NodeVersion(
+        nodeId = nodeId,
         parents = parents.toSet(),
         deviceId = deviceId,
         hlc = Hlc(hlcWall, hlcCounter),
-        content = PostContent(text = text, imageHashes = imageHashes, imageTitles = imageTitles, deleted = deleted),
+        content = NodeContent(
+            parentId = parentId, type = type, orderKey = orderKey, text = text, done = done,
+            blobHash = blobHash, fileName = fileName, mime = mime, color = color,
+            childDefault = childDefault, tags = tags, deleted = deleted,
+        ),
     )
 
-    /** Integritaetspruefung: stimmt die mitgelieferte Id mit dem Inhalt ueberein? */
+    /** Integritätsprüfung: stimmt die mitgelieferte Id mit dem Inhalt überein? */
     fun isConsistent(): Boolean = toVersion().versionId == versionId
 
     companion object {
-        fun from(v: PostVersion, feedId: String, seq: Long, deviceName: String = ""): OpDto = OpDto(
+        fun from(v: NodeVersion, rootId: String, seq: Long, deviceName: String = ""): OpDto = OpDto(
             versionId = v.versionId,
-            feedId = feedId,
-            postId = v.postId,
+            nodeId = v.nodeId,
+            parentId = v.content.parentId,
+            rootId = rootId,
             deviceId = v.deviceId,
             seq = seq,
             hlcWall = v.hlc.wallMillis,
             hlcCounter = v.hlc.counter,
             deleted = v.content.deleted,
+            type = v.content.type,
+            orderKey = v.content.orderKey,
+            color = v.content.color,
+            childDefault = v.content.childDefault,
+            done = v.content.done,
+            blobHash = v.content.blobHash,
+            fileName = v.content.fileName,
+            mime = v.content.mime,
+            tags = v.content.tags,
             text = v.content.text,
             parents = v.parents.toList(),
-            imageHashes = v.content.imageHashes,
-            imageTitles = v.content.imageTitles,
             deviceName = deviceName,
         )
     }
 }
 
 /**
- * Einfaches, eigenkontrolliertes Wire-Format (zeilenbasiert, Text base64-kodiert,
- * damit Zeilenumbrueche im Text nicht stoeren). Bewusst ohne externe Serialisierungs-
- * bibliothek -> keine zusaetzlichen Versions-/Plugin-Abhaengigkeiten, voll testbar.
+ * Einfaches, eigenkontrolliertes Wire-Format (zeilenbasiert, Freitext base64-kodiert). Bewusst ohne
+ * externe Serialisierungsbibliothek, voll testbar.
  */
 object OpCodec {
-    private const val HEADER = "CLIPOP1"
+    private const val HEADER = "HSNODE1"
 
     fun encodeOp(d: OpDto): String = buildString {
         append(HEADER).append('\n')
         append(d.versionId).append('\n')
-        append(d.feedId).append('\n')
-        append(d.postId).append('\n')
+        append(d.nodeId).append('\n')
+        append(d.parentId).append('\n')
+        append(d.rootId).append('\n')
         append(d.deviceId).append('\n')
         append(d.seq).append('\n')
         append(d.hlcWall).append('\n')
         append(d.hlcCounter).append('\n')
         append(if (d.deleted) "1" else "0").append('\n')
-        append(b64(d.text)).append('\n')
+        append(d.type.name).append('\n')
+        append(b64(d.orderKey)).append('\n')
+        append(d.color?.toString() ?: "").append('\n')
+        append(d.childDefault?.name ?: "").append('\n')
+        append(if (d.done) "1" else "0").append('\n')
+        append(d.blobHash ?: "").append('\n')
+        append(d.mime ?: "").append('\n')
+        append(b64(d.fileName ?: "")).append('\n')
+        append(encodeList(d.tags)).append('\n')
         append(d.parents.joinToString(",")).append('\n')
-        append(d.imageHashes.joinToString(",")).append('\n')
-        append(encodeTitles(d.imageTitles)).append('\n')
+        append(b64(d.text)).append('\n')
         append(b64(d.deviceName))
     }
 
@@ -85,48 +113,46 @@ object OpCodec {
         require(p[0] == HEADER) { "Unbekanntes Format: ${p[0]}" }
         return OpDto(
             versionId = p[1],
-            feedId = p[2],
-            postId = p[3],
-            deviceId = p[4],
-            seq = p[5].toLong(),
-            hlcWall = p[6].toLong(),
-            hlcCounter = p[7].toInt(),
-            deleted = p[8] == "1",
-            text = unb64(p[9]),
-            parents = splitCsv(p.getOrElse(10) { "" }),
-            imageHashes = splitCsv(p.getOrElse(11) { "" }),
-            imageTitles = decodeTitles(p.getOrElse(12) { "" }),
-            deviceName = p.getOrNull(13)?.takeIf { it.isNotBlank() }?.let { unb64(it) } ?: "",
+            nodeId = p[2],
+            parentId = p[3],
+            rootId = p[4],
+            deviceId = p[5],
+            seq = p[6].toLong(),
+            hlcWall = p[7].toLong(),
+            hlcCounter = p[8].toInt(),
+            deleted = p[9] == "1",
+            type = runCatching { NodeType.valueOf(p[10]) }.getOrDefault(NodeType.TEXT),
+            orderKey = unb64(p.getOrElse(11) { "" }),
+            color = p.getOrElse(12) { "" }.toIntOrNull(),
+            childDefault = p.getOrElse(13) { "" }.takeIf { it.isNotBlank() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() },
+            done = p.getOrElse(14) { "0" } == "1",
+            blobHash = p.getOrElse(15) { "" }.takeIf { it.isNotBlank() },
+            mime = p.getOrElse(16) { "" }.takeIf { it.isNotBlank() },
+            fileName = unb64(p.getOrElse(17) { "" }).takeIf { it.isNotBlank() },
+            tags = decodeList(p.getOrElse(18) { "" }),
+            parents = splitCsv(p.getOrElse(19) { "" }),
+            text = unb64(p.getOrElse(20) { "" }),
+            deviceName = p.getOrNull(21)?.takeIf { it.isNotBlank() }?.let { unb64(it) } ?: "",
         )
     }
 
-    /** Titel-Liste: "count;b64,b64,..." (base64 enthaelt kein Komma -> sicher). */
-    fun encodeTitles(list: List<String>): String =
+    /** String-Liste: "count;b64,b64,..." (base64 enthält kein Komma -> sicher). */
+    fun encodeList(list: List<String>): String =
         "${list.size};" + list.joinToString(",") { b64(it) }
 
-    fun decodeTitles(s: String): List<String> {
+    fun decodeList(s: String): List<String> {
         if (s.isBlank()) return emptyList()
         val i = s.indexOf(';')
         if (i < 0) return emptyList()
         val count = s.substring(0, i).toIntOrNull() ?: 0
         if (count == 0) return emptyList()
-        // Bei count>0 IMMER splitten: "1;" -> rest "" -> [""] (eine leere Titel-Zeile).
-        // Frueher wurde rest=="" als leere Liste behandelt -> ein einzelner leerer Titel
-        // ging verloren, wodurch sich die versionId nach DB-Roundtrip aenderte
-        // (Phantom-Konflikte bei Bildern ohne Titel).
-        val rest = s.substring(i + 1)
-        return rest.split(',').map { unb64(it) }
+        return s.substring(i + 1).split(',').map { unb64(it) }
     }
 
-    /** Ganze Op als eine einzelne (base64-)Zeile -> bequem fuers Stream-Protokoll. */
+    /** Ganze Op als eine base64-Zeile -> bequem fürs Stream-Protokoll. */
     fun encodeOpLine(op: OpDto): String = b64(encodeOp(op))
     fun decodeOpLine(line: String): OpDto = decodeOp(unb64(line))
 
-    /**
-     * Wissensstand: je Zeile "deviceId maxSeq[ gap1,gap2,...]". Die optionalen Luecken
-     * (fehlende Seqs unter maxSeq) ermoeglichen das Schliessen von Loechern beim Sync.
-     * deviceId enthaelt nie Leerzeichen (UUID bzw. feste Namen).
-     */
     fun encodeVv(vv: Map<String, PeerState>): String =
         vv.entries.joinToString("\n") { (dev, st) ->
             if (st.gaps.isEmpty()) "$dev ${st.maxSeq}"
@@ -149,42 +175,31 @@ object OpCodec {
     }
 
     private fun b64(s: String): String = Base64.getEncoder().encodeToString(s.toByteArray(Charsets.UTF_8))
-    private fun unb64(s: String): String = String(Base64.getDecoder().decode(s), Charsets.UTF_8)
+    private fun unb64(s: String): String = if (s.isEmpty()) "" else String(Base64.getDecoder().decode(s), Charsets.UTF_8)
     private fun splitCsv(s: String): List<String> = if (s.isEmpty()) emptyList() else s.split(',').filter { it.isNotEmpty() }
 }
 
 /**
- * Wissensstand je Autor-Geraet: hoechste bekannte Seq **plus** die Luecken darunter
- * (fehlende Seqs). Ohne die Luecken kann ein reiner „hoechste-Seq"-Vektor fehlende
- * Ops in der MITTE nicht erkennen – dann konvergieren Geraete nie (genau der Fehler,
- * der haengende Konflikte verursacht hat). [gaps] ist normalerweise leer.
+ * Wissensstand je Autor-Gerät: höchste bekannte Seq **plus** die Lücken darunter. Ohne Lücken kann
+ * ein reiner „höchste-Seq"-Vektor fehlende Ops in der MITTE nicht erkennen -> Geräte konvergieren nie.
  */
 data class PeerState(val maxSeq: Long, val gaps: List<Long> = emptyList())
 
-/**
- * Quelle/Senke von Operationen fuer einen Sync. Wird vom Repository implementiert;
- * im Test durch eine In-Memory-Variante ersetzt.
- */
+/** Quelle/Senke von Operationen für einen Sync (vom Repository implementiert, im Test in-memory). */
 interface OpSource {
-    /** Wissensstand je Autor-Geraet (hoechste Seq + Luecken). */
     fun versionVector(): Map<String, PeerState>
-
-    /** Alle lokalen Ops, die der Gegenseite (gegeben deren Wissensstand) fehlen. */
     fun missingFor(remote: Map<String, PeerState>): List<OpDto>
-
-    /** Speist eine empfangene Op ein. @return true, wenn neu. */
     fun ingestOp(op: OpDto): Boolean
 
-    /** Aktuell angezeigte Bild-Hashes (fuer gezielten Blob-Abgleich). */
-    fun displayedImageHashes(): Set<String>
+    /** Aktuell angezeigte Blob-Hashes (Bilder/Dateien) für gezielten Blob-Abgleich. */
+    fun displayedBlobHashes(): Set<String>
 }
 
 data class SyncResult(val pulled: Int, val pushed: Int)
 
 /**
- * Blob-Transfer (Voll-Bilder) direkt zwischen Geräten beim Peer-Sync (#11) – ohne Umweg
- * über die FRITZ!Box. Jede Seite nennt die aktuell angezeigten Bilder, die ihr lokal fehlen
- * ([wanted]); die Gegenseite schickt, was sie davon hat.
+ * Blob-Transfer (Voll-Bilder/-Dateien) direkt zwischen Geräten beim Peer-Sync. Jede Seite nennt die
+ * aktuell angezeigten Blobs, die ihr lokal fehlen ([wanted]); die Gegenseite schickt, was sie hat.
  */
 interface BlobSync {
     fun wanted(): Set<String>
@@ -194,25 +209,18 @@ interface BlobSync {
 }
 
 /**
- * Feed-bezogene Quelle/Senke fuer den **gruppenuebergreifenden** Sync (#10): nur die Ops
- * EINES Feeds, mit Rechtedurchsetzung beim Annehmen von Fremd-Pushes.
+ * Subtree-bezogene Quelle/Senke für den **gruppenübergreifenden** Sync (#10): nur die Ops EINES
+ * Feeds/Wurzelknotens (über `root_id`), mit Rechtedurchsetzung beim Annehmen von Fremd-Pushes.
+ * Der `rootId`-Parameter ist der geteilte Wurzelknoten.
  */
 interface FeedScopedSource {
-    fun feedVersionVector(feedId: String): Map<String, PeerState>
-    fun feedMissingFor(feedId: String, remote: Map<String, PeerState>): List<OpDto>
-    /** Vom Original empfangene Op uebernehmen (nur Feed-Zugehoerigkeit pruefen). @return true=neu. */
-    fun acceptIncomingOp(op: OpDto, feedId: String): Boolean
-    /**
-     * Fremd-Push gemaess Recht uebernehmen: nur bei write/merge; Merge-Ops (mehrere Eltern)
-     * nur bei merge. @return true=uebernommen (neu).
-     */
-    fun acceptForeignOp(op: OpDto, feedId: String, right: de.beardedskunk.homeshare.data.FeedRight): Boolean
+    fun feedVersionVector(rootId: String): Map<String, PeerState>
+    fun feedMissingFor(rootId: String, remote: Map<String, PeerState>): List<OpDto>
+    fun acceptIncomingOp(op: OpDto, rootId: String): Boolean
+    fun acceptForeignOp(op: OpDto, rootId: String, right: de.beardedskunk.homeshare.data.FeedRight): Boolean
 }
 
-/**
- * Reconciliation per Versions-Vektor (reine Logik, ohne Transport):
- * beide Seiten tauschen, was der jeweils anderen fehlt. Idempotent und konvergent.
- */
+/** Reconciliation per Versions-Vektor (reine Logik, ohne Transport). Idempotent und konvergent. */
 object SyncReconciler {
     fun reconcile(local: OpSource, remote: OpSource): SyncResult {
         val toLocal = remote.missingFor(local.versionVector())
