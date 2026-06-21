@@ -67,7 +67,7 @@ class SyncManager(
     private val blobSync: BlobSync? = blobStore?.let { store ->
         object : BlobSync {
             override fun wanted(): Set<String> =
-                repo.displayedImageHashes().filterTo(HashSet()) { !store.hasFull(it) }
+                repo.displayedBlobHashes().filterTo(HashSet()) { !store.hasFull(it) }
             override fun has(sha: String): Boolean = store.hasFull(sha)
             override fun read(sha: String): ByteArray? = store.readFull(sha)
             override fun store(sha: String, bytes: ByteArray) {
@@ -314,16 +314,16 @@ class SyncManager(
 
     /** Fremdgruppe: EINEN geteilten Feed ziehen/pushen (Modus FEED) mit capSecret-Kanal. */
     private fun connectFeed(addr: InetSocketAddress, ref: ForeignFeedRef) {
-        val peer = "F:${addr.address?.hostAddress ?: addr.hostString}:${addr.port}:${ref.feedId}"
+        val peer = "F:${addr.address?.hostAddress ?: addr.hostString}:${addr.port}:${ref.nodeId}"
         if (!gate.tryAcquire(peer, now())) return
         scope.launch(netDispatcher) {
             try {
                 connect(addr)?.use {
                     it.soTimeout = SOCKET_TIMEOUT_MS
-                    writeLine(it.getOutputStream(), "$MODE_FEED ${ref.feedId} ${ref.capId}")
+                    writeLine(it.getOutputStream(), "$MODE_FEED ${ref.nodeId} ${ref.capId}")
                     val ch = SecureChannel(it.getInputStream(), it.getOutputStream(), GroupCrypto.keyFromToken(ref.capSecret))
-                    val r = CrossGroupProtocol.runForeign(repo, ref.feedId, ch, blobSync)
-                    repo.updateForeignRight(ref.feedId, r.right)
+                    val r = CrossGroupProtocol.runForeign(repo, ref.nodeId, ch, blobSync)
+                    repo.updateForeignRight(ref.nodeId, r.right)
                     status.value = status.value.copy(lastMessage = "Geteilt (von ${ref.originGroup}): +${r.pulled}/${r.pushed}")
                 }
             } catch (e: Throwable) {
