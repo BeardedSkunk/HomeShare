@@ -22,7 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import de.beardedskunk.homeshare.data.Feed
+import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.ui.FeedListScreen
 import de.beardedskunk.homeshare.ui.FeedScreen
 import de.beardedskunk.homeshare.ui.FeedShareScreen
@@ -90,13 +90,13 @@ fun ClipTheme(content: @Composable () -> Unit) {
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
 fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
-    var openFeed by remember { mutableStateOf<Feed?>(null) }
+    var openFeed by remember { mutableStateOf<NodeState?>(null) }
     // EINE geteilte Suche über alle Ebenen (Feeds-Liste / Feed / Eintrag): null = zu, sonst offen.
     // Beim Zurückgehen bleibt sie erhalten, außer sie wurde in der Ebene darunter geschlossen (-> null).
     var searchQuery by remember { mutableStateOf<String?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
     var showSettings by remember { mutableStateOf(false) }
-    var sharingFeed by remember { mutableStateOf<Feed?>(null) }
+    var sharingFeed by remember { mutableStateOf<NodeState?>(null) }
     val status by graph.sync.status.collectAsState()
     val webUrl by graph.web.url.collectAsState()
 
@@ -104,9 +104,9 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     val calPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result -> if (result.values.any { it }) graph.calendarSync.requestSync() }
-    LaunchedEffect(openFeed?.id) {
+    LaunchedEffect(openFeed?.nodeId) {
         val f = openFeed
-        if (f != null && f.calendar && !graph.calendarSync.hasPermission()) {
+        if (f != null && f.isCalendarFeed && !graph.calendarSync.hasPermission()) {
             calPermLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
         }
     }
