@@ -1,8 +1,8 @@
 package de.beardedskunk.homeshare.sync
 
 import de.beardedskunk.homeshare.core.Hlc
-import de.beardedskunk.homeshare.core.PostContent
-import de.beardedskunk.homeshare.core.PostVersion
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeVersion
 import de.beardedskunk.homeshare.crypto.GroupCrypto
 import de.beardedskunk.homeshare.data.FeedRight
 import org.junit.Assert.assertEquals
@@ -19,7 +19,7 @@ class CrossGroupProtocolTest {
 
     private class MemFeedSource(seed: List<OpDto> = emptyList()) : FeedScopedSource {
         val ops = LinkedHashMap<String, OpDto>().apply { seed.forEach { put(it.versionId, it) } }
-        private fun feedOps(feedId: String) = ops.values.filter { it.feedId == feedId }
+        private fun feedOps(feedId: String) = ops.values.filter { it.rootId == feedId }
         override fun feedVersionVector(feedId: String): Map<String, PeerState> =
             feedOps(feedId).groupBy { it.deviceId }.mapValues { e ->
                 val s = e.value.map { it.seq }
@@ -30,11 +30,11 @@ class CrossGroupProtocolTest {
                 val st = remote[op.deviceId]; st == null || op.seq > st.maxSeq || op.seq in st.gaps
             }
         override fun acceptIncomingOp(op: OpDto, feedId: String): Boolean {
-            if (op.feedId != feedId || ops.containsKey(op.versionId)) return false
+            if (op.rootId != feedId || ops.containsKey(op.versionId)) return false
             ops[op.versionId] = op; return true
         }
         override fun acceptForeignOp(op: OpDto, feedId: String, right: FeedRight): Boolean {
-            if (op.feedId != feedId || !right.canWrite()) return false
+            if (op.rootId != feedId || !right.canWrite()) return false
             if (op.parents.size > 1 && !right.canMerge()) return false
             if (ops.containsKey(op.versionId)) return false
             ops[op.versionId] = op; return true
@@ -42,7 +42,7 @@ class CrossGroupProtocolTest {
     }
 
     private fun op(device: String, seq: Long, feedId: String, text: String, parents: Set<String> = emptySet()) =
-        OpDto.from(PostVersion("p-$feedId-$device-$seq", parents, device, Hlc(seq, 0), PostContent(text = text)), feedId, seq)
+        OpDto.from(NodeVersion("p-$feedId-$device-$seq", parents, device, Hlc(seq, 0), NodeContent(text = text)), feedId, seq)
 
     private val key = GroupCrypto.keyFromToken(GroupCrypto.randomToken(32))
 
@@ -74,7 +74,7 @@ class CrossGroupProtocolTest {
         assertEquals(2, r.pulled)
         assertEquals(FeedRight.READ, r.right)
         // Nur feedA-Ops angekommen, feedB NICHT.
-        assertEquals(setOf("feedA"), foreign.ops.values.map { it.feedId }.toSet())
+        assertEquals(setOf("feedA"), foreign.ops.values.map { it.rootId }.toSet())
         assertEquals(2, foreign.ops.size)
     }
 

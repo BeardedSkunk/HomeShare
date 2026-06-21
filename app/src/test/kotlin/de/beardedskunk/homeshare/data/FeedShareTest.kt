@@ -18,22 +18,22 @@ class FeedShareTest {
         assertEquals(FeedRight.READ, FeedRight.from("quatsch"))
     }
 
-    @Test fun shareGrants_roundTrip_inFeedText_keepingNameAndCalendar() {
+    @Test fun shareGrants_roundTrip_inFeedText_keepingName() {
         val grants = listOf(
             ShareGrant("cap1", FeedRight.READ, "Familie Müller", "ENCSECRETA=="),
             ShareGrant("cap2", FeedRight.MERGE, "WG | Berlin :: 4", "ENCSECRETB=="),
         )
-        val text = FeedShareCodec.feedText("Urlaub", calendar = true, grants = grants)
-        // Name + Kalender-Flag muessen unveraendert dekodieren.
-        assertEquals("Urlaub", FeedMeta.decodeName(text))
-        assertTrue(FeedMeta.decodeCalendar(text))
+        val text = FeedShareCodec.feedText("Urlaub", grants = grants)
+        // Name (1. Zeile) muss unveraendert dekodieren; das Kalender-Flag ist jetzt ein
+        // eigenes Knotenfeld (childDefault), nicht mehr im Text.
+        assertEquals("Urlaub", FeedShareCodec.nameOf(text))
         assertTrue(FeedShareCodec.isShared(text))
         // Freigaben unveraendert zurueck (auch Label mit Sonderzeichen).
         assertEquals(grants, FeedShareCodec.decode(text))
     }
 
     @Test fun noGrants_isNotShared() {
-        val text = FeedShareCodec.feedText("Notizen", calendar = false, grants = emptyList())
+        val text = FeedShareCodec.feedText("Notizen", grants = emptyList())
         assertEquals("Notizen", text)
         assertFalse(FeedShareCodec.isShared(text))
         assertTrue(FeedShareCodec.decode(text).isEmpty())
