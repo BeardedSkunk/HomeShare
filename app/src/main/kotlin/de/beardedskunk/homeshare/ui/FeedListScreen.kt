@@ -44,13 +44,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.material.icons.filled.Share
-import de.beardedskunk.homeshare.data.Feed
 import de.beardedskunk.homeshare.data.FeedRepository
+import de.beardedskunk.homeshare.data.FeedShareCodec
+import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.sync.SyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Oberste Ebene: die Wurzelknoten („Feeds"). Intern ein Knoten-Baum, für den Nutzer wie gehabt. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FeedListScreen(
@@ -60,17 +62,16 @@ fun FeedListScreen(
     webUrl: String? = null,
     onToggleWeb: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onOpenShare: (Feed) -> Unit = {},
-    /** Geteilter Suchzustand (siehe [onSearchQueryChange]): null = Suche zu, sonst offen. */
+    onOpenShare: (NodeState) -> Unit = {},
     searchQuery: String? = null,
     onSearchQueryChange: (String?) -> Unit = {},
-    onOpenFeed: (Feed) -> Unit,
+    onOpenFeed: (NodeState) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
+    var feeds by remember { mutableStateOf<List<NodeState>>(emptyList()) }
     var showCreate by remember { mutableStateOf(false) }
-    var feedToDelete by remember { mutableStateOf<Feed?>(null) }
-    var actionFeed by remember { mutableStateOf<Feed?>(null) }
+    var feedToDelete by remember { mutableStateOf<NodeState?>(null) }
+    var actionFeed by remember { mutableStateOf<NodeState?>(null) }
     var showAddShared by remember { mutableStateOf(false) }
     val searching = searchQuery != null
     val query = searchQuery ?: ""
@@ -79,14 +80,12 @@ fun FeedListScreen(
     fun reload() {
         scope.launch { feeds = withContext(Dispatchers.IO) { repo.listFeeds() } }
     }
-    // Bei JEDER Aenderung (auch per Sync empfangen) automatisch neu laden.
     val revision by repo.revision.collectAsState()
     LaunchedEffect(revision) { reload() }
-    // Übersichts-Suche: schränkt die Feeds auf die ein, in denen (oder deren Namen) der Begriff vorkommt.
     LaunchedEffect(searching, query, revision) {
         matchedIds = if (searching && query.isNotBlank()) withContext(Dispatchers.IO) { repo.feedsMatching(query) } else null
     }
-    val shownFeeds = matchedIds?.let { ids -> feeds.filter { it.id in ids } } ?: feeds
+    val shownFeeds = matchedIds?.let { ids -> feeds.filter { it.nodeId in ids } } ?: feeds
 
     Scaffold(
         topBar = {
@@ -149,29 +148,29 @@ fun FeedListScreen(
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                items(shownFeeds, key = { it.id }) { feed ->
-                    Card(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .combinedClickable(
-                                onClick = { onOpenFeed(feed) },
-                                onLongClick = { actionFeed = feed }, // lang drücken -> Aktionen
-                            ),
-                    ) {
-                        val prefix = buildString {
-                            if (feed.calendar) append("📅 ")
-                            if (feed.shared) append("📤 ")       // eigener, geteilter Feed
-                            if (feed.isForeign) append("🔗 ")    // fremder, abonnierter Feed
+                    items(shownFeeds, key = { it.nodeId }) { feed ->
+                        Card(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .combinedClickable(
+                                    onClick = { onOpenFeed(feed) },
+                                    onLongClick = { actionFeed = feed },
+                                ),
+                        ) {
+                            val prefix = buildString {
+                                if (feed.isCalendarFeed) append("📅 ")
+                                if (FeedShareCodec.isShared(feed.text)) append("📤 ")
+                                if (feed.isForeign) append("🔗 ")
+                            }
+                            Text(
+                                prefix + feed.title.ifBlank { "(ohne Namen)" },
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(16.dp),
+                            )
                         }
-                        Text(
-                            prefix + feed.name.ifBlank { "(ohne Namen)" },
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(16.dp),
-                        )
                     }
                 }
-            }
             }
         }
     }
@@ -179,12 +178,12 @@ fun FeedListScreen(
     actionFeed?.let { feed ->
         AlertDialog(
             onDismissRequest = { actionFeed = null },
-            title = { Text(feed.name.ifBlank { "(ohne Namen)" }) },
+            title = { Text(feed.title.ifBlank { "(ohne Namen)" }) },
             text = {
                 Column {
                     if (feed.isForeign) {
                         TextButton(onClick = {
-                            val id = feed.id; actionFeed = null
+                            val id = feed.nodeId; actionFeed = null
                             scope.launch { withContext(Dispatchers.IO) { repo.leaveForeignFeed(id) }; reload() }
                         }) { Text("Freigabe verlassen (lokal entfernen)") }
                     } else {
@@ -208,13 +207,13 @@ fun FeedListScreen(
             title = { Text("Feed löschen?") },
             text = {
                 Text(
-                    "„${feed.name.ifBlank { "(ohne Namen)" }}" + "“ wird für alle Geräte deiner Gruppe gelöscht " +
+                    "„${feed.title.ifBlank { "(ohne Namen)" }}" + "“ wird für alle Geräte deiner Gruppe gelöscht " +
                         "(inkl. aller Einträge). Das lässt sich nicht rückgängig machen.",
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val id = feed.id
+                    val id = feed.nodeId
                     feedToDelete = null
                     scope.launch {
                         withContext(Dispatchers.IO) { repo.deleteFeed(id) }
