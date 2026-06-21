@@ -1,8 +1,9 @@
 package de.beardedskunk.homeshare.sync
 
 import de.beardedskunk.homeshare.core.Hlc
-import de.beardedskunk.homeshare.core.PostContent
-import de.beardedskunk.homeshare.core.PostVersion
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.core.NodeVersion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,54 +34,67 @@ class SyncTest {
             return true
         }
 
-        override fun displayedImageHashes(): Set<String> = emptySet()
+        override fun displayedBlobHashes(): Set<String> = emptySet()
     }
 
     private fun op(device: String, seq: Long, text: String, parents: Set<String> = emptySet()): OpDto {
-        val v = PostVersion("post-$device-$seq", parents, device, Hlc(seq, 0), PostContent(text = text))
-        return OpDto.from(v, feedId = "feed1", seq = seq)
+        val v = NodeVersion("node-$device-$seq", parents, device, Hlc(seq, 0), NodeContent(text = text))
+        return OpDto.from(v, rootId = "feed1", seq = seq)
     }
 
     @Test
-    fun opCodec_roundTrips_includingNewlinesAndImages() {
+    fun opCodec_roundTrips_allFields() {
         val dto = OpDto(
             versionId = "abc123",
-            feedId = "f1",
-            postId = "p1",
+            nodeId = "p1",
+            parentId = "par0",
+            rootId = "f1",
             deviceId = "devA",
             seq = 42,
             hlcWall = 1000,
             hlcCounter = 3,
             deleted = false,
+            type = NodeType.IMAGE,
+            orderKey = "0|hallo welt",
+            color = 0xFF112233.toInt(),
+            childDefault = NodeType.CALENDAR,
+            done = true,
+            blobHash = "sha256abc",
+            fileName = "ünüsual, name.png",
+            mime = "image/png",
+            tags = listOf("a,b", "c"),
             text = "Zeile 1\nZeile 2 mit , Komma\nZeile 3",
             parents = listOf("par1", "par2"),
-            imageHashes = listOf("sha1", "sha2"),
+            deviceName = "Pixel 8",
         )
         assertEquals(dto, OpCodec.decodeOp(OpCodec.encodeOp(dto)))
     }
 
     @Test
-    fun opCodec_roundTrips_withEmptyParentsAndImages() {
+    fun opCodec_roundTrips_withEmptyParentsAndTags() {
         val dto = op("devA", 1, "hallo")
         assertEquals(dto, OpCodec.decodeOp(OpCodec.encodeOp(dto)))
     }
 
     @Test
-    fun titles_roundTrip_includingSingleEmptyTitle() {
-        // Regression: ein einzelner leerer Bildtitel (Bild ohne Titel) muss erhalten
-        // bleiben, sonst aendert sich die versionId nach dem DB-Roundtrip (Phantom-Konflikt).
-        for (titles in listOf(emptyList(), listOf(""), listOf("a"), listOf("", ""), listOf("x", "", "y"))) {
-            assertEquals(titles, OpCodec.decodeTitles(OpCodec.encodeTitles(titles)))
+    fun listCodec_roundTrips_includingEmptyEntries() {
+        // Regression: ein einzelner leerer Eintrag (z.B. leerer Tag) muss erhalten bleiben,
+        // sonst aendert sich die versionId nach dem DB-Roundtrip (Phantom-Konflikt).
+        val cases = listOf(
+            emptyList<String>(), listOf(""), listOf("a"), listOf("", ""), listOf("x", "", "y"),
+        )
+        for (list in cases) {
+            assertEquals(list, OpCodec.decodeList(OpCodec.encodeList(list)))
         }
     }
 
     @Test
-    fun opCodec_roundTrips_withImageAndEmptyTitle() {
-        val v = PostVersion(
+    fun opCodec_roundTrips_imageNodeWithBlob_andStaysConsistent() {
+        val v = NodeVersion(
             "p1", emptySet(), "devA", Hlc(1, 0),
-            PostContent(text = "Logo", imageHashes = listOf("sha1"), imageTitles = listOf("")),
+            NodeContent(type = NodeType.IMAGE, blobHash = "sha1", text = ""),
         )
-        val dto = OpDto.from(v, feedId = "feed1", seq = 1)
+        val dto = OpDto.from(v, rootId = "feed1", seq = 1)
         val back = OpCodec.decodeOp(OpCodec.encodeOp(dto))
         assertEquals(dto, back)
         assertTrue(back.isConsistent())
