@@ -61,12 +61,12 @@ class CalendarSync(
         val calId = targetCalendarId() ?: return
         for (e in repo.calendarEntries()) {
             // Gelöscht ODER Feed auf diesem Gerät deaktiviert -> Event aus dem Android-Kalender entfernen.
-            val enabled = settings.isCalendarFeedEnabled(e.feedId)
+            val enabled = settings.isCalendarFeedEnabled(e.rootId)
             val ev = if (e.deleted || !enabled) null else EventCodec.parse(e.text)
             if (ev == null) {
-                deleteLinked(e.postId)
+                deleteLinked(e.nodeId)
             } else {
-                upsert(e.postId, ev, calId)
+                upsert(e.nodeId, ev, calId)
             }
         }
     }
@@ -138,7 +138,7 @@ class CalendarSync(
         runCatching {
             cr.delete(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, link.eventId), null, null)
         }
-        db.delete("calendar_link", "post_id=?", arrayOf(postId))
+        db.delete("calendar_link", "node_id=?", arrayOf(postId))
     }
 
     // ----- Zielkalender -----
@@ -205,7 +205,7 @@ class CalendarSync(
     private data class Link(val eventId: Long, val hash: String)
 
     private fun linkFor(postId: String): Link? =
-        db.rawQuery("SELECT event_id, synced_hash FROM calendar_link WHERE post_id=?", arrayOf(postId)).use { c ->
+        db.rawQuery("SELECT event_id, synced_hash FROM calendar_link WHERE node_id=?", arrayOf(postId)).use { c ->
             if (c.moveToFirst()) Link(c.getLong(0), c.getString(1)) else null
         }
 
@@ -213,7 +213,7 @@ class CalendarSync(
         db.insertWithOnConflict(
             "calendar_link", null,
             ContentValues().apply {
-                put("post_id", postId)
+                put("node_id", postId)
                 put("event_id", eventId)
                 put("calendar_id", calId)
                 put("synced_hash", hash)
