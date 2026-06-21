@@ -18,6 +18,8 @@ import android.database.sqlite.SQLiteOpenHelper
  */
 class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
 
+    private val appContext = context.applicationContext
+
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
     }
@@ -123,6 +125,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
             db.execSQL("DROP TABLE IF EXISTS foreign_refs")
             db.execSQL("DROP TABLE IF EXISTS calendar_link")
             onCreate(db)
+            // Beim inkompatiblen Wipe auch die Bild-/Datei-Blobs des alten Schemas mitleeren,
+            // sonst bleiben sie als verwaiste Dateien liegen (toter Speicher).
+            BlobStore.purgeAll(appContext.filesDir)
         }
     }
 
