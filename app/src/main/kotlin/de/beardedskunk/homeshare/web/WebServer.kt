@@ -1,9 +1,10 @@
 package de.beardedskunk.homeshare.web
 
-import de.beardedskunk.homeshare.core.PostContent
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.data.FeedRepository
-import de.beardedskunk.homeshare.data.PostState
+import de.beardedskunk.homeshare.data.NodeState
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,12 +12,10 @@ import java.io.FileInputStream
 import java.util.Base64
 
 /**
- * Eingebetteter HTTP-Server (NanoHTTPD) fuer den PC-Browser-Zugriff: liefert eine
- * kleine Single-Page-UI und eine JSON-API auf dasselbe Repository wie die App.
- * Wird nur manuell aus der App gestartet (siehe WebServerController).
- *
- * Hinweis: NanoHTTPD statt Ktor bewusst gewaehlt (leichtgewichtig, keine schwere
- * Abhaengigkeitskette). Transport unverschluesselt im vertrauten WLAN.
+ * Eingebetteter HTTP-Server (NanoHTTPD) für den PC-Browser-Zugriff: kleine Single-Page-UI + JSON-API
+ * auf dasselbe Repository (Knoten-Baum). Ein „Feed" ist ein Wurzelknoten, ein „Post" ein Text-
+ * Kindknoten, dessen Bilder eigene IMAGE-Kindknoten sind. Die JSON-Feldnamen bleiben kompatibel zur
+ * bestehenden Web-UI (postId/text/images/imageTitles/…). Nur manuell aus der App gestartet.
  */
 class WebServer(
     port: Int,
@@ -46,43 +45,37 @@ class WebServer(
                 json(postsJson(repo.search(param(session, "feed"), param(session, "q"))).toString())
             uri == "/api/post" && post -> {
                 val b = JSONObject(readBody(session))
-                val images = decodeImages(b)
-                repo.createPost(b.getString("feed"), b.optString("text"), images, strList(b.optJSONArray("imageTitles")))
+                val entry = repo.createNode(NodeContent(parentId = b.getString("feed"), type = NodeType.TEXT, text = b.optString("text")))
+                for (sha in decodeImages(b)) {
+                    val img = repo.createNode(NodeContent(parentId = entry.nodeId, type = NodeType.IMAGE, blobHash = sha))
+                    repo.createNode(NodeContent(parentId = img.nodeId, type = NodeType.TEXT, text = ""))
+                }
                 ok()
             }
             uri == "/api/post/edit" && post -> {
                 val b = JSONObject(readBody(session))
-                repo.editPost(
-                    b.getString("feed"),
-                    b.getString("postId"),
-                    b.optString("text"),
-                    strList(b.optJSONArray("images")),
-                    strList(b.optJSONArray("imageTitles")),
-                )
+                val id = b.getString("postId")
+                val hc = repo.headContent(id) ?: NodeContent(parentId = b.getString("feed"), type = NodeType.TEXT)
+                repo.editNode(id, hc.copy(text = b.optString("text")))
                 ok()
             }
             uri == "/api/post/delete" && post -> {
                 val b = JSONObject(readBody(session))
-                repo.deletePost(b.getString("feed"), b.getString("postId"))
+                repo.deleteNode(b.getString("postId"))
                 ok()
             }
             uri == "/api/conflict" && get -> json(conflictJson(param(session, "post")).toString())
             uri == "/api/post/resolve" && post -> {
                 val b = JSONObject(readBody(session))
-                val content = if (b.optBoolean("deleted")) {
-                    PostContent(deleted = true)
-                } else {
-                    PostContent(
-                        text = b.optString("text"),
-                        imageHashes = strList(b.optJSONArray("images")),
-                        imageTitles = strList(b.optJSONArray("imageTitles")),
-                    )
-                }
-                repo.resolveConflict(b.getString("feed"), b.getString("postId"), content)
+                val id = b.getString("postId")
+                val hc = repo.headContent(id) ?: NodeContent(parentId = b.getString("feed"), type = NodeType.TEXT)
+                val content = if (b.optBoolean("deleted")) hc.copy(deleted = true)
+                else hc.copy(text = b.optString("text"), deleted = false)
+                repo.resolveConflict(id, content)
                 ok()
             }
-            uri.startsWith("/thumb/") && get -> serveImage(blobStore.thumbFile(uri.removePrefix("/thumb/")))
-            uri.startsWith("/blob/") && get -> serveImage(blobStore.fullFile(uri.removePrefix("/blob/")))
+            uri.startsWith("/thumb/") && get -> serveBlob(blobStore.thumbFile(uri.removePrefix("/thumb/")))
+            uri.startsWith("/blob/") && get -> serveBlob(blobStore.fullFile(uri.removePrefix("/blob/")))
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "nicht gefunden")
         }
     }
@@ -91,19 +84,23 @@ class WebServer(
 
     private fun feedsJson(): JSONArray {
         val arr = JSONArray()
-        for (f in repo.listFeeds()) arr.put(JSONObject().put("id", f.id).put("name", f.name))
+        for (f in repo.listFeeds()) arr.put(JSONObject().put("id", f.nodeId).put("name", f.title))
         return arr
     }
 
-    private fun postsJson(posts: List<PostState>): JSONArray {
+    private fun postsJson(posts: List<NodeState>): JSONArray {
         val arr = JSONArray()
         for (p in posts) {
+            // Bilder eines Eintrags = seine IMAGE-Kindknoten; deren Beschreibung = je ein TEXT-Enkel.
+            val imgKids = repo.children(p.nodeId).filter { it.type == NodeType.IMAGE || it.type == NodeType.FILE }
+            val hashes = imgKids.mapNotNull { it.blobHash }
+            val titles = imgKids.map { img -> repo.children(img.nodeId).firstOrNull { it.type == NodeType.TEXT }?.text ?: "" }
             arr.put(
                 JSONObject()
-                    .put("postId", p.postId)
+                    .put("postId", p.nodeId)
                     .put("text", p.text)
-                    .put("images", JSONArray(p.imageHashes))
-                    .put("imageTitles", JSONArray(p.imageTitles))
+                    .put("images", JSONArray(hashes))
+                    .put("imageTitles", JSONArray(titles))
                     .put("deleted", p.deleted)
                     .put("conflicted", p.conflicted)
                     .put("created", p.created.wallMillis),
@@ -112,11 +109,11 @@ class WebServer(
         return arr
     }
 
-    private fun conflictJson(postId: String): JSONObject {
-        val postHistory = repo.history(postId)
-        val heads = postHistory.heads()
+    private fun conflictJson(nodeId: String): JSONObject {
+        val history = repo.history(nodeId)
+        val heads = history.heads()
         val base = if (heads.size >= 2) {
-            postHistory.lowestCommonAncestor(heads[0].versionId, heads[1].versionId)?.content?.text ?: ""
+            history.lowestCommonAncestor(heads[0].versionId, heads[1].versionId)?.content?.text ?: ""
         } else {
             ""
         }
@@ -128,7 +125,7 @@ class WebServer(
                     .put("device", h.deviceId)
                     .put("text", h.content.text)
                     .put("deleted", h.content.deleted)
-                    .put("images", JSONArray(h.content.imageHashes)),
+                    .put("images", JSONArray()),
             )
         }
         return JSONObject().put("base", base).put("heads", headArr)
@@ -140,22 +137,11 @@ class WebServer(
         val arr = b.optJSONArray("imagesB64") ?: return emptyList()
         val out = ArrayList<String>(arr.length())
         for (i in 0 until arr.length()) {
-            val bytes = Base64.getDecoder().decode(arr.getString(i))
-            out += blobStore.put(bytes)
+            out += blobStore.put(Base64.getDecoder().decode(arr.getString(i)))
         }
         return out
     }
 
-    private fun strList(arr: JSONArray?): List<String> {
-        if (arr == null) return emptyList()
-        return (0 until arr.length()).map { arr.getString(it) }
-    }
-
-    /**
-     * Liest den POST-Body roh und dekodiert ihn IMMER als UTF-8. NanoHTTPDs parseBody
-     * nimmt ohne charset im Content-Type einen falschen Zeichensatz an -> Umlaute wurden
-     * dabei zu U+FFFD zerstört. Daher die Bytes selbst lesen (Content-Length).
-     */
     private fun readBody(session: IHTTPSession): String {
         val len = session.headers["content-length"]?.toIntOrNull() ?: return ""
         if (len <= 0) return ""
@@ -173,7 +159,7 @@ class WebServer(
     private fun param(session: IHTTPSession, name: String): String =
         session.parameters[name]?.firstOrNull().orEmpty()
 
-    private fun serveImage(file: java.io.File): Response =
+    private fun serveBlob(file: java.io.File): Response =
         if (file.exists()) {
             newChunkedResponse(Response.Status.OK, "image/jpeg", FileInputStream(file))
         } else {

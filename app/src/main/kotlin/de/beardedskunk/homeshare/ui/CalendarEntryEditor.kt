@@ -45,11 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.EventCodec
 import de.beardedskunk.homeshare.data.EventData
-import de.beardedskunk.homeshare.data.Feed
 import de.beardedskunk.homeshare.data.FeedRepository
-import de.beardedskunk.homeshare.data.PostState
+import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.data.Recurrence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,8 +87,8 @@ private val reminderOptions: List<Pair<String, Int?>> = listOf(
 @Composable
 fun CalendarEntryEditor(
     repo: FeedRepository,
-    feed: Feed,
-    post: PostState?,
+    feed: NodeState,
+    post: NodeState?,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -137,7 +138,12 @@ fun CalendarEntryEditor(
         val text = EventCodec.encode(ev)
         scope.launch {
             withContext(Dispatchers.IO) {
-                if (post == null) repo.createPost(feed.id, text) else repo.editPost(feed.id, post.postId, text)
+                if (post == null) {
+                    repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.CALENDAR, text = text))
+                } else {
+                    val hc = repo.headContent(post.nodeId) ?: NodeContent(parentId = feed.nodeId, type = NodeType.CALENDAR)
+                    repo.editNode(post.nodeId, hc.copy(text = text, type = NodeType.CALENDAR))
+                }
             }
             onClose()
         }
@@ -146,7 +152,7 @@ fun CalendarEntryEditor(
     fun delete() {
         val p = post ?: return
         scope.launch {
-            withContext(Dispatchers.IO) { repo.deletePost(feed.id, p.postId) }
+            withContext(Dispatchers.IO) { repo.deleteNode(p.nodeId) }
             onClose()
         }
     }
@@ -305,7 +311,7 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
 
 /** Kompakte Listenzeile für einen Kalendereintrag: Titel + Datum/Zeit + Ort. */
 @Composable
-fun CalendarRow(post: PostState, onClick: () -> Unit) {
+fun CalendarRow(post: NodeState, onClick: () -> Unit) {
     val ev = remember(post.headVersionId) { EventCodec.parse(post.text) }
     androidx.compose.material3.Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clickable(onClick = onClick),
