@@ -7,7 +7,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,22 +56,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
-import de.beardedskunk.homeshare.data.Feed
 import de.beardedskunk.homeshare.data.FeedRepository
-import de.beardedskunk.homeshare.data.PostState
+import de.beardedskunk.homeshare.data.NodeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Inhalt eines Feeds = die Kindknoten des Feed-(Wurzel-)Knotens. UI wie gehabt. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(
     repo: FeedRepository,
     blobStore: BlobStore,
-    feed: Feed,
+    feed: NodeState,
     settings: de.beardedskunk.homeshare.data.Settings,
-    /** Geteilter Suchzustand (siehe [onSearchQueryChange]): null = Suche zu, sonst offen. */
     searchQuery: String? = null,
     onSearchQueryChange: (String?) -> Unit = {},
     onRequestCalendarSync: () -> Unit,
@@ -80,10 +79,10 @@ fun FeedScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    // #10: Rechte bei Fremdfeeds. Eigene Feeds = volle Rechte.
     val canWrite = !feed.isForeign || feed.foreignRight.canWrite()
     val canMerge = !feed.isForeign || feed.foreignRight.canMerge()
-    var calEnabled by remember(feed.id) { mutableStateOf(settings.isCalendarFeedEnabled(feed.id)) }
+    val isCalendar = feed.isCalendarFeed
+    var calEnabled by remember(feed.nodeId) { mutableStateOf(settings.isCalendarFeedEnabled(feed.nodeId)) }
     fun shareImage(sha: String) {
         val file = if (blobStore.hasFull(sha)) blobStore.fullFile(sha) else blobStore.thumbFile(sha)
         if (!file.exists()) return
@@ -95,29 +94,34 @@ fun FeedScreen(
         }
         runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
     }
-    var posts by remember { mutableStateOf<List<PostState>>(emptyList()) }
-    // Suche ist geteilter Zustand: null = zu, sonst offen (ggf. leer). Bleibt beim Navigieren erhalten.
+    var posts by remember { mutableStateOf<List<NodeState>>(emptyList()) }
+    // Pro Eintrag die Blob-Hashes seiner Bild-Kindknoten (für die Mini-Thumbnails der Liste).
+    var postImages by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     val searching = searchQuery != null
     val query = searchQuery ?: ""
-    var editing by remember { mutableStateOf<PostState?>(null) }
+    var editing by remember { mutableStateOf<NodeState?>(null) }
     var creatingNew by remember { mutableStateOf(false) }
-    var resolving by remember { mutableStateOf<PostState?>(null) }
-    var resolvingDetailed by remember { mutableStateOf<PostState?>(null) }
+    var resolving by remember { mutableStateOf<NodeState?>(null) }
+    var resolvingDetailed by remember { mutableStateOf<NodeState?>(null) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
 
     fun reload() {
         scope.launch {
-            posts = withContext(Dispatchers.IO) {
-                if (searching && query.isNotBlank()) repo.search(feed.id, query) else repo.listPosts(feed.id)
+            val result = withContext(Dispatchers.IO) {
+                val list = if (searching && query.isNotBlank()) repo.search(feed.nodeId, query) else repo.listPosts(feed.nodeId)
+                val imgs = if (isCalendar) emptyMap() else list.associate { p ->
+                    p.nodeId to repo.children(p.nodeId).filter { it.type == NodeType.IMAGE && it.blobHash != null }.map { it.blobHash!! }
+                }
+                list to imgs
             }
+            posts = result.first
+            postImages = result.second
         }
     }
-    // revision: auch per Sync empfangene Aenderungen aktualisieren die Liste sofort.
     val revision by repo.revision.collectAsState()
-    LaunchedEffect(feed.id, searching, query, revision) { reload() }
+    LaunchedEffect(feed.nodeId, searching, query, revision) { reload() }
 
-    // Eintrag oeffnen: Konflikt nur loesen, wenn merge-Recht (sonst nur ansehen + Hinweis).
-    fun openPost(p: PostState) {
+    fun openPost(p: NodeState) {
         if (p.conflicted && canMerge) {
             resolving = p
         } else {
@@ -128,81 +132,55 @@ fun FeedScreen(
         }
     }
 
-    // --- Vollbild-Ansicht eines Bildes ---
     val img = viewingImage
     if (img != null) {
         BackHandler { viewingImage = null }
-        // Merge-/Listen-Kontext: nur Teilen, kein Bearbeiten/Löschen, kein (uneindeutiger) Titel.
-        ImageViewerScreen(
-            blobStore = blobStore,
-            sha = img,
-            onBack = { viewingImage = null },
-            onShare = { shareImage(img) },
-        )
+        ImageViewerScreen(blobStore = blobStore, sha = img, onBack = { viewingImage = null }, onShare = { shareImage(img) })
         return
     }
 
-    // --- Konfliktauflösung: ganze Fassung wählen (Kombi-Ansicht) ---
     val conflict = resolving
     if (conflict != null) {
         BackHandler { resolving = null }
         ConflictScreen(
-            repo = repo,
-            blobStore = blobStore,
-            feed = feed,
-            post = conflict,
+            repo = repo, blobStore = blobStore, feed = feed, post = conflict,
             onOpenImage = { viewingImage = it },
-            onResolved = { resolving = null; reload() },
-            onCancel = { resolving = null },
+            onResolved = { resolving = null; reload() }, onCancel = { resolving = null },
         )
         return
     }
 
-    // --- Konfliktauflösung: Teil für Teil zusammenführen (Detail-Ansicht) ---
     val detailed = resolvingDetailed
     if (detailed != null) {
         BackHandler { resolvingDetailed = null }
         DetailMergeScreen(
-            repo = repo,
-            blobStore = blobStore,
-            feed = feed,
-            post = detailed,
+            repo = repo, blobStore = blobStore, feed = feed, post = detailed,
             onOpenImage = { viewingImage = it },
-            onResolved = { resolvingDetailed = null; reload() },
-            onCancel = { resolvingDetailed = null },
+            onResolved = { resolvingDetailed = null; reload() }, onCancel = { resolvingDetailed = null },
         )
         return
     }
 
-    // --- Detail-/Editier-Ansicht (bestehend oder neu) ---
     val current = editing
     if (current != null || creatingNew) {
         BackHandler { editing = null; creatingNew = false; reload() }
-        if (feed.calendar) {
+        if (isCalendar) {
             CalendarEntryEditor(
-                repo = repo,
-                feed = feed,
-                post = current,
+                repo = repo, feed = feed, post = current,
                 onClose = { editing = null; creatingNew = false; reload() },
             )
         } else {
             PostDetailEditor(
-                repo = repo,
-                blobStore = blobStore,
-                feed = feed,
-                post = current,
-                // Bestehender Eintrag: geteilten Suchzustand durchreichen (gleiches Suchwort, durchsteppbar).
-                // Neuer Eintrag: keine Suche.
+                repo = repo, blobStore = blobStore, feed = feed, post = current,
                 searchQuery = if (current != null) searchQuery else null,
                 onSearchQueryChange = onSearchQueryChange,
-                readOnly = !canWrite, // Fremdfeed ohne Schreibrecht -> nur ansehen
+                readOnly = !canWrite,
                 onClose = { editing = null; creatingNew = false; reload() },
             )
         }
         return
     }
 
-    // Liste: System-Zurück geht zur Feed-Übersicht (wie der Pfeil oben links).
     BackHandler { onBack() }
 
     Scaffold(
@@ -211,14 +189,12 @@ fun FeedScreen(
                 title = {
                     if (searching) {
                         OutlinedTextField(
-                            value = query,
-                            onValueChange = { onSearchQueryChange(it) },
-                            placeholder = { Text("Im Feed suchen…") },
-                            singleLine = true,
+                            value = query, onValueChange = { onSearchQueryChange(it) },
+                            placeholder = { Text("Im Feed suchen…") }, singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
-                        Text(feed.name)
+                        Text(feed.title)
                     }
                 },
                 navigationIcon = {
@@ -227,7 +203,6 @@ fun FeedScreen(
                     }
                 },
                 actions = {
-                    // Schließen leert den Begriff (null) -> propagiert nach oben, andere Ebenen sind dann auch zu.
                     IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }) {
                         Icon(
                             if (searching) Icons.Filled.Close else Icons.Filled.Search,
@@ -240,7 +215,7 @@ fun FeedScreen(
         floatingActionButton = {
             if (!searching && canWrite) {
                 ExtendedFloatingActionButton(
-                    text = { Text("Neuer Eintrag") },
+                    text = { Text(if (isCalendar) "Neuer Termin" else "Neuer Eintrag") },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                     onClick = { creatingNew = true },
                 )
@@ -248,7 +223,7 @@ fun FeedScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (feed.calendar) {
+            if (isCalendar) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -258,7 +233,7 @@ fun FeedScreen(
                         checked = calEnabled,
                         onCheckedChange = {
                             calEnabled = it
-                            settings.setCalendarFeedEnabled(feed.id, it)
+                            settings.setCalendarFeedEnabled(feed.nodeId, it)
                             onRequestCalendarSync()
                         },
                     )
@@ -283,36 +258,34 @@ fun FeedScreen(
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    items(posts, key = { it.postId }) { post ->
-                    if (feed.calendar) {
-                        CalendarRow(post = post, onClick = { openPost(post) })
-                    } else {
-                        PostRow(
-                            post = post,
-                            blobStore = blobStore,
-                            canMerge = canMerge,
-                            onClick = { openPost(post) },
-                            onResolveWhole = { resolving = post },
-                            onResolveDetailed = { resolvingDetailed = post },
-                            onOpenImage = { viewingImage = it },
-                        )
+                    items(posts, key = { it.nodeId }) { post ->
+                        if (isCalendar) {
+                            CalendarRow(post = post, onClick = { openPost(post) })
+                        } else {
+                            PostRow(
+                                post = post,
+                                imageHashes = postImages[post.nodeId] ?: emptyList(),
+                                blobStore = blobStore,
+                                canMerge = canMerge,
+                                onClick = { openPost(post) },
+                                onResolveWhole = { resolving = post },
+                                onResolveDetailed = { resolvingDetailed = post },
+                                onOpenImage = { viewingImage = it },
+                            )
+                        }
                     }
                 }
-            }
             }
         }
     }
 }
 
-/**
- * Einzeiliger Listeneintrag: erste (gekürzte) Textzeile, rechts bis zu drei
- * quadratische Mini-Thumbnails so hoch wie die Box. Antippen eines Thumbnails
- * öffnet das Bild groß; Antippen der Box öffnet den Eintrag.
- */
+/** Einzeiliger Listeneintrag: erste Textzeile, rechts bis zu drei Mini-Thumbnails der Bild-Kindknoten. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PostRow(
-    post: PostState,
+    post: NodeState,
+    imageHashes: List<String>,
     blobStore: BlobStore,
     canMerge: Boolean = true,
     onClick: () -> Unit,
@@ -321,8 +294,6 @@ private fun PostRow(
     onOpenImage: (String) -> Unit,
 ) {
     val rowHeight = 56.dp
-    // Long-Press auf einen Konflikt-Eintrag (rot) bietet die Wahl zwischen
-    // Kombi-Auflösung (ganze Fassung) und Detail-Merge (Teil für Teil) – nur mit merge-Recht.
     var menuOpen by remember { mutableStateOf(false) }
     Card(
         Modifier
@@ -339,22 +310,13 @@ private fun PostRow(
         },
     ) {
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
-                text = { Text("Ganze Fassung wählen") },
-                onClick = { menuOpen = false; onResolveWhole() },
-            )
-            DropdownMenuItem(
-                text = { Text("Im Detail zusammenführen") },
-                onClick = { menuOpen = false; onResolveDetailed() },
-            )
+            DropdownMenuItem(text = { Text("Ganze Fassung wählen") }, onClick = { menuOpen = false; onResolveWhole() })
+            DropdownMenuItem(text = { Text("Im Detail zusammenführen") }, onClick = { menuOpen = false; onResolveDetailed() })
         }
-        Row(
-            Modifier.fillMaxWidth().height(rowHeight),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
             val raw = if (post.deleted) "(gelöscht)" else post.text
             val firstLine = raw.lineSequence().firstOrNull().orEmpty().ifBlank {
-                if (post.imageHashes.isNotEmpty()) "🖼 Bild" else ""
+                if (imageHashes.isNotEmpty()) "🖼 Bild" else ""
             }
             Text(
                 text = (if (post.conflicted) "⚠ " else "") + firstLine,
@@ -362,7 +324,6 @@ private fun PostRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 14.dp),
             )
-            // Aufgaben-Badge (erledigt/gesamt); wenn vorhanden, nur EIN Thumbnail rechts.
             val tasks = if (post.deleted) null else taskCounts(post.text)
             if (tasks != null) {
                 Surface(
@@ -370,32 +331,17 @@ private fun PostRow(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.padding(end = 8.dp),
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                        Text(
-                            " ${tasks.first}/${tasks.second}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
+                    Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Text(" ${tasks.first}/${tasks.second}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
                     }
                 }
             }
             val thumbCount = if (tasks != null) 1 else 3
-            for (sha in post.imageHashes.take(thumbCount)) {
+            for (sha in imageHashes.take(thumbCount)) {
                 val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
                 Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .aspectRatio(1f)
-                        .clickable { onOpenImage(sha) },
+                    Modifier.fillMaxHeight().aspectRatio(1f).clickable { onOpenImage(sha) },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (bmp != null) {

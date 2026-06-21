@@ -56,4 +56,16 @@ class BlobStore(
     /** SHA -> Dateigroesse fuer alle lokal vorgehaltenen Voll-Bilder. */
     fun fullSizes(): Map<String, Long> =
         blobsDir.listFiles()?.associate { it.name to it.length() } ?: emptyMap()
+
+    companion object {
+        /**
+         * Loescht ALLE gespeicherten Blobs + Thumbnails unter [baseDir]. Wird beim inkompatiblen
+         * DB-Wipe aufgerufen, damit keine verwaisten Bild-/Datei-Blobs des alten Schemas zurueck-
+         * bleiben (die Verzeichnisse werden bei der naechsten [BlobStore]-Konstruktion neu angelegt).
+         */
+        fun purgeAll(baseDir: File) {
+            File(baseDir, "blobs").deleteRecursively()
+            File(baseDir, "thumbs").deleteRecursively()
+        }
+    }
 }

@@ -34,9 +34,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.homeshare.calendar.IcsParser
 import de.beardedskunk.homeshare.calendar.importIcsToFeed
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
-import de.beardedskunk.homeshare.data.Feed
 import de.beardedskunk.homeshare.data.FeedRepository
+import de.beardedskunk.homeshare.data.NodeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,17 +56,17 @@ fun SharePickerScreen(
     repo: FeedRepository,
     blobStore: BlobStore,
     shared: SharedContent,
-    onShared: (Feed) -> Unit,
+    onShared: (NodeState) -> Unit,
     onCancel: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
+    var feeds by remember { mutableStateOf<List<NodeState>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { feeds = withContext(Dispatchers.IO) { repo.listFeeds() } }
 
-    fun shareInto(feed: Feed) {
+    fun shareInto(feed: NodeState) {
         if (busy) return
         busy = true
         scope.launch {
@@ -72,12 +74,18 @@ fun SharePickerScreen(
                 val text = shared.text?.trim().orEmpty()
                 // Geteilter Kalender-Inhalt (VEVENT/.ics als Text) -> als Termin importieren (Tbd a).
                 if (shared.imageUri == null && text.isNotBlank() && IcsParser.parse(text) != null) {
-                    importIcsToFeed(repo, feed.id, text)
+                    importIcsToFeed(repo, feed.nodeId, text)
                 } else {
-                    val images = shared.imageUri?.let { uri ->
-                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { listOf(blobStore.put(it)) }
-                    } ?: emptyList()
-                    repo.createPost(feed.id, text, images)
+                    // Eintrags-Textknoten anlegen; ein geteiltes Bild als IMAGE-Kindknoten (+ leere Beschreibung).
+                    val entry = repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.TEXT, text = text))
+                    shared.imageUri?.let { uri ->
+                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        if (bytes != null) {
+                            val sha = blobStore.put(bytes)
+                            val img = repo.createNode(NodeContent(parentId = entry.nodeId, type = NodeType.IMAGE, blobHash = sha))
+                            repo.createNode(NodeContent(parentId = img.nodeId, type = NodeType.TEXT, text = ""))
+                        }
+                    }
                 }
             }
             onShared(feed)
@@ -108,14 +116,14 @@ fun SharePickerScreen(
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    items(feeds, key = { it.id }) { feed ->
+                    items(feeds, key = { it.nodeId }) { feed ->
                         Card(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                                 .clickable(enabled = !busy) { shareInto(feed) },
                         ) {
-                            Text(feed.name.ifBlank { "(ohne Namen)" }, fontWeight = FontWeight.Medium, modifier = Modifier.padding(16.dp))
+                            Text(feed.title.ifBlank { "(ohne Namen)" }, fontWeight = FontWeight.Medium, modifier = Modifier.padding(16.dp))
                         }
                     }
                 }

@@ -1,5 +1,7 @@
 package de.beardedskunk.homeshare.calendar
 
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.EventCodec
 import de.beardedskunk.homeshare.data.EventData
 import de.beardedskunk.homeshare.data.FeedRepository
@@ -148,6 +150,6 @@ object IcsParser {
  */
 fun importIcsToFeed(repo: FeedRepository, feedId: String, ics: String, defaultZone: ZoneId = ZoneId.systemDefault()): Boolean {
     val ev = IcsParser.parse(ics, defaultZone) ?: return false
-    repo.createPost(feedId, EventCodec.encode(ev))
+    repo.createNode(NodeContent(parentId = feedId, type = NodeType.CALENDAR, text = EventCodec.encode(ev)))
     return true
 }

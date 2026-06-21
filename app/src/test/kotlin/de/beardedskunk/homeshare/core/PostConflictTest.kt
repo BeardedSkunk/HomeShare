@@ -26,11 +26,11 @@ class PostConflictTest {
         wall: Long,
         text: String = "",
         deleted: Boolean = false,
-    ) = PostVersion(postId, parents, device, Hlc(wall, 0), PostContent(text = text, deleted = deleted))
+    ) = NodeVersion(postId, parents, device, Hlc(wall, 0), NodeContent(text = text, deleted = deleted))
 
     @Test
     fun linearHistory_hasSingleHead_withLatestContent() {
-        val post = Post(postId)
+        val post = Node(postId)
         val c = v(emptySet(), "A", 1, "hallo")
         val e1 = v(setOf(c.versionId), "A", 2, "hallo welt")
         val e2 = v(setOf(e1.versionId), "A", 3, "hallo welt!")
@@ -43,7 +43,7 @@ class PostConflictTest {
 
     @Test
     fun concurrentEdits_produceConflict_withCommonAncestorAsDiffBase() {
-        val post = Post(postId)
+        val post = Node(postId)
         val base = v(emptySet(), "A", 1, "Treffen um 18 Uhr")
         // Zwei Geraete bearbeiten unabhaengig denselben Basis-Stand.
         val onA = v(setOf(base.versionId), "A", 2, "Treffen um 19 Uhr")
@@ -60,7 +60,7 @@ class PostConflictTest {
 
     @Test
     fun deleteVsEdit_isConflict() {
-        val post = Post(postId)
+        val post = Node(postId)
         val base = v(emptySet(), "A", 1, "wichtige Notiz")
         val deletedOnA = v(setOf(base.versionId), "A", 2, deleted = true)
         val editedOnB = v(setOf(base.versionId), "B", 2, "wichtige Notiz (aktualisiert)")
@@ -75,20 +75,20 @@ class PostConflictTest {
     @Test
     fun resolution_collapsesToSingleHead_andDoesNotReAskOnOtherReplica() {
         // Geraet A: Konflikt aufbauen und aufloesen.
-        val a = Post(postId)
+        val a = Node(postId)
         val base = v(emptySet(), "A", 1, "Plan")
         val onA = v(setOf(base.versionId), "A", 2, "Plan A")
         val onB = v(setOf(base.versionId), "B", 2, "Plan B")
         listOf(base, onA, onB).forEach { a.ingest(it) }
         assertTrue(a.isConflicted())
 
-        val merge = a.resolveConflict(PostContent(text = "Plan B"), deviceId = "A", hlc = Hlc(3, 0))
+        val merge = a.resolveConflict(NodeContent(text = "Plan B"), deviceId = "A", hlc = Hlc(3, 0))
         assertFalse(a.isConflicted())
         assertEquals(merge.versionId, a.current()?.versionId)
         assertEquals(setOf(onA.versionId, onB.versionId), merge.parents)
 
         // Geraet C bekommt spaeter alle Versionen inkl. Merge -> kein erneuter Konflikt.
-        val c = Post(postId)
+        val c = Node(postId)
         listOf(base, onB, onA, merge).forEach { c.ingest(it) } // andere Reihenfolge
         assertFalse("Merge-Version klaert den Konflikt fuer alle", c.isConflicted())
         assertEquals(merge.versionId, c.current()?.versionId)
@@ -108,7 +108,7 @@ class PostConflictTest {
         val onD3 = v(setOf(base.versionId), "D3", 5, "Einkaufsliste: Brot")
 
         // Jedes Geraet hat nach dem Wiederankoppeln alle drei Versionen.
-        fun replicaWithAll(): Post = Post(postId).apply { listOf(base, onD2, onD3).forEach { ingest(it) } }
+        fun replicaWithAll(): Node = Node(postId).apply { listOf(base, onD2, onD3).forEach { ingest(it) } }
         val d1 = replicaWithAll(); val d2 = replicaWithAll(); val d3 = replicaWithAll()
         listOf(d1, d2, d3).forEach {
             assertTrue("alle drei sehen den Konflikt", it.hasContentConflict())
@@ -116,7 +116,7 @@ class PostConflictTest {
         }
 
         // Nur D1 loest auf – Eltern sind ALLE aktuellen Heads (D2- und D3-Fassung).
-        val merge = d1.resolveConflict(PostContent(text = "Einkaufsliste: Milch, Brot"), "D1", Hlc(9, 0))
+        val merge = d1.resolveConflict(NodeContent(text = "Einkaufsliste: Milch, Brot"), "D1", Hlc(9, 0))
         assertEquals(setOf(onD2.versionId, onD3.versionId), merge.parents)
         assertFalse(d1.hasContentConflict())
 
@@ -138,7 +138,7 @@ class PostConflictTest {
         val onD3 = v(setOf(base.versionId), "D3", 6, "Hallo, Welt")
         assertTrue("verschiedene versionId trotz gleichem Inhalt", onD2.versionId != onD3.versionId)
 
-        val post = Post(postId).apply { listOf(base, onD2, onD3).forEach { ingest(it) } }
+        val post = Node(postId).apply { listOf(base, onD2, onD3).forEach { ingest(it) } }
         assertEquals("technisch zwei Heads", 2, post.heads().size)
         assertFalse("aber inhaltsgleich -> kein zu entscheidender Konflikt", post.hasContentConflict())
         assertEquals("Hallo, Welt", post.shownHead()?.content?.text)
@@ -158,7 +158,7 @@ class PostConflictTest {
         val base = v(emptySet(), "A", 1, "Plan")
         val onA = v(setOf(base.versionId), "A", 2, "Plan A")
         val onB = v(setOf("fehlender-vorgaenger"), "B", 2, "Plan B")
-        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        val post = Node(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
         assertTrue(post.hasContentConflict())     // Inhalt unterscheidet sich
         assertTrue(post.hasMissingAncestors())    // aber Vorfahr fehlt
         // -> rebuildPostState: realConflict = hasContentConflict && !hasMissingAncestors = false
@@ -169,7 +169,7 @@ class PostConflictTest {
         val base = v(emptySet(), "A", 1, "x")
         val onA = v(setOf(base.versionId), "A", 2, "xa")
         val onB = v(setOf(base.versionId), "B", 2, "xb")
-        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        val post = Node(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
         assertFalse(post.hasMissingAncestors())
         assertTrue(post.hasContentConflict())
     }
@@ -181,7 +181,7 @@ class PostConflictTest {
         val base = v(emptySet(), "A", 1, "Zeile1\nZeile2\nZeile3")
         val onA = v(setOf(base.versionId), "A", 2, "Zeile1-NEU\nZeile2\nZeile3")
         val onB = v(setOf(base.versionId), "B", 2, "Zeile1\nZeile2\nZeile3-NEU")
-        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        val post = Node(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
         assertTrue(post.hasContentConflict())
         val merged = post.autoMergeContent()
         assertNotNull("nicht-überlappend -> automatisch mergebar", merged)
@@ -193,7 +193,7 @@ class PostConflictTest {
         val base = v(emptySet(), "A", 1, "Treffen um 18 Uhr")
         val onA = v(setOf(base.versionId), "A", 2, "Treffen um 19 Uhr")
         val onB = v(setOf(base.versionId), "B", 2, "Treffen um 20 Uhr")
-        val post = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        val post = Node(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
         assertNull("dieselbe Zeile unterschiedlich -> Mensch entscheidet", post.autoMergeContent())
     }
 
@@ -202,7 +202,7 @@ class PostConflictTest {
         val base = v(emptySet(), "A", 1, "wichtig")
         val del = v(setOf(base.versionId), "A", 2, deleted = true)
         val edit = v(setOf(base.versionId), "B", 2, "wichtig (neu)")
-        val post = Post(postId).apply { listOf(base, del, edit).forEach { ingest(it) } }
+        val post = Node(postId).apply { listOf(base, del, edit).forEach { ingest(it) } }
         assertNull("Löschen-vs-Edit wird nicht auto-gemergt", post.autoMergeContent())
     }
 
@@ -213,8 +213,8 @@ class PostConflictTest {
         val base = v(emptySet(), "A", 1, "a\nb\nc")
         val onA = v(setOf(base.versionId), "A", 2, "a-x\nb\nc")
         val onB = v(setOf(base.versionId), "B", 2, "a\nb\nc-y")
-        val p1 = Post(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
-        val p2 = Post(postId).apply { listOf(onB, base, onA).forEach { ingest(it) } }
+        val p1 = Node(postId).apply { listOf(base, onA, onB).forEach { ingest(it) } }
+        val p2 = Node(postId).apply { listOf(onB, base, onA).forEach { ingest(it) } }
         val m1 = p1.autoMergeContent(); val m2 = p2.autoMergeContent()
         assertNotNull(m1); assertEquals(m1, m2)
         assertEquals("a-x\nb\nc-y", m1!!.text)
@@ -226,12 +226,12 @@ class PostConflictTest {
         val onA = v(setOf(base.versionId), "A", 2, "xa")
         val onB = v(setOf(base.versionId), "B", 2, "xb")
 
-        val p1 = Post(postId)
+        val p1 = Node(postId)
         assertTrue(p1.ingest(base))
         assertFalse("zweiter Ingest derselben Version ist No-op", p1.ingest(base))
         listOf(onA, onB).forEach { p1.ingest(it) }
 
-        val p2 = Post(postId)
+        val p2 = Node(postId)
         listOf(onB, onA, base, onA).forEach { p2.ingest(it) } // andere Reihenfolge + Duplikat
 
         assertEquals(
