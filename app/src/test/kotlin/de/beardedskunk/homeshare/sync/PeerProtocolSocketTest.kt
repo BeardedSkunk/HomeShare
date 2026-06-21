@@ -1,8 +1,8 @@
 package de.beardedskunk.homeshare.sync
 
 import de.beardedskunk.homeshare.core.Hlc
-import de.beardedskunk.homeshare.core.PostContent
-import de.beardedskunk.homeshare.core.PostVersion
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeVersion
 import de.beardedskunk.homeshare.crypto.GroupCrypto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,12 +37,12 @@ class PeerProtocolSocketTest {
             if (ops.containsKey(op.versionId)) return false
             ops[op.versionId] = op; return true
         }
-        override fun displayedImageHashes(): Set<String> = emptySet()
+        override fun displayedBlobHashes(): Set<String> = emptySet()
     }
 
     private fun op(device: String, seq: Long, text: String): OpDto {
-        val v = PostVersion("post-$device-$seq", emptySet(), device, Hlc(seq, 0), PostContent(text = text))
-        return OpDto.from(v, feedId = "feed1", seq = seq)
+        val v = NodeVersion("node-$device-$seq", emptySet(), device, Hlc(seq, 0), NodeContent(text = text))
+        return OpDto.from(v, rootId = "feed1", seq = seq)
     }
 
     private fun key(passphrase: String) = GroupCrypto.deriveKey(passphrase, "meine-gruppe".toByteArray())

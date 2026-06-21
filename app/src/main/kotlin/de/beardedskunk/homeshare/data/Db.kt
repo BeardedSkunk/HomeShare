@@ -5,14 +5,20 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /**
- * Lokale Persistenz auf Basis der Framework-SQLite (kein Room/KSP).
+ * Lokale Persistenz (Framework-SQLite, kein Room).
  *
- * Quelle der Wahrheit ist der **Op-Log** (`ops`): unveraenderliche Versionsknoten
- * des git-artigen DAG. `post_current` ist nur ein aus dem Log abgeleiteter,
- * materialisierter Cache des aktuellen Stands fuer schnelle Listen/Suche.
- * `post_fts` (FTS4) indiziert den Text des aktuellen Stands fuer die Suche.
+ * Quelle der Wahrheit ist der **Op-Log** (`ops`): unveränderliche Versionsknoten des git-artigen
+ * DAG – jetzt für einen **Knoten-Baum** (jeder Knoten = Feed/Eintrag/Bild/Datei/Termin/Todo).
+ * `node_current` ist der materialisierte aktuelle Stand je Knoten (Cache für Listen/Suche),
+ * `node_fts` (FTS4) indiziert den Text. `foreign_refs` hält abonnierte Fremd-Knoten (Cross-Group),
+ * `calendar_link` die geräte-lokale Verknüpfung Knoten→Android-Kalender-Event.
+ *
+ * `root_id` an jeder Op = oberster Vorfahr-Knoten (Feed) → erlaubt den feed-/subtree-bezogenen
+ * Sync (#10) ohne rekursive Baumtraversierung. Für Root-Knoten gilt root_id == node_id.
  */
 class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
+
+    private val appContext = context.applicationContext
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
@@ -21,52 +27,51 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
-            CREATE TABLE feeds(
-              feed_id TEXT PRIMARY KEY NOT NULL,
-              name TEXT NOT NULL,
-              created_wall INTEGER NOT NULL,
-              created_counter INTEGER NOT NULL,
-              deleted INTEGER NOT NULL DEFAULT 0,
-              calendar INTEGER NOT NULL DEFAULT 0,
-              shared INTEGER NOT NULL DEFAULT 0,
-              foreign_origin TEXT NOT NULL DEFAULT '',
-              cap_id TEXT NOT NULL DEFAULT '',
-              cap_secret TEXT NOT NULL DEFAULT '',
-              foreign_right TEXT NOT NULL DEFAULT ''
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            """
             CREATE TABLE ops(
               version_id TEXT PRIMARY KEY NOT NULL,
-              feed_id TEXT NOT NULL,
-              post_id TEXT NOT NULL,
+              node_id TEXT NOT NULL,
+              parent_id TEXT NOT NULL,
+              root_id TEXT NOT NULL,
               device_id TEXT NOT NULL,
               seq INTEGER NOT NULL,
               hlc_wall INTEGER NOT NULL,
               hlc_counter INTEGER NOT NULL,
               parents TEXT NOT NULL,
               deleted INTEGER NOT NULL,
+              type TEXT NOT NULL,
+              order_key TEXT NOT NULL DEFAULT '',
+              color INTEGER,
+              child_default TEXT NOT NULL DEFAULT '',
+              tags TEXT NOT NULL DEFAULT '',
+              blob_hash TEXT NOT NULL DEFAULT '',
+              file_name TEXT NOT NULL DEFAULT '',
+              mime TEXT NOT NULL DEFAULT '',
+              done INTEGER NOT NULL DEFAULT 0,
               text TEXT NOT NULL,
-              image_hashes TEXT NOT NULL,
-              image_titles TEXT NOT NULL DEFAULT '',
               device_name TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
-        db.execSQL("CREATE INDEX idx_ops_post ON ops(post_id)")
-        db.execSQL("CREATE INDEX idx_ops_feed ON ops(feed_id)")
+        db.execSQL("CREATE INDEX idx_ops_node ON ops(node_id)")
+        db.execSQL("CREATE INDEX idx_ops_root ON ops(root_id)")
         db.execSQL("CREATE INDEX idx_ops_device_seq ON ops(device_id, seq)")
         db.execSQL(
             """
-            CREATE TABLE post_current(
-              post_id TEXT PRIMARY KEY NOT NULL,
-              feed_id TEXT NOT NULL,
+            CREATE TABLE node_current(
+              node_id TEXT PRIMARY KEY NOT NULL,
+              parent_id TEXT NOT NULL,
+              root_id TEXT NOT NULL,
+              type TEXT NOT NULL,
               head_version_id TEXT NOT NULL,
+              order_key TEXT NOT NULL DEFAULT '',
               text TEXT NOT NULL,
-              image_hashes TEXT NOT NULL,
-              image_titles TEXT NOT NULL DEFAULT '',
+              done INTEGER NOT NULL DEFAULT 0,
+              blob_hash TEXT NOT NULL DEFAULT '',
+              file_name TEXT NOT NULL DEFAULT '',
+              mime TEXT NOT NULL DEFAULT '',
+              color INTEGER,
+              child_default TEXT NOT NULL DEFAULT '',
+              tags TEXT NOT NULL DEFAULT '',
               deleted INTEGER NOT NULL,
               conflicted INTEGER NOT NULL,
               created_wall INTEGER NOT NULL,
@@ -76,17 +81,29 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
             )
             """.trimIndent(),
         )
-        db.execSQL("CREATE INDEX idx_post_current_feed ON post_current(feed_id)")
-        db.execSQL("CREATE VIRTUAL TABLE post_fts USING fts4(post_id, text, notindexed=post_id)")
+        db.execSQL("CREATE INDEX idx_node_current_parent ON node_current(parent_id)")
+        db.execSQL("CREATE INDEX idx_node_current_root ON node_current(root_id)")
+        db.execSQL("CREATE VIRTUAL TABLE node_fts USING fts4(node_id, text, notindexed=node_id)")
+        db.execSQL(
+            """
+            CREATE TABLE foreign_refs(
+              node_id TEXT PRIMARY KEY NOT NULL,
+              origin_group TEXT NOT NULL,
+              cap_id TEXT NOT NULL,
+              cap_secret TEXT NOT NULL,
+              foreign_right TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
         createCalendarLink(db)
     }
 
-    /** Lokale Verknüpfung App-Post -> Android-Kalender-Event (geräte-lokal, synct NICHT). */
+    /** Lokale Verknüpfung App-Knoten -> Android-Kalender-Event (geräte-lokal, synct NICHT). */
     private fun createCalendarLink(db: SQLiteDatabase) {
         db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS calendar_link(
-              post_id TEXT PRIMARY KEY NOT NULL,
+              node_id TEXT PRIMARY KEY NOT NULL,
               event_id INTEGER NOT NULL,
               calendar_id INTEGER NOT NULL,
               synced_hash TEXT NOT NULL
@@ -96,33 +113,26 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Inkrementelle, nicht-destruktive Migrationen (der Op-Log bleibt erhalten).
-        if (oldVersion < 3) {
-            // Vor v3: altes Schema -> einmalig neu aufbauen (Daten re-syncen via Peers/Box).
+        // v6 = Knoten-Baum-Umbau: bewusst INKOMPATIBEL. Alles wegwerfen + neu (Geräte re-syncen
+        // ohnehin aus der frischen Gruppe; der alte Feed/Post-Schema-Stand wird nicht migriert).
+        if (oldVersion < 6) {
             db.execSQL("DROP TABLE IF EXISTS post_fts")
             db.execSQL("DROP TABLE IF EXISTS post_current")
             db.execSQL("DROP TABLE IF EXISTS ops")
             db.execSQL("DROP TABLE IF EXISTS feeds")
+            db.execSQL("DROP TABLE IF EXISTS node_fts")
+            db.execSQL("DROP TABLE IF EXISTS node_current")
+            db.execSQL("DROP TABLE IF EXISTS foreign_refs")
+            db.execSQL("DROP TABLE IF EXISTS calendar_link")
             onCreate(db)
-            return
-        }
-        if (oldVersion < 4) {
-            // v3 -> v4: Kalender-Feature. Spalte + lokale Verknüpfungstabelle ergänzen.
-            db.execSQL("ALTER TABLE feeds ADD COLUMN calendar INTEGER NOT NULL DEFAULT 0")
-            createCalendarLink(db)
-        }
-        if (oldVersion < 5) {
-            // v4 -> v5: Feed-Sharing (#10). Markierungen + Fremdfeed-Ablage.
-            db.execSQL("ALTER TABLE feeds ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
-            db.execSQL("ALTER TABLE feeds ADD COLUMN foreign_origin TEXT NOT NULL DEFAULT ''")
-            db.execSQL("ALTER TABLE feeds ADD COLUMN cap_id TEXT NOT NULL DEFAULT ''")
-            db.execSQL("ALTER TABLE feeds ADD COLUMN cap_secret TEXT NOT NULL DEFAULT ''")
-            db.execSQL("ALTER TABLE feeds ADD COLUMN foreign_right TEXT NOT NULL DEFAULT ''")
+            // Beim inkompatiblen Wipe auch die Bild-/Datei-Blobs des alten Schemas mitleeren,
+            // sonst bleiben sie als verwaiste Dateien liegen (toter Speicher).
+            BlobStore.purgeAll(appContext.filesDir)
         }
     }
 
     companion object {
         const val DB_NAME = "homeshare.db"
-        const val DB_VERSION = 5
+        const val DB_VERSION = 6
     }
 }

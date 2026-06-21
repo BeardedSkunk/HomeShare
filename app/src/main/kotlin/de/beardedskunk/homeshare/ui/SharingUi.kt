@@ -48,7 +48,7 @@ import com.google.zxing.BarcodeFormat
 import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import de.beardedskunk.homeshare.data.Feed
+import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.FeedRight
 import de.beardedskunk.homeshare.data.PairingPayload
@@ -68,17 +68,17 @@ private fun qrBitmap(text: String, size: Int = 640): Bitmap? =
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedShareScreen(repo: FeedRepository, sync: SyncManager, feed: Feed, onBack: () -> Unit) {
+fun FeedShareScreen(repo: FeedRepository, sync: SyncManager, feed: NodeState, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val revision by repo.revision.collectAsState()
     var grants by remember { mutableStateOf<List<ShareGrant>>(emptyList()) }
     var pairing by remember { mutableStateOf<PairingPayload?>(null) }
-    LaunchedEffect(revision) { grants = withContext(Dispatchers.IO) { repo.feedShares(feed.id) } }
+    LaunchedEffect(revision) { grants = withContext(Dispatchers.IO) { repo.feedShares(feed.nodeId) } }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Freigaben: ${feed.name}") },
+                title = { Text("Freigaben: ${feed.title}") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") } },
             )
         },
@@ -94,23 +94,23 @@ fun FeedShareScreen(repo: FeedRepository, sync: SyncManager, feed: Feed, onBack:
                             Text("Schreiben", Modifier.weight(1f))
                             Switch(checked = g.right.canWrite(), onCheckedChange = { on ->
                                 val nr = if (on) FeedRight.WRITE else FeedRight.READ
-                                scope.launch { withContext(Dispatchers.IO) { repo.setShareRight(feed.id, g.capId, nr) } }
+                                scope.launch { withContext(Dispatchers.IO) { repo.setShareRight(feed.nodeId, g.capId, nr) } }
                             })
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Mergen (Konflikte lösen)", Modifier.weight(1f))
                             Switch(checked = g.right.canMerge(), onCheckedChange = { on ->
                                 val nr = if (on) FeedRight.MERGE else FeedRight.WRITE
-                                scope.launch { withContext(Dispatchers.IO) { repo.setShareRight(feed.id, g.capId, nr) } }
+                                scope.launch { withContext(Dispatchers.IO) { repo.setShareRight(feed.nodeId, g.capId, nr) } }
                             })
                         }
-                        TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { repo.revokeShare(feed.id, g.capId) } } }) {
+                        TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { repo.revokeShare(feed.nodeId, g.capId) } } }) {
                             Text("Zugriff entziehen")
                         }
                     }
                 }
             }
-            Button(onClick = { scope.launch { pairing = withContext(Dispatchers.IO) { sync.startPairing(feed.id, feed.name) } } }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { scope.launch { pairing = withContext(Dispatchers.IO) { sync.startPairing(feed.nodeId, feed.title) } } }, modifier = Modifier.fillMaxWidth()) {
                 Text("Gruppe hinzufügen (QR)")
             }
         }

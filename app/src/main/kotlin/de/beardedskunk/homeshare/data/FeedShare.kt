@@ -68,13 +68,16 @@ object FeedShareCodec {
     }
 
     /**
-     * Baut den kompletten Feed-Op-Text: Name (+ Kalender-Marker) wie [FeedMeta] plus eine
-     * Zeile je Freigabe. So bleiben Name/Kalender-Dekodierung unverändert.
+     * Baut den Root-Knoten-Text: 1. Zeile = Feed-Name, danach eine Zeile je Freigabe. (Das
+     * Kalender-Flag ist jetzt ein eigenes Knotenfeld [childDefault], nicht mehr im Text.)
      */
-    fun feedText(name: String, calendar: Boolean, grants: List<ShareGrant>): String = buildString {
-        append(FeedMeta.encode(name, calendar))
+    fun feedText(name: String, grants: List<ShareGrant>): String = buildString {
+        append(name.lineSequence().firstOrNull().orEmpty())
         for (g in grants) append('\n').append(line(g))
     }
+
+    /** Nur der reine Feed-Name (1. Zeile, ohne ::share::-Zeilen). */
+    fun nameOf(feedText: String): String = feedText.lineSequence().firstOrNull().orEmpty()
 
     fun isShared(feedText: String): Boolean = feedText.split('\n').any { it.startsWith(PREFIX) }
 }
