@@ -84,10 +84,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
-import de.beardedskunk.homeshare.data.Feed
 import de.beardedskunk.homeshare.data.FeedRepository
-import de.beardedskunk.homeshare.data.PostState
+import de.beardedskunk.homeshare.data.NodeState
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -117,8 +118,8 @@ private fun endOfLineAt(text: String, offset: Int): Int {
 fun PostDetailEditor(
     repo: FeedRepository,
     blobStore: BlobStore,
-    feed: Feed,
-    post: PostState?,
+    feed: NodeState,
+    post: NodeState?,
     /**
      * Wurde der Beitrag aus einer Suche geoeffnet: dieser Suchbegriff. Die Ansicht startet dann
      * im RENDER-Modus mit aktiver Suche (Treffer hervorgehoben, durchsteppbar, Bild-Beschreibungen
@@ -145,11 +146,31 @@ fun PostDetailEditor(
 
     var sourceMode by remember { mutableStateOf(post == null) }
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
-    var images by remember { mutableStateOf(post?.imageHashes ?: emptyList()) }
-    var imageTitles by remember {
-        mutableStateOf((post?.imageHashes ?: emptyList()).indices.map { i -> TextFieldValue(post?.imageTitles?.getOrNull(i) ?: "") })
+    // Bild-/Datei-Anhänge sind Kindknoten des Eintrags; ihre Beschreibung je ein TEXT-Kindknoten.
+    // Parallele Listen (Index-gleich): Blob-Hash, Beschreibung, Bild-Knoten-Id, Beschreibungs-Knoten-Id.
+    var images by remember { mutableStateOf<List<String>>(emptyList()) }
+    var imageTitles by remember { mutableStateOf<List<TextFieldValue>>(emptyList()) }
+    var imageNodeIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var captionNodeIds by remember { mutableStateOf<List<String?>>(emptyList()) }
+    var currentNodeId by remember { mutableStateOf(post?.nodeId) }
+
+    fun reloadSubtree(entryId: String) {
+        scope.launch {
+            val kids = withContext(Dispatchers.IO) {
+                repo.children(entryId)
+                    .filter { it.type == NodeType.IMAGE || it.type == NodeType.FILE }
+                    .map { img ->
+                        val cap = repo.children(img.nodeId).firstOrNull { it.type == NodeType.TEXT }
+                        ImgKid(img.nodeId, img.blobHash ?: "", cap?.nodeId, cap?.text ?: "")
+                    }
+            }
+            images = kids.map { it.hash }
+            imageTitles = kids.map { TextFieldValue(it.caption) }
+            imageNodeIds = kids.map { it.imgId }
+            captionNodeIds = kids.map { it.capId }
+        }
     }
-    var currentPostId by remember { mutableStateOf(post?.postId) }
+    LaunchedEffect(Unit) { currentNodeId?.let { reloadSubtree(it) } }
     // Suche ist geteilter Zustand (siehe onSearchQueryChange): null = zu, sonst offen.
     val findOpen = searchQuery != null
     val findQuery = searchQuery ?: ""
@@ -202,24 +223,28 @@ fun PostDetailEditor(
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) {
             scope.launch {
-                val before = images.size
-                val newShas = withContext(Dispatchers.IO) {
+                // Eintrags-Knoten sicherstellen (bei neuem Beitrag erst jetzt anlegen).
+                val entryId = currentNodeId ?: withContext(Dispatchers.IO) {
+                    repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.TEXT, text = tfv.text)).nodeId
+                }
+                currentNodeId = entryId
+                val added = withContext(Dispatchers.IO) {
                     uris.mapNotNull { uri ->
-                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { blobStore.put(it) }
+                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@mapNotNull null
+                        val sha = blobStore.put(bytes)
+                        // Bild-Knoten + zugehörigen (leeren) Beschreibungs-Textknoten gleich miterzeugen.
+                        val imgId = repo.createNode(NodeContent(parentId = entryId, type = NodeType.IMAGE, blobHash = sha)).nodeId
+                        val capId = repo.createNode(NodeContent(parentId = imgId, type = NodeType.TEXT, text = "")).nodeId
+                        ImgKid(imgId, sha, capId, "")
                     }
                 }
-                var imgs = images
-                var titles = imageTitles
-                for (sha in newShas) if (sha !in imgs) {
-                    imgs = imgs + sha
-                    titles = titles + TextFieldValue("")
-                }
-                images = imgs
-                imageTitles = titles
-                if (imgs.size > before) {
-                    // Auch aus der Renderview heraus: in den Quelltext-Modus wechseln und springen.
+                if (added.isNotEmpty()) {
+                    images = images + added.map { it.hash }
+                    imageTitles = imageTitles + added.map { TextFieldValue(it.caption) }
+                    imageNodeIds = imageNodeIds + added.map { it.imgId }
+                    captionNodeIds = captionNodeIds + added.map { it.capId }
                     sourceMode = true
-                    pendingFocusImage = imgs.size - 1
+                    pendingFocusImage = images.size - 1
                 }
             }
         }
@@ -252,18 +277,36 @@ fun PostDetailEditor(
     var pendingEdit by remember { mutableStateOf<PendingEdit?>(null) }
     val authority = remember { context.packageName + ".fileprovider" }
 
-    // Persistiert den aktuellen Arbeitsstand als neue Version.
+    // Persistiert Text des Eintrags + Beschreibungen der Bild-Kinder (Bilder selbst werden schon
+    // beim Hinzufügen/Entfernen sofort persistiert).
     fun save() {
         val text = tfv.text
-        val imgs = images
-        val titles = imageTitles.map { it.text }
+        val caps = imageTitles.map { it.text }
+        val imgIds = imageNodeIds
+        val capIds = captionNodeIds
         scope.launch {
-            val pid = currentPostId
             val newId = withContext(Dispatchers.IO) {
-                if (pid == null) repo.createPost(feed.id, text, imgs, titles).postId
-                else { repo.editPost(feed.id, pid, text, imgs, titles); pid }
+                val entryId = currentNodeId
+                val id = if (entryId == null) {
+                    repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.TEXT, text = text)).nodeId
+                } else {
+                    val hc = repo.headContent(entryId) ?: NodeContent(parentId = feed.nodeId, type = NodeType.TEXT)
+                    repo.editNode(entryId, hc.copy(text = text, type = NodeType.TEXT))
+                    entryId
+                }
+                imgIds.forEachIndexed { i, imgId ->
+                    val cap = caps.getOrElse(i) { "" }
+                    val capId = capIds.getOrNull(i)
+                    if (capId != null) {
+                        val chc = repo.headContent(capId) ?: NodeContent(parentId = imgId, type = NodeType.TEXT)
+                        repo.editNode(capId, chc.copy(text = cap, type = NodeType.TEXT))
+                    } else {
+                        repo.createNode(NodeContent(parentId = imgId, type = NodeType.TEXT, text = cap))
+                    }
+                }
+                id
             }
-            currentPostId = newId
+            currentNodeId = newId
         }
     }
 
@@ -290,10 +333,15 @@ fun PostDetailEditor(
                 picked
             }
             if (newSha != null && pe.index < images.size) {
+                val imgId = imageNodeIds.getOrNull(pe.index)
+                if (imgId != null) withContext(Dispatchers.IO) {
+                    val ihc = repo.headContent(imgId) ?: NodeContent(parentId = currentNodeId ?: feed.nodeId, type = NodeType.IMAGE)
+                    repo.editNode(imgId, ihc.copy(blobHash = newSha, type = NodeType.IMAGE))
+                }
                 images = images.toMutableList().also { it[pe.index] = newSha }
                 viewingIndex = null
                 sourceMode = true
-                Toast.makeText(context, "Bild geändert – mit ✎→✓ übernehmen.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Bild geändert.", Toast.LENGTH_SHORT).show()
             } else if (newSha == null) {
                 Toast.makeText(context, "Keine Änderung übernommen.", Toast.LENGTH_SHORT).show()
             }
@@ -343,8 +391,9 @@ fun PostDetailEditor(
     }
 
     fun delete() {
-        if (post == null) { onClose(); return }
-        scope.launch { withContext(Dispatchers.IO) { repo.deletePost(feed.id, post.postId) }; onClose() }
+        val nid = currentNodeId
+        if (nid == null) { onClose(); return }
+        scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(nid) }; onClose() }
     }
 
     // Haken in der gerenderten Ansicht umschalten -> Zeile kippen + sofort neue Version.
@@ -379,10 +428,15 @@ fun PostDetailEditor(
             onShare = { shareImage(sha) },
             onEdit = { force -> launchEdit(vi, images[vi], null, force) },
             onDelete = {
-                images = images.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
-                imageTitles = imageTitles.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
-                sourceMode = true
-                viewingIndex = null
+                val imgId = imageNodeIds.getOrNull(vi)
+                scope.launch {
+                    if (imgId != null) withContext(Dispatchers.IO) { repo.deleteNode(imgId) }
+                    images = images.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
+                    imageTitles = imageTitles.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
+                    imageNodeIds = imageNodeIds.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
+                    captionNodeIds = captionNodeIds.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
+                    viewingIndex = null
+                }
             },
             onBack = { viewingIndex = null },
         )
@@ -482,8 +536,14 @@ fun PostDetailEditor(
                         onEdit = { idx, sha, t, force -> launchEdit(idx, sha, t, force) },
                         onShare = { shareImage(it) },
                         onRemove = { idx ->
-                            images = images.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                            imageTitles = imageTitles.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                            val imgId = imageNodeIds.getOrNull(idx)
+                            scope.launch {
+                                if (imgId != null) withContext(Dispatchers.IO) { repo.deleteNode(imgId) }
+                                images = images.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                                imageTitles = imageTitles.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                                imageNodeIds = imageNodeIds.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                                captionNodeIds = captionNodeIds.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
+                            }
                         },
                         onTitleChange = { idx, nv ->
                             imageTitles = imageTitles.toMutableList().also {
@@ -876,6 +936,9 @@ private fun HelpRow(syntax: String, meaning: String) {
 
 /** Ein Suchtreffer: [target] == -1 -> Haupttext, sonst Index des Bildtitel-Felds. */
 private data class FindHit(val target: Int, val start: Int)
+
+/** Geladener Bild-/Datei-Kindknoten mit seinem Beschreibungs-Textknoten. */
+private data class ImgKid(val imgId: String, val hash: String, val capId: String?, val caption: String)
 
 /** Laufende externe Bearbeitung: welches Bild, vorläufiger Galerie-Eintrag und Original-SHA. */
 private data class PendingEdit(val index: Int, val galleryUri: android.net.Uri, val originalSha: String)

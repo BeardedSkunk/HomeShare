@@ -1,6 +1,8 @@
 package de.beardedskunk.homeshare.backup
 
 import android.util.Log
+import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.core.ROOT
 import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.sync.OpDto
 import de.beardedskunk.homeshare.sync.OpSource
@@ -163,7 +165,7 @@ class FritzReplica(
     /** Laedt fehlende, aktuell angezeigte Bilder von der Box (erzeugt dabei Thumbnails). */
     private fun pullBlobs(c: FTPClient): Int {
         var pulled = 0
-        for (sha in source.displayedImageHashes()) {
+        for (sha in source.displayedBlobHashes()) {
             if (blobStore.hasFull(sha)) continue
             val bytes = retrieveBytes(c, "$blobsDir/$sha") ?: continue
             runCatching { blobStore.putWithSha(sha, bytes) }
@@ -204,54 +206,59 @@ class FritzReplica(
 
     // ----------------------------------------------------------- JSON (lesbar)
 
-    private fun opToJson(op: OpDto): String {
-        val images = JSONArray()
-        op.imageHashes.forEachIndexed { i, sha ->
-            images.put(JSONObject().put("sha", sha).put("title", op.imageTitles.getOrElse(i) { "" }))
-        }
-        return JSONObject()
+    private fun opToJson(op: OpDto): String =
+        JSONObject()
             .put("versionId", op.versionId)
-            .put("feedId", op.feedId)
-            .put("postId", op.postId)
+            .put("nodeId", op.nodeId)
+            .put("parentId", op.parentId)
+            .put("rootId", op.rootId)
             .put("deviceId", op.deviceId)
             .put("deviceName", op.deviceName)
             .put("seq", op.seq)
             .put("hlcWall", op.hlcWall)
             .put("hlcCounter", op.hlcCounter)
             .put("deleted", op.deleted)
+            .put("type", op.type.name)
+            .put("orderKey", op.orderKey)
+            .put("color", op.color ?: JSONObject.NULL)
+            .put("childDefault", op.childDefault?.name ?: JSONObject.NULL)
+            .put("done", op.done)
+            .put("blobHash", op.blobHash ?: JSONObject.NULL)
+            .put("fileName", op.fileName ?: JSONObject.NULL)
+            .put("mime", op.mime ?: JSONObject.NULL)
+            .put("tags", JSONArray(op.tags))
             .put("parents", JSONArray(op.parents))
             .put("text", op.text)
-            .put("images", images)
             .toString(2)
-    }
 
     private fun opFromJson(s: String): OpDto {
         val o = JSONObject(s)
-        val parents = o.optJSONArray("parents")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
-        val imgs = o.optJSONArray("images")
-        val hashes = ArrayList<String>()
-        val titles = ArrayList<String>()
-        if (imgs != null) {
-            for (i in 0 until imgs.length()) {
-                val io = imgs.getJSONObject(i)
-                hashes.add(io.getString("sha"))
-                titles.add(io.optString("title"))
-            }
-        }
+        fun strList(name: String): List<String> =
+            o.optJSONArray(name)?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
+        fun nodeType(name: String): NodeType? =
+            o.optString(name).takeIf { it.isNotBlank() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() }
         return OpDto(
             versionId = o.getString("versionId"),
-            feedId = o.getString("feedId"),
-            postId = o.getString("postId"),
+            nodeId = o.getString("nodeId"),
+            parentId = o.optString("parentId", ROOT),
+            rootId = o.optString("rootId"),
             deviceId = o.getString("deviceId"),
-            deviceName = o.optString("deviceName"),
             seq = o.getLong("seq"),
             hlcWall = o.getLong("hlcWall"),
             hlcCounter = o.getInt("hlcCounter"),
             deleted = o.getBoolean("deleted"),
-            text = o.getString("text"),
-            parents = parents,
-            imageHashes = hashes,
-            imageTitles = titles,
+            type = nodeType("type") ?: NodeType.TEXT,
+            orderKey = o.optString("orderKey"),
+            color = if (o.isNull("color")) null else o.optInt("color"),
+            childDefault = nodeType("childDefault"),
+            done = o.optBoolean("done"),
+            blobHash = if (o.isNull("blobHash")) null else o.optString("blobHash").takeIf { it.isNotBlank() },
+            fileName = if (o.isNull("fileName")) null else o.optString("fileName").takeIf { it.isNotBlank() },
+            mime = if (o.isNull("mime")) null else o.optString("mime").takeIf { it.isNotBlank() },
+            tags = strList("tags"),
+            text = o.optString("text"),
+            parents = strList("parents"),
+            deviceName = o.optString("deviceName"),
         )
     }
 
