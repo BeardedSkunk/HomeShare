@@ -56,14 +56,16 @@ class SyncTest {
             deleted = false,
             type = NodeType.IMAGE,
             orderKey = "0|hallo welt",
-            color = 0xFF112233.toInt(),
-            childDefault = NodeType.CALENDAR,
-            done = true,
-            blobHash = "sha256abc",
-            fileName = "ünüsual, name.png",
-            mime = "image/png",
-            tags = listOf("a,b", "c"),
             text = "Zeile 1\nZeile 2 mit , Komma\nZeile 3",
+            // Offene Meta-Map inkl. eines UNBEKANNTEN Zukunfts-Keys -> muss wortwörtlich roundtrippen.
+            meta = sortedMapOf(
+                "blob" to "sha256abc",
+                "childDefault" to "CALENDAR",
+                "color" to "-15654349",
+                "mime" to "image/png",
+                "zukunft" to "ein, wert\nmit Umbruch",
+            ),
+            formatVersion = 1,
             parents = listOf("par1", "par2"),
             deviceName = "Pixel 8",
         )

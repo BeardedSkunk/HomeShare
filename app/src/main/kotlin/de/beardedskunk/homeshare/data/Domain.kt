@@ -1,12 +1,13 @@
 package de.beardedskunk.homeshare.data
 
 import de.beardedskunk.homeshare.core.Hlc
+import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
 
 /**
- * Materialisierter aktueller Stand EINES Knotens (aus dem Op-Log abgeleitet). Ersetzt die früheren
- * `Feed` und `PostState`: ein Feed ist ein Root-Knoten (parentId==ROOT, type==TEXT), ein „Eintrag"
- * ein Kindknoten usw. [conflicted] = mehrere inhaltlich verschiedene Heads (UI bietet Auflösung an).
+ * Materialisierter aktueller Stand EINES Knotens (aus dem Op-Log abgeleitet, Lese-Modell für die UI).
+ * Eine „Liste" ist ein TEXT-Knoten **mit** [childDefault] (navigierbar), eine „Notiz" ein TEXT-Knoten
+ * **ohne** childDefault (Text-Editor). [conflicted] = mehrere inhaltlich verschiedene Heads.
  */
 data class NodeState(
     val nodeId: String,
@@ -21,7 +22,7 @@ data class NodeState(
     val fileName: String? = null,
     val mime: String? = null,
     val color: Int? = null,
-    val childDefault: NodeType? = null,
+    val childDefault: NodeKind? = null,
     val tags: List<String> = emptyList(),
     val deleted: Boolean = false,
     val conflicted: Boolean = false,
@@ -37,8 +38,21 @@ data class NodeState(
     val isImage: Boolean get() = type == NodeType.IMAGE
     val isForeign: Boolean get() = foreignOrigin.isNotEmpty()
 
-    /** UI-Modus eines „Feeds": welcher Kindtyp ist gemeint (z. B. CALENDAR für Kalender-Feed). */
-    val isCalendarFeed: Boolean get() = childDefault == NodeType.CALENDAR
+    /** Eine Liste = navigierbarer Container (TEXT mit Default-Kindtyp). */
+    val isList: Boolean get() = type == NodeType.TEXT && childDefault != null
+
+    /** Nutzerseitiger Typ (für Icon/Verhalten). LIST/NOTE sind beide TEXT, unterschieden über [childDefault]. */
+    val kind: NodeKind
+        get() = when (type) {
+            NodeType.CALENDAR -> NodeKind.CALENDAR
+            NodeType.TODO -> NodeKind.TODO
+            NodeType.IMAGE -> NodeKind.IMAGE
+            NodeType.FILE -> NodeKind.FILE
+            NodeType.TEXT -> if (childDefault != null) NodeKind.LIST else NodeKind.NOTE
+        }
+
+    /** Eine Liste, deren neue Kinder per Default Kalender-Einträge sind. */
+    val isCalendarFeed: Boolean get() = childDefault == NodeKind.CALENDAR
 }
 
 /** Lokaler Datensatz eines abonnierten Fremd-Knotens (Cross-Group, auf dem Fremdgerät). */

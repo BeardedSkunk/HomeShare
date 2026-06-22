@@ -7,14 +7,14 @@ import android.database.sqlite.SQLiteOpenHelper
 /**
  * Lokale Persistenz (Framework-SQLite, kein Room).
  *
- * Quelle der Wahrheit ist der **Op-Log** (`ops`): unveränderliche Versionsknoten des git-artigen
- * DAG – jetzt für einen **Knoten-Baum** (jeder Knoten = Feed/Eintrag/Bild/Datei/Termin/Todo).
- * `node_current` ist der materialisierte aktuelle Stand je Knoten (Cache für Listen/Suche),
- * `node_fts` (FTS4) indiziert den Text. `foreign_refs` hält abonnierte Fremd-Knoten (Cross-Group),
+ * Quelle der Wahrheit ist der **Op-Log** (`ops`): unveränderliche Versionsknoten des git-artigen DAG
+ * für einen **Knoten-Baum**. `node_current` ist der materialisierte aktuelle Stand je Knoten (Cache),
+ * `node_fts` (FTS4) indiziert Text (+ Tags). `foreign_refs` hält abonnierte Fremd-Knoten (Cross-Group),
  * `calendar_link` die geräte-lokale Verknüpfung Knoten→Android-Kalender-Event.
  *
- * `root_id` an jeder Op = oberster Vorfahr-Knoten (Feed) → erlaubt den feed-/subtree-bezogenen
- * Sync (#10) ohne rekursive Baumtraversierung. Für Root-Knoten gilt root_id == node_id.
+ * Optionale/erweiterbare Felder liegen als **eine `meta`-Spalte** (Klartext-Key→Wert, [de.beardedskunk.homeshare.core.MetaCodec]),
+ * damit neue Meta-Keys KEINE Schema-Migration brauchen. `fmt` = Kanonik-/Kompatibilitätsversion der Op.
+ * `root_id` = oberster Vorfahr-Knoten (Feed) → feed-/subtree-bezogener Sync ohne Baumtraversierung.
  */
 class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
 
@@ -40,14 +40,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
               deleted INTEGER NOT NULL,
               type TEXT NOT NULL,
               order_key TEXT NOT NULL DEFAULT '',
-              color INTEGER,
-              child_default TEXT NOT NULL DEFAULT '',
-              tags TEXT NOT NULL DEFAULT '',
-              blob_hash TEXT NOT NULL DEFAULT '',
-              file_name TEXT NOT NULL DEFAULT '',
-              mime TEXT NOT NULL DEFAULT '',
-              done INTEGER NOT NULL DEFAULT 0,
               text TEXT NOT NULL,
+              meta TEXT NOT NULL DEFAULT '',
+              fmt INTEGER NOT NULL DEFAULT 1,
               device_name TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
@@ -65,13 +60,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
               head_version_id TEXT NOT NULL,
               order_key TEXT NOT NULL DEFAULT '',
               text TEXT NOT NULL,
-              done INTEGER NOT NULL DEFAULT 0,
-              blob_hash TEXT NOT NULL DEFAULT '',
-              file_name TEXT NOT NULL DEFAULT '',
-              mime TEXT NOT NULL DEFAULT '',
-              color INTEGER,
-              child_default TEXT NOT NULL DEFAULT '',
-              tags TEXT NOT NULL DEFAULT '',
+              meta TEXT NOT NULL DEFAULT '',
+              fmt INTEGER NOT NULL DEFAULT 1,
               deleted INTEGER NOT NULL,
               conflicted INTEGER NOT NULL,
               created_wall INTEGER NOT NULL,
@@ -113,26 +103,20 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // v6 = Knoten-Baum-Umbau: bewusst INKOMPATIBEL. Alles wegwerfen + neu (Geräte re-syncen
-        // ohnehin aus der frischen Gruppe; der alte Feed/Post-Schema-Stand wird nicht migriert).
-        if (oldVersion < 6) {
-            db.execSQL("DROP TABLE IF EXISTS post_fts")
-            db.execSQL("DROP TABLE IF EXISTS post_current")
-            db.execSQL("DROP TABLE IF EXISTS ops")
-            db.execSQL("DROP TABLE IF EXISTS feeds")
-            db.execSQL("DROP TABLE IF EXISTS node_fts")
-            db.execSQL("DROP TABLE IF EXISTS node_current")
-            db.execSQL("DROP TABLE IF EXISTS foreign_refs")
-            db.execSQL("DROP TABLE IF EXISTS calendar_link")
+        // <6 = Knoten-Baum-Umbau; <7 = erweiterbare Meta-Map + formatVersion. Beide bewusst INKOMPATIBEL
+        // (Geräte re-syncen aus der frischen Gruppe; alter Stand wird nicht migriert).
+        if (oldVersion < 7) {
+            for (t in listOf("post_fts", "post_current", "ops", "feeds", "node_fts", "node_current", "foreign_refs", "calendar_link")) {
+                db.execSQL("DROP TABLE IF EXISTS $t")
+            }
             onCreate(db)
-            // Beim inkompatiblen Wipe auch die Bild-/Datei-Blobs des alten Schemas mitleeren,
-            // sonst bleiben sie als verwaiste Dateien liegen (toter Speicher).
+            // Beim inkompatiblen Wipe auch die Bild-/Datei-Blobs des alten Schemas mitleeren.
             BlobStore.purgeAll(appContext.filesDir)
         }
     }
 
     companion object {
         const val DB_NAME = "homeshare.db"
-        const val DB_VERSION = 6
+        const val DB_VERSION = 7
     }
 }

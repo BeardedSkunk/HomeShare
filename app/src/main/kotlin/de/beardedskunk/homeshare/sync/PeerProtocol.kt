@@ -12,7 +12,14 @@ package de.beardedskunk.homeshare.sync
  */
 object PeerProtocol {
 
-    fun runInitiator(local: OpSource, channel: SecureChannel, blobs: BlobSync? = null): SyncResult {
+    fun runInitiator(
+        local: OpSource,
+        channel: SecureChannel,
+        blobs: BlobSync? = null,
+        selfHello: Hello? = null,
+        onPeerHello: ((Hello) -> Unit)? = null,
+    ): SyncResult {
+        exchangeHelloInitiator(channel, selfHello, onPeerHello)
         channel.writeText(OpCodec.encodeVv(local.versionVector()))
         val incoming = decodeOps(channel.readText())
         var pulled = 0
@@ -24,7 +31,14 @@ object PeerProtocol {
         return SyncResult(pulled = pulled, pushed = toRemote.size)
     }
 
-    fun runResponder(local: OpSource, channel: SecureChannel, blobs: BlobSync? = null): SyncResult {
+    fun runResponder(
+        local: OpSource,
+        channel: SecureChannel,
+        blobs: BlobSync? = null,
+        selfHello: Hello? = null,
+        onPeerHello: ((Hello) -> Unit)? = null,
+    ): SyncResult {
+        exchangeHelloResponder(channel, selfHello, onPeerHello)
         val remoteVv = OpCodec.decodeVv(channel.readText())
         val toRemote = local.missingFor(remoteVv)
         channel.writeText(encodeOps(toRemote))
@@ -34,6 +48,20 @@ object PeerProtocol {
         for (op in incoming) if (local.ingestOp(op)) pulled++
         BlobExchange.asResponder(channel, blobs)
         return SyncResult(pulled = pulled, pushed = toRemote.size)
+    }
+
+    // HSHELLO ist eingefroren: nur austauschen, wenn beide Seiten es senden. selfHello == null ->
+    // übersprungen (Tests/Box-Pfad). Spiegelbildlich wie der VV-Austausch -> kein Deadlock.
+    private fun exchangeHelloInitiator(channel: SecureChannel, self: Hello?, onPeer: ((Hello) -> Unit)?) {
+        if (self == null) return
+        channel.writeText(OpCodec.encodeHello(self))
+        OpCodec.decodeHello(channel.readText())?.let { onPeer?.invoke(it) }
+    }
+
+    private fun exchangeHelloResponder(channel: SecureChannel, self: Hello?, onPeer: ((Hello) -> Unit)?) {
+        if (self == null) return
+        OpCodec.decodeHello(channel.readText())?.let { onPeer?.invoke(it) }
+        channel.writeText(OpCodec.encodeHello(self))
     }
 
     /** Ops-Block: erste Zeile Anzahl, dann je Op eine base64-Zeile. */

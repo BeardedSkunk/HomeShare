@@ -3,9 +3,13 @@ package de.beardedskunk.homeshare.data
 import android.content.ContentValues
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import de.beardedskunk.homeshare.core.FORMAT_VERSION
 import de.beardedskunk.homeshare.core.Hlc
+import de.beardedskunk.homeshare.core.MetaCodec
+import de.beardedskunk.homeshare.core.MetaKey
 import de.beardedskunk.homeshare.core.Node
 import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.core.NodeVersion
 import de.beardedskunk.homeshare.core.ROOT
@@ -19,14 +23,13 @@ import kotlinx.coroutines.flow.update
 import java.util.UUID
 
 /**
- * Verbindet die persistente DB mit der reinen Konflikt-Engine ([Node]) – jetzt für einen
- * **Knoten-Baum**. Jede lokale Aktion (create/edit/delete/move/resolve) erzeugt eine [NodeVersion]
- * (Eltern = aktuelle Heads), schreibt sie in den Op-Log und materialisiert den Knoten neu. [ingest]
- * ist derselbe Pfad für beim Sync empfangene Fremd-Ops (idempotent).
+ * Verbindet die persistente DB mit der reinen Konflikt-Engine ([Node]) für einen **Knoten-Baum**.
+ * Jede lokale Aktion erzeugt eine [NodeVersion] (Eltern = aktuelle Heads), schreibt sie in den Op-Log
+ * und materialisiert den Knoten neu. [ingest] ist derselbe Pfad für beim Sync empfangene Fremd-Ops.
  *
- * Feeds = Wurzelknoten (parentId==[ROOT], TEXT). „Einträge" = Kindknoten; Bilder/Dateien = weitere
- * Kindknoten; deren Beschreibung = TEXT-Kindknoten. `root_id` (oberster Vorfahr) macht den
- * subtree-bezogenen Cross-Group-Sync billig.
+ * Optionale Felder reisen als erweiterbare Meta-Map ([NodeContent.metaMap] / [MetaCodec]) in EINER
+ * `meta`-Spalte. Ops mit höherem `fmt` als [FORMAT_VERSION] werden gespeichert+weitergereicht, aber
+ * NICHT materialisiert (relay-but-don't-interpret). `root_id` = Feed-Wurzel für den Cross-Group-Sync.
  *
  * (Name bleibt FeedRepository, um Churn klein zu halten; verwaltet aber Knoten.)
  */
@@ -54,10 +57,9 @@ class FeedRepository(
         db.rawQuery("SELECT root_id FROM ops WHERE node_id = ? LIMIT 1", arrayOf(parentId)).use {
             if (it.moveToFirst()) return it.getString(0)
         }
-        return parentId // best effort, falls Eltern noch unbekannt
+        return parentId
     }
 
-    /** Lokale Op erzeugen + persistieren + materialisieren. */
     private fun author(nodeId: String, parents: Set<String>, content: NodeContent): NodeVersion {
         val version = NodeVersion(nodeId, parents, identity.deviceId, identity.nextHlc(), content)
         val rootId = if (content.parentId == ROOT) nodeId else rootOfParent(content.parentId)
@@ -79,7 +81,6 @@ class FeedRepository(
     private fun currentHeads(nodeId: String): Set<String> =
         loadNode(nodeId).heads().map { it.versionId }.toSet()
 
-    /** Aktueller (angezeigter) Inhalt eines Knotens – Basis für Edits, die Felder erhalten sollen. */
     fun headContent(nodeId: String): NodeContent? = loadNode(nodeId).shownHead()?.content
 
     // ----------------------------------------------------------- Öffentliche Knoten-API
@@ -106,14 +107,15 @@ class FeedRepository(
     fun resolveConflict(nodeId: String, chosen: NodeContent): NodeVersion =
         author(nodeId, currentHeads(nodeId), chosen)
 
-    // ----------------------------------------------------------- Feeds (= Wurzelknoten)
+    // ----------------------------------------------------------- Listen (= navigierbare TEXT-Knoten)
 
-    fun createFeed(name: String, calendar: Boolean = false): NodeState = createNode(
-        NodeContent(
-            parentId = ROOT, type = NodeType.TEXT, text = name.trim(),
-            childDefault = if (calendar) NodeType.CALENDAR else NodeType.TEXT,
-        ),
-    )
+    /** Neue Liste unter [parentId] (ROOT = oberste Ebene) mit Default-Kindtyp [childDefault]. */
+    fun createList(name: String, parentId: String = ROOT, childDefault: NodeKind = NodeKind.LIST): NodeState =
+        createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = name.trim(), childDefault = childDefault))
+
+    /** Bequemer Alt-Einstieg: Liste mit Default Notiz bzw. Kalender. */
+    fun createFeed(name: String, calendar: Boolean = false): NodeState =
+        createList(name, ROOT, if (calendar) NodeKind.CALENDAR else NodeKind.NOTE)
 
     fun renameFeed(feedId: String, name: String) {
         val hc = headContent(feedId) ?: return
@@ -153,7 +155,6 @@ class FeedRepository(
         )
     }
 
-    /** Root-Ids (Feeds), in denen die Suche etwas findet (Text/Dateiname/Tags) ODER deren Name passt. */
     fun feedsMatching(query: String): Set<String> {
         val q = query.trim()
         if (q.isBlank()) return emptySet()
@@ -207,7 +208,6 @@ class FeedRepository(
         return true
     }
 
-    /** Hintergrund-Auto-Merge wie git/kdiff3; Fremd-Subtrees NICHT (nur stromaufwärts auflösen). */
     private fun maybeAutoResolve(nodeId: String) {
         val rootId = db.rawQuery("SELECT root_id FROM node_current WHERE node_id = ? LIMIT 1", arrayOf(nodeId)).use {
             if (it.moveToFirst()) it.getString(0) else null
@@ -247,17 +247,19 @@ class FeedRepository(
 
     override fun displayedBlobHashes(): Set<String> {
         val out = HashSet<String>()
-        db.rawQuery("SELECT blob_hash FROM node_current WHERE deleted = 0 AND blob_hash <> ''", null).use { c ->
-            while (c.moveToNext()) out += c.getString(0)
+        // node_current: aktuelle Blobs (Bild/Datei) der angezeigten Knoten.
+        db.rawQuery("SELECT meta FROM node_current WHERE deleted = 0", null).use { c ->
+            while (c.moveToNext()) MetaCodec.decode(c.getString(0))[MetaKey.BLOB]?.let { out += it }
         }
+        // Konflikt-Köpfe: auch deren (evtl. abweichende) Blobs vorhalten.
         db.rawQuery(
-            "SELECT blob_hash FROM ops WHERE blob_hash <> '' AND node_id IN (SELECT node_id FROM node_current WHERE conflicted = 1)",
+            "SELECT meta FROM ops WHERE node_id IN (SELECT node_id FROM node_current WHERE conflicted = 1)",
             null,
-        ).use { c -> while (c.moveToNext()) out += c.getString(0) }
+        ).use { c -> while (c.moveToNext()) MetaCodec.decode(c.getString(0))[MetaKey.BLOB]?.let { out += it } }
         return out
     }
 
-    // ------------------------------ Cross-Group-Sync (#10, root-/subtree-bezogen) ------------------------------
+    // ------------------------------ Cross-Group-Sync (#10) ------------------------------
 
     override fun feedVersionVector(rootId: String): Map<String, PeerState> {
         val seqs = HashMap<String, MutableList<Long>>()
@@ -334,17 +336,16 @@ class FeedRepository(
             },
             SQLiteDatabase.CONFLICT_REPLACE,
         )
-        // Platzhalter-Knoten, damit der Feed sofort sichtbar ist; echte Ops überschreiben beim Sync.
         if (getNode(ref.nodeId) == null) {
             val h = identity.nextHlc()
+            val meta = MetaCodec.encode(mapOf(MetaKey.CHILD_DEFAULT to (if (calendar) NodeKind.CALENDAR else NodeKind.NOTE).name))
             db.insertWithOnConflict(
                 "node_current", null,
                 ContentValues().apply {
                     put("node_id", ref.nodeId); put("parent_id", ROOT); put("root_id", ref.nodeId)
                     put("type", NodeType.TEXT.name); put("head_version_id", ""); put("order_key", "")
-                    put("text", name); put("done", 0); put("blob_hash", ""); put("file_name", ""); put("mime", "")
-                    putNull("color"); put("child_default", if (calendar) NodeType.CALENDAR.name else NodeType.TEXT.name)
-                    put("tags", ""); put("deleted", 0); put("conflicted", 0)
+                    put("text", name); put("meta", meta); put("fmt", FORMAT_VERSION)
+                    put("deleted", 0); put("conflicted", 0)
                     put("created_wall", h.wallMillis); put("created_counter", h.counter)
                     put("updated_wall", h.wallMillis); put("updated_counter", h.counter)
                 },
@@ -413,43 +414,33 @@ class FeedRepository(
             put("deleted", if (c.deleted) 1 else 0)
             put("type", c.type.name)
             put("order_key", c.orderKey)
-            if (c.color != null) put("color", c.color) else putNull("color")
-            put("child_default", c.childDefault?.name ?: "")
-            put("tags", OpListCodec.encode(c.tags))
-            put("blob_hash", c.blobHash ?: "")
-            put("file_name", c.fileName ?: "")
-            put("mime", c.mime ?: "")
-            put("done", if (c.done) 1 else 0)
             put("text", c.text)
+            put("meta", MetaCodec.encode(c.metaMap()))
+            put("fmt", v.formatVersion)
             put("device_name", deviceName)
         }
         db.insertWithOnConflict("ops", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
     }
 
+    /** Lädt nur INTERPRETIERBARE Versionen (fmt <= [FORMAT_VERSION]); neuere bleiben gespeichert/relayt. */
     private fun loadNode(nodeId: String): Node {
         val node = Node(nodeId)
         db.rawQuery(
-            "SELECT node_id, device_id, hlc_wall, hlc_counter, parents, deleted, type, parent_id, order_key, color, child_default, tags, blob_hash, file_name, mime, done, text " +
-                "FROM ops WHERE node_id = ?",
-            arrayOf(nodeId),
+            "SELECT node_id, device_id, hlc_wall, hlc_counter, parents, deleted, type, parent_id, order_key, text, meta, fmt " +
+                "FROM ops WHERE node_id = ? AND fmt <= ?",
+            arrayOf(nodeId, FORMAT_VERSION.toString()),
         ).use { c ->
             while (c.moveToNext()) {
                 val parents = splitCsv(c.getString(4)).toSet()
-                val content = NodeContent(
+                val content = NodeContent.fromMeta(
                     parentId = c.getString(7),
                     type = runCatching { NodeType.valueOf(c.getString(6)) }.getOrDefault(NodeType.TEXT),
                     orderKey = c.getString(8),
-                    text = c.getString(16),
-                    done = c.getInt(15) != 0,
-                    blobHash = c.getString(12).takeIf { it.isNotEmpty() },
-                    fileName = c.getString(13).takeIf { it.isNotEmpty() },
-                    mime = c.getString(14).takeIf { it.isNotEmpty() },
-                    color = if (c.isNull(9)) null else c.getInt(9),
-                    childDefault = c.getString(10).takeIf { it.isNotEmpty() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() },
-                    tags = OpListCodec.decode(c.getString(11)),
+                    text = c.getString(9),
                     deleted = c.getInt(5) != 0,
+                    meta = MetaCodec.decode(c.getString(10)),
                 )
-                node.ingest(NodeVersion(c.getString(0), parents, c.getString(1), Hlc(c.getLong(2), c.getInt(3)), content))
+                node.ingest(NodeVersion(c.getString(0), parents, c.getString(1), Hlc(c.getLong(2), c.getInt(3)), content, c.getInt(11)))
             }
         }
         return node
@@ -474,13 +465,8 @@ class FeedRepository(
             put("head_version_id", shown.versionId)
             put("order_key", c.orderKey)
             put("text", c.text)
-            put("done", if (c.done) 1 else 0)
-            put("blob_hash", c.blobHash ?: "")
-            put("file_name", c.fileName ?: "")
-            put("mime", c.mime ?: "")
-            if (c.color != null) put("color", c.color) else putNull("color")
-            put("child_default", c.childDefault?.name ?: "")
-            put("tags", OpListCodec.encode(c.tags))
+            put("meta", MetaCodec.encode(c.metaMap()))
+            put("fmt", shown.formatVersion)
             put("deleted", if (c.deleted) 1 else 0)
             put("conflicted", if (realConflict) 1 else 0)
             put("created_wall", root.hlc.wallMillis)
@@ -507,28 +493,31 @@ class FeedRepository(
         return out
     }
 
-    private fun readNodeState(c: Cursor): NodeState = NodeState(
-        nodeId = c.getString(0),
-        parentId = c.getString(1),
-        rootId = c.getString(2),
-        type = runCatching { NodeType.valueOf(c.getString(3)) }.getOrDefault(NodeType.TEXT),
-        headVersionId = c.getString(4),
-        orderKey = c.getString(5),
-        text = c.getString(6),
-        done = c.getInt(7) != 0,
-        blobHash = c.getString(8).takeIf { it.isNotEmpty() },
-        fileName = c.getString(9).takeIf { it.isNotEmpty() },
-        mime = c.getString(10).takeIf { it.isNotEmpty() },
-        color = if (c.isNull(11)) null else c.getInt(11),
-        childDefault = c.getString(12).takeIf { it.isNotEmpty() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() },
-        tags = OpListCodec.decode(c.getString(13)),
-        deleted = c.getInt(14) != 0,
-        conflicted = c.getInt(15) != 0,
-        created = Hlc(c.getLong(16), c.getInt(17)),
-        updated = Hlc(c.getLong(18), c.getInt(19)),
-        foreignOrigin = c.getString(20) ?: "",
-        foreignRight = FeedRight.from(c.getString(21) ?: ""),
-    )
+    private fun readNodeState(c: Cursor): NodeState {
+        val meta = MetaCodec.decode(c.getString(IDX_N_META))
+        return NodeState(
+            nodeId = c.getString(IDX_N_NODE),
+            parentId = c.getString(IDX_N_PARENT),
+            rootId = c.getString(IDX_N_ROOT),
+            type = runCatching { NodeType.valueOf(c.getString(IDX_N_TYPE)) }.getOrDefault(NodeType.TEXT),
+            headVersionId = c.getString(IDX_N_HEAD),
+            orderKey = c.getString(IDX_N_ORDER),
+            text = c.getString(IDX_N_TEXT),
+            done = meta[MetaKey.DONE] == "1",
+            blobHash = meta[MetaKey.BLOB],
+            fileName = meta[MetaKey.FILE],
+            mime = meta[MetaKey.MIME],
+            color = meta[MetaKey.COLOR]?.toIntOrNull(),
+            childDefault = meta[MetaKey.CHILD_DEFAULT]?.let { runCatching { NodeKind.valueOf(it) }.getOrNull() },
+            tags = meta[MetaKey.TAGS]?.let { de.beardedskunk.homeshare.core.MetaListCodec.decode(it) } ?: emptyList(),
+            deleted = c.getInt(IDX_N_DELETED) != 0,
+            conflicted = c.getInt(IDX_N_CONFLICTED) != 0,
+            created = Hlc(c.getLong(IDX_N_CWALL), c.getInt(IDX_N_CCNT)),
+            updated = Hlc(c.getLong(IDX_N_UWALL), c.getInt(IDX_N_UCNT)),
+            foreignOrigin = c.getString(IDX_N_ORIGIN) ?: "",
+            foreignRight = FeedRight.from(c.getString(IDX_N_FRIGHT) ?: ""),
+        )
+    }
 
     private fun readOpDto(c: Cursor): OpDto = OpDto(
         versionId = c.getString(IDX_VERSION),
@@ -542,14 +531,9 @@ class FeedRepository(
         deleted = c.getInt(IDX_DELETED) != 0,
         type = runCatching { NodeType.valueOf(c.getString(IDX_TYPE)) }.getOrDefault(NodeType.TEXT),
         orderKey = c.getString(IDX_ORDER),
-        color = if (c.isNull(IDX_COLOR)) null else c.getInt(IDX_COLOR),
-        childDefault = c.getString(IDX_CHILDDEF).takeIf { it.isNotEmpty() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() },
-        done = c.getInt(IDX_DONE) != 0,
-        blobHash = c.getString(IDX_BLOB).takeIf { it.isNotEmpty() },
-        fileName = c.getString(IDX_FILE).takeIf { it.isNotEmpty() },
-        mime = c.getString(IDX_MIME).takeIf { it.isNotEmpty() },
-        tags = OpListCodec.decode(c.getString(IDX_TAGS)),
         text = c.getString(IDX_TEXT),
+        meta = MetaCodec.decode(c.getString(IDX_META)),
+        formatVersion = c.getInt(IDX_FMT),
         parents = splitCsv(c.getString(IDX_PARENTS)),
         deviceName = c.getString(IDX_DEVNAME) ?: "",
     )
@@ -563,35 +547,21 @@ class FeedRepository(
             .ifBlank { "\"\"" }
 
     private companion object {
-        // ops-Spaltenreihenfolge für missingFor/feedMissingFor + readOpDto.
         const val OP_SELECT =
-            "SELECT version_id, node_id, parent_id, root_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, type, order_key, color, child_default, tags, blob_hash, file_name, mime, done, text, device_name FROM ops"
+            "SELECT version_id, node_id, parent_id, root_id, device_id, seq, hlc_wall, hlc_counter, parents, deleted, type, order_key, text, meta, fmt, device_name FROM ops"
         const val IDX_VERSION = 0; const val IDX_NODE = 1; const val IDX_PARENT = 2; const val IDX_ROOT = 3
         const val IDX_DEVICE = 4; const val IDX_SEQ = 5; const val IDX_HLCW = 6; const val IDX_HLCC = 7
         const val IDX_PARENTS = 8; const val IDX_DELETED = 9; const val IDX_TYPE = 10; const val IDX_ORDER = 11
-        const val IDX_COLOR = 12; const val IDX_CHILDDEF = 13; const val IDX_TAGS = 14; const val IDX_BLOB = 15
-        const val IDX_FILE = 16; const val IDX_MIME = 17; const val IDX_DONE = 18; const val IDX_TEXT = 19
-        const val IDX_DEVNAME = 20
+        const val IDX_TEXT = 12; const val IDX_META = 13; const val IDX_FMT = 14; const val IDX_DEVNAME = 15
 
-        // node_current + foreign_refs (LEFT JOIN) für readNodeState.
         const val NODE_SELECT =
-            "SELECT n.node_id, n.parent_id, n.root_id, n.type, n.head_version_id, n.order_key, n.text, n.done, " +
-                "n.blob_hash, n.file_name, n.mime, n.color, n.child_default, n.tags, n.deleted, n.conflicted, " +
-                "n.created_wall, n.created_counter, n.updated_wall, n.updated_counter, f.origin_group, f.foreign_right " +
+            "SELECT n.node_id, n.parent_id, n.root_id, n.type, n.head_version_id, n.order_key, n.text, n.meta, " +
+                "n.deleted, n.conflicted, n.created_wall, n.created_counter, n.updated_wall, n.updated_counter, " +
+                "f.origin_group, f.foreign_right " +
                 "FROM node_current n LEFT JOIN foreign_refs f ON n.node_id = f.node_id"
-    }
-}
-
-/** String-Liste als "count;b64,..." in einer DB-Zelle (für tags). */
-internal object OpListCodec {
-    private val enc = java.util.Base64.getEncoder()
-    private val dec = java.util.Base64.getDecoder()
-    fun encode(list: List<String>): String = "${list.size};" + list.joinToString(",") { enc.encodeToString(it.toByteArray(Charsets.UTF_8)) }
-    fun decode(s: String?): List<String> {
-        if (s.isNullOrBlank()) return emptyList()
-        val i = s.indexOf(';'); if (i < 0) return emptyList()
-        val count = s.substring(0, i).toIntOrNull() ?: 0
-        if (count == 0) return emptyList()
-        return s.substring(i + 1).split(',').map { String(dec.decode(it), Charsets.UTF_8) }
+        const val IDX_N_NODE = 0; const val IDX_N_PARENT = 1; const val IDX_N_ROOT = 2; const val IDX_N_TYPE = 3
+        const val IDX_N_HEAD = 4; const val IDX_N_ORDER = 5; const val IDX_N_TEXT = 6; const val IDX_N_META = 7
+        const val IDX_N_DELETED = 8; const val IDX_N_CONFLICTED = 9; const val IDX_N_CWALL = 10; const val IDX_N_CCNT = 11
+        const val IDX_N_UWALL = 12; const val IDX_N_UCNT = 13; const val IDX_N_ORIGIN = 14; const val IDX_N_FRIGHT = 15
     }
 }

@@ -59,6 +59,16 @@ class SyncManager(
     private val settings: Settings,
     private val blobStore: de.beardedskunk.homeshare.data.BlobStore? = null,
 ) {
+    // Eingefrorene Versions-Begrüßung: damit auch eine veraltete App eine neuere Gegenstelle erkennt.
+    private val appVersion: String = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+    }.getOrDefault("")
+    private fun selfHello() = Hello(de.beardedskunk.homeshare.core.FORMAT_VERSION, appVersion, identity.deviceName)
+    private val onPeerHello: (Hello) -> Unit = { peer ->
+        if (peer.formatVersion > de.beardedskunk.homeshare.core.FORMAT_VERSION) {
+            Log.w(TAG, "Peer '${peer.deviceName}' nutzt neuere App (${peer.appVersion}, fmt=${peer.formatVersion}); neuere Eintraege werden weitergereicht, aber lokal nicht angezeigt.")
+        }
+    }
     /**
      * Direkter Blob-Abgleich (#11): nennt der Gegenseite die aktuell angezeigten Bilder,
      * die uns lokal fehlen, und liefert, was wir von deren Wunschliste haben. Null, wenn
@@ -250,7 +260,7 @@ class SyncManager(
                 val parts = readLineRaw(input).split(' ')
                 when (parts.getOrNull(0)) {
                     MODE_GROUP -> {
-                        val r = PeerProtocol.runResponder(repo, SecureChannel(input, output, groupKey()), blobSync)
+                        val r = PeerProtocol.runResponder(repo, SecureChannel(input, output, groupKey()), blobSync, selfHello(), onPeerHello)
                         status.value = status.value.copy(lastMessage = "Sync ok: +${r.pulled} empfangen, ${r.pushed} gesendet")
                     }
                     MODE_FEED -> serveForeignFeed(parts, input, output)
@@ -301,7 +311,7 @@ class SyncManager(
                 connect(addr)?.use {
                     it.soTimeout = SOCKET_TIMEOUT_MS
                     writeLine(it.getOutputStream(), MODE_GROUP)
-                    val r = PeerProtocol.runInitiator(repo, SecureChannel(it.getInputStream(), it.getOutputStream(), groupKey()), blobSync)
+                    val r = PeerProtocol.runInitiator(repo, SecureChannel(it.getInputStream(), it.getOutputStream(), groupKey()), blobSync, selfHello(), onPeerHello)
                     status.value = status.value.copy(lastMessage = "Sync ok: +${r.pulled} empfangen, ${r.pushed} gesendet")
                 }
             } catch (e: Throwable) {

@@ -81,8 +81,8 @@ class Node(val nodeId: String) {
         if (a.deleted || b.deleted) return null // Löschen-vs-Edit -> Mensch entscheidet
         val base = lowestCommonAncestor(x.versionId, y.versionId)?.content ?: NodeContent()
 
-        // 3-Wege-Auswahl für ein Strukturfeld: nur eine Seite geändert -> übernehmen; beide gleich -> ok;
-        // beide unterschiedlich -> Konflikt (null im second).
+        // 3-Wege-Auswahl für ein Feld: nur eine Seite geändert -> übernehmen; beide gleich -> ok;
+        // beide unterschiedlich -> Konflikt (false).
         fun <T> pick(ba: T, av: T, bv: T): Pair<Boolean, T> = when {
             av == bv -> true to av
             av == ba -> true to bv
@@ -92,20 +92,28 @@ class Node(val nodeId: String) {
         val (okType, type) = pick(base.type, a.type, b.type); if (!okType) return null
         val (okParent, parent) = pick(base.parentId, a.parentId, b.parentId); if (!okParent) return null
         val (okOrder, order) = pick(base.orderKey, a.orderKey, b.orderKey); if (!okOrder) return null
-        val (okBlob, blob) = pick(base.blobHash, a.blobHash, b.blobHash); if (!okBlob) return null
-        val (okMime, mime) = pick(base.mime, a.mime, b.mime); if (!okMime) return null
-        val (okFile, file) = pick(base.fileName, a.fileName, b.fileName); if (!okFile) return null
-        val (okColor, color) = pick(base.color, a.color, b.color); if (!okColor) return null
-        val (okCd, childDefault) = pick(base.childDefault, a.childDefault, b.childDefault); if (!okCd) return null
-        val (okDone, done) = pick(base.done, a.done, b.done); if (!okDone) return null
         val text = ThreeWayMerge.text(base.text, a.text, b.text) ?: return null
-        val tags = ThreeWayMerge.list(base.tags, a.tags, b.tags) ?: return null
 
-        return NodeContent(
-            parentId = parent, type = type, orderKey = order, text = text, done = done,
-            blobHash = blob, fileName = file, mime = mime, color = color,
-            childDefault = childDefault, tags = tags, deleted = false,
-        )
+        // Offene Meta-Map generisch pro Key 3-Wege mergen (bekannte UND zukünftige Keys).
+        val bm = base.metaMap(); val am = a.metaMap(); val bbm = b.metaMap()
+        val merged = sortedMapOf<String, String>()
+        for (k in (am.keys + bbm.keys)) {
+            val (ok, v) = pick(bm[k], am[k], bbm[k])
+            if (ok) {
+                if (v != null) merged[k] = v
+            } else if (k == MetaKey.TAGS) {
+                // Tags sind eine Menge -> listenweise mergebar.
+                val t = ThreeWayMerge.list(
+                    bm[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
+                    am[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
+                    bbm[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
+                ) ?: return null
+                if (t.isNotEmpty()) merged[k] = MetaListCodec.encode(t)
+            } else {
+                return null // unauflösbarer Meta-Konflikt -> Mensch entscheidet
+            }
+        }
+        return NodeContent.fromMeta(parent, type, order, text, false, merged)
     }
 
     /** Alle Vorfahren von [versionId] (ohne den Knoten selbst). */

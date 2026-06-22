@@ -1,15 +1,16 @@
 package de.beardedskunk.homeshare.sync
 
 import de.beardedskunk.homeshare.core.Hlc
+import de.beardedskunk.homeshare.core.MetaCodec
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.core.NodeVersion
 import java.util.Base64
 
 /**
- * Eine Operation (Knoten-Versionsknoten) im übertragbaren Format. Enthält zusätzlich zur reinen
- * [NodeVersion] das Routing-Metadatum [rootId] (oberster Vorfahr-Knoten = Feed) und [seq].
- * [rootId]/[seq]/[deviceName] fließen NICHT in die versionId.
+ * Eine Operation (Knoten-Versionsknoten) im übertragbaren Format. Optionale Felder reisen als
+ * erweiterbare [meta]-Map (sortierte Klartext-Keys); [formatVersion] ist der Kompatibilitäts-Hebel.
+ * [rootId], [seq] und [deviceName] fließen NICHT in die versionId.
  */
 data class OpDto(
     val versionId: String,
@@ -23,14 +24,9 @@ data class OpDto(
     val deleted: Boolean,
     val type: NodeType,
     val orderKey: String,
-    val color: Int?,
-    val childDefault: NodeType?,
-    val done: Boolean,
-    val blobHash: String?,
-    val fileName: String?,
-    val mime: String?,
-    val tags: List<String>,
     val text: String,
+    val meta: Map<String, String>,
+    val formatVersion: Int,
     val parents: List<String>,
     val deviceName: String = "",
 ) {
@@ -39,11 +35,8 @@ data class OpDto(
         parents = parents.toSet(),
         deviceId = deviceId,
         hlc = Hlc(hlcWall, hlcCounter),
-        content = NodeContent(
-            parentId = parentId, type = type, orderKey = orderKey, text = text, done = done,
-            blobHash = blobHash, fileName = fileName, mime = mime, color = color,
-            childDefault = childDefault, tags = tags, deleted = deleted,
-        ),
+        content = NodeContent.fromMeta(parentId, type, orderKey, text, deleted, meta),
+        formatVersion = formatVersion,
     )
 
     /** Integritätsprüfung: stimmt die mitgelieferte Id mit dem Inhalt überein? */
@@ -62,14 +55,9 @@ data class OpDto(
             deleted = v.content.deleted,
             type = v.content.type,
             orderKey = v.content.orderKey,
-            color = v.content.color,
-            childDefault = v.content.childDefault,
-            done = v.content.done,
-            blobHash = v.content.blobHash,
-            fileName = v.content.fileName,
-            mime = v.content.mime,
-            tags = v.content.tags,
             text = v.content.text,
+            meta = v.content.metaMap(),
+            formatVersion = v.formatVersion,
             parents = v.parents.toList(),
             deviceName = deviceName,
         )
@@ -77,15 +65,26 @@ data class OpDto(
 }
 
 /**
+ * Versions-Begrüßung beim Sync-Start — **eingefrorenes** Format (eine Zeile, Space-getrennt, Freitext
+ * base64). Trägt die Kompatibilitäts-Version [formatVersion], die menschenlesbare [appVersion] und den
+ * [deviceName]. Damit erkennt selbst eine veraltete App eine neuere Gegenstelle.
+ */
+data class Hello(val formatVersion: Int, val appVersion: String, val deviceName: String)
+
+/**
  * Einfaches, eigenkontrolliertes Wire-Format (zeilenbasiert, Freitext base64-kodiert). Bewusst ohne
  * externe Serialisierungsbibliothek, voll testbar.
  */
 object OpCodec {
+    // Eingefrorener Transport-Marker. Evolution läuft über `fmt` (im Op) + die offene meta-Map, NICHT
+    // über den Header. Body-Layout ab hier ebenfalls eingefroren.
     private const val HEADER = "HSNODE1"
+    private const val HELLO = "HSHELLO"
 
     fun encodeOp(d: OpDto): String = buildString {
         append(HEADER).append('\n')
         append(d.versionId).append('\n')
+        append(d.formatVersion).append('\n')
         append(d.nodeId).append('\n')
         append(d.parentId).append('\n')
         append(d.rootId).append('\n')
@@ -96,14 +95,8 @@ object OpCodec {
         append(if (d.deleted) "1" else "0").append('\n')
         append(d.type.name).append('\n')
         append(b64(d.orderKey)).append('\n')
-        append(d.color?.toString() ?: "").append('\n')
-        append(d.childDefault?.name ?: "").append('\n')
-        append(if (d.done) "1" else "0").append('\n')
-        append(d.blobHash ?: "").append('\n')
-        append(d.mime ?: "").append('\n')
-        append(b64(d.fileName ?: "")).append('\n')
-        append(encodeList(d.tags)).append('\n')
         append(d.parents.joinToString(",")).append('\n')
+        append(b64(MetaCodec.encode(d.meta))).append('\n') // meta kann '\n' enthalten -> base64
         append(b64(d.text)).append('\n')
         append(b64(d.deviceName))
     }
@@ -113,27 +106,32 @@ object OpCodec {
         require(p[0] == HEADER) { "Unbekanntes Format: ${p[0]}" }
         return OpDto(
             versionId = p[1],
-            nodeId = p[2],
-            parentId = p[3],
-            rootId = p[4],
-            deviceId = p[5],
-            seq = p[6].toLong(),
-            hlcWall = p[7].toLong(),
-            hlcCounter = p[8].toInt(),
-            deleted = p[9] == "1",
-            type = runCatching { NodeType.valueOf(p[10]) }.getOrDefault(NodeType.TEXT),
-            orderKey = unb64(p.getOrElse(11) { "" }),
-            color = p.getOrElse(12) { "" }.toIntOrNull(),
-            childDefault = p.getOrElse(13) { "" }.takeIf { it.isNotBlank() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() },
-            done = p.getOrElse(14) { "0" } == "1",
-            blobHash = p.getOrElse(15) { "" }.takeIf { it.isNotBlank() },
-            mime = p.getOrElse(16) { "" }.takeIf { it.isNotBlank() },
-            fileName = unb64(p.getOrElse(17) { "" }).takeIf { it.isNotBlank() },
-            tags = decodeList(p.getOrElse(18) { "" }),
-            parents = splitCsv(p.getOrElse(19) { "" }),
-            text = unb64(p.getOrElse(20) { "" }),
-            deviceName = p.getOrNull(21)?.takeIf { it.isNotBlank() }?.let { unb64(it) } ?: "",
+            formatVersion = p.getOrElse(2) { "1" }.toIntOrNull() ?: 1,
+            nodeId = p[3],
+            parentId = p[4],
+            rootId = p[5],
+            deviceId = p[6],
+            seq = p[7].toLong(),
+            hlcWall = p[8].toLong(),
+            hlcCounter = p[9].toInt(),
+            deleted = p[10] == "1",
+            type = runCatching { NodeType.valueOf(p[11]) }.getOrDefault(NodeType.TEXT),
+            orderKey = unb64(p.getOrElse(12) { "" }),
+            parents = splitCsv(p.getOrElse(13) { "" }),
+            meta = MetaCodec.decode(unb64(p.getOrElse(14) { "" })),
+            text = unb64(p.getOrElse(15) { "" }),
+            deviceName = p.getOrNull(16)?.takeIf { it.isNotBlank() }?.let { unb64(it) } ?: "",
         )
+    }
+
+    /** Eingefrorene Versions-Begrüßung (eine Zeile). */
+    fun encodeHello(h: Hello): String = "$HELLO ${h.formatVersion} ${b64(h.appVersion)} ${b64(h.deviceName)}"
+
+    fun decodeHello(s: String): Hello? {
+        val p = s.trim().split(' ')
+        if (p.size < 4 || p[0] != HELLO) return null
+        val fmt = p[1].toIntOrNull() ?: return null
+        return Hello(fmt, runCatching { unb64(p[2]) }.getOrDefault(""), runCatching { unb64(p[3]) }.getOrDefault(""))
     }
 
     /** String-Liste: "count;b64,b64,..." (base64 enthält kein Komma -> sicher). */

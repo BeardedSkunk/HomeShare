@@ -220,13 +220,8 @@ class FritzReplica(
             .put("deleted", op.deleted)
             .put("type", op.type.name)
             .put("orderKey", op.orderKey)
-            .put("color", op.color ?: JSONObject.NULL)
-            .put("childDefault", op.childDefault?.name ?: JSONObject.NULL)
-            .put("done", op.done)
-            .put("blobHash", op.blobHash ?: JSONObject.NULL)
-            .put("fileName", op.fileName ?: JSONObject.NULL)
-            .put("mime", op.mime ?: JSONObject.NULL)
-            .put("tags", JSONArray(op.tags))
+            .put("fmt", op.formatVersion)
+            .put("meta", JSONObject(op.meta as Map<*, *>))
             .put("parents", JSONArray(op.parents))
             .put("text", op.text)
             .toString(2)
@@ -237,6 +232,8 @@ class FritzReplica(
             o.optJSONArray(name)?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
         fun nodeType(name: String): NodeType? =
             o.optString(name).takeIf { it.isNotBlank() }?.let { runCatching { NodeType.valueOf(it) }.getOrNull() }
+        val meta = LinkedHashMap<String, String>()
+        o.optJSONObject("meta")?.let { mo -> mo.keys().forEach { k -> meta[k] = mo.getString(k) } }
         return OpDto(
             versionId = o.getString("versionId"),
             nodeId = o.getString("nodeId"),
@@ -249,14 +246,9 @@ class FritzReplica(
             deleted = o.getBoolean("deleted"),
             type = nodeType("type") ?: NodeType.TEXT,
             orderKey = o.optString("orderKey"),
-            color = if (o.isNull("color")) null else o.optInt("color"),
-            childDefault = nodeType("childDefault"),
-            done = o.optBoolean("done"),
-            blobHash = if (o.isNull("blobHash")) null else o.optString("blobHash").takeIf { it.isNotBlank() },
-            fileName = if (o.isNull("fileName")) null else o.optString("fileName").takeIf { it.isNotBlank() },
-            mime = if (o.isNull("mime")) null else o.optString("mime").takeIf { it.isNotBlank() },
-            tags = strList("tags"),
             text = o.optString("text"),
+            meta = meta,
+            formatVersion = o.optInt("fmt", 1),
             parents = strList("parents"),
             deviceName = o.optString("deviceName"),
         )
