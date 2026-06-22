@@ -31,9 +31,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -117,9 +117,6 @@ fun ListScreen(
     sync: SyncManager,
     settings: Settings,
     container: NodeState?,
-    statusText: String = "",
-    webUrl: String? = null,
-    onToggleWeb: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenShare: (NodeState) -> Unit = {},
     onOpenList: (NodeState) -> Unit = {},
@@ -263,7 +260,7 @@ fun ListScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else if (isRoot) {
-                        Column { Text("Feeds"); if (statusText.isNotBlank()) Text(statusText, style = MaterialTheme.typography.labelSmall) }
+                        Text("Feeds")
                     } else {
                         Text(container!!.title.ifBlank { "(ohne Namen)" })
                     }
@@ -275,9 +272,11 @@ fun ListScreen(
                     IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }) {
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
                     }
-                    if (!searching && isRoot) {
-                        IconButton(onClick = { showAddShared = true }) { Icon(Icons.Filled.Share, contentDescription = "Geteilten Feed hinzufügen") }
-                        TextButton(onClick = onToggleWeb) { Text(if (webUrl == null) "Web starten" else "Web stoppen") }
+                    if (!searching) {
+                        // QR-Icon auf JEDER Listen-Ansicht: in einer Liste -> diese teilen; in der Wurzel -> einer geteilten Liste beitreten.
+                        IconButton(onClick = { if (container != null) onOpenShare(container) else showAddShared = true }) {
+                            Icon(Icons.Filled.QrCode2, contentDescription = if (container != null) "Diese Liste teilen" else "Geteilte Liste beitreten")
+                        }
                         IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
                     }
                 },
@@ -315,9 +314,6 @@ fun ListScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (webUrl != null && isRoot) {
-                Text("Webserver läuft: $webUrl", Modifier.fillMaxWidth().padding(12.dp), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-            }
             if (isCalendar) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("In Android-Kalender übernehmen", Modifier.weight(1f))
@@ -391,22 +387,27 @@ fun ListScreen(
     }
 }
 
-/** Generische Zeile für Listen/Aufgaben/Bilder/Dateien: Typ-Icon + Titel. */
+/**
+ * Generische Zeile für Listen + Platzhalter-Einträge (Aufgabe/Bild/Datei). Nur **Listen** tragen ein
+ * Icon, und zwar das ihres Default-Kindtyps ([NodeState.childDefault]) — also z. B. das Termin-Symbol
+ * für eine Kalender-Liste. Einzel-Einträge bekommen (wie Notizen/Termine) kein Icon.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NodeRow(node: NodeState, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val leading = if (node.kind == NodeKind.LIST) (node.childDefault ?: NodeKind.LIST).uiIcon() else null
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(node.kind.uiIcon(), contentDescription = node.kind.uiLabel(), modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-            val extra = if (node.kind == NodeKind.NOTE && FeedShareCodec.isShared(node.text)) "📤 " else ""
+            if (leading != null) Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+            val extra = if (node.kind == NodeKind.LIST && FeedShareCodec.isShared(node.text)) "📤 " else ""
             Text(
                 extra + node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" },
                 fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
+                modifier = Modifier.weight(1f).padding(start = if (leading != null) 12.dp else 0.dp),
             )
         }
     }
@@ -437,12 +438,12 @@ private fun PostRow(
             DropdownMenuItem(text = { Text("Im Detail zusammenführen") }, onClick = { menuOpen = false; onResolveDetailed() })
         }
         Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
-            Icon(NodeKind.NOTE.uiIcon(), contentDescription = null, modifier = Modifier.padding(start = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.outline)
+            // Einzel-Einträge (Notizen) tragen bewusst KEIN Typ-Icon (konsistent zu Terminen).
             val raw = if (post.deleted) "(gelöscht)" else post.text
             val firstLine = raw.lineSequence().firstOrNull().orEmpty().ifBlank { if (imageHashes.isNotEmpty()) "🖼 Bild" else "" }
             Text(
                 text = (if (post.conflicted) "⚠ " else "") + firstLine, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                modifier = Modifier.weight(1f).padding(start = 14.dp, end = 10.dp),
             )
             val tasks = if (post.deleted) null else taskCounts(post.text)
             if (tasks != null) {

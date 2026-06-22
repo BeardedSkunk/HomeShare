@@ -56,6 +56,9 @@ fun SettingsScreen(
     identity: DeviceIdentity,
     fritz: FritzController,
     blobStore: BlobStore,
+    statusText: String = "",
+    webUrl: String? = null,
+    onToggleWeb: () -> Unit = {},
     onSyncEnabledChanged: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -136,6 +139,17 @@ fun SettingsScreen(
                         Toast.makeText(context, if (it) "Sync aktiviert" else "Sync deaktiviert", Toast.LENGTH_SHORT).show()
                     },
                 )
+            }
+            if (statusText.isNotBlank()) {
+                Text(statusText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            }
+
+            Text("PC-Browser-Zugriff", style = MaterialTheme.typography.titleMedium)
+            if (webUrl != null) {
+                Text("Webserver läuft: $webUrl", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            Button(onClick = onToggleWeb, modifier = Modifier.fillMaxWidth()) {
+                Text(if (webUrl == null) "Web-Zugriff starten" else "Web-Zugriff stoppen")
             }
 
             Text("Dieses Gerät", style = MaterialTheme.typography.titleMedium)
