@@ -17,9 +17,19 @@ android {
     }
 
     buildTypes {
+        // R8/Minify auch im Debug-Build, weil wir Debug-APKs ausrollen UND damit
+        // material-icons-extended (riesig) auf die paar genutzten Icons getreeshaked wird.
+        // isDebuggable bleibt true -> adb run-as etc. funktioniert weiter.
+        debug {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -44,6 +54,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.core)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.activity.compose)
     implementation(libs.nanohttpd)
     implementation(libs.commons.net)
