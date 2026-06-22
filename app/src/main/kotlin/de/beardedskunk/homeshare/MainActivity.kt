@@ -22,9 +22,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateListOf
 import de.beardedskunk.homeshare.data.NodeState
-import de.beardedskunk.homeshare.ui.FeedListScreen
-import de.beardedskunk.homeshare.ui.FeedScreen
+import de.beardedskunk.homeshare.ui.ListScreen
 import de.beardedskunk.homeshare.ui.FeedShareScreen
 import de.beardedskunk.homeshare.ui.SettingsScreen
 import de.beardedskunk.homeshare.ui.SharePickerScreen
@@ -90,9 +90,9 @@ fun ClipTheme(content: @Composable () -> Unit) {
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
 fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
-    var openFeed by remember { mutableStateOf<NodeState?>(null) }
-    // EINE geteilte Suche über alle Ebenen (Feeds-Liste / Feed / Eintrag): null = zu, sonst offen.
-    // Beim Zurückgehen bleibt sie erhalten, außer sie wurde in der Ebene darunter geschlossen (-> null).
+    // Navigations-Stack der geöffneten Listen (leer = Wurzel „Feeds"). Erlaubt Listen in Listen.
+    val navStack = remember { mutableStateListOf<NodeState>() }
+    // EINE geteilte Suche über alle Ebenen: null = zu, sonst offen. Beim Zurückgehen bleibt sie erhalten.
     var searchQuery by remember { mutableStateOf<String?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
     var showSettings by remember { mutableStateOf(false) }
@@ -104,9 +104,9 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     val calPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result -> if (result.values.any { it }) graph.calendarSync.requestSync() }
-    LaunchedEffect(openFeed?.nodeId) {
-        val f = openFeed
-        if (f != null && f.isCalendarFeed && !graph.calendarSync.hasPermission()) {
+    val current = navStack.lastOrNull()
+    LaunchedEffect(current?.nodeId) {
+        if (current != null && current.isCalendarFeed && !graph.calendarSync.hasPermission()) {
             calPermLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
         }
     }
@@ -118,7 +118,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             repo = graph.repo,
             blobStore = graph.blobStore,
             shared = share,
-            onShared = { feed -> pendingShare = null; openFeed = feed },
+            onShared = { feed -> pendingShare = null; navStack.clear(); navStack.add(feed) },
             onCancel = { pendingShare = null },
         )
         return
@@ -144,31 +144,21 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
         return
     }
 
-    val feed = openFeed
-    if (feed == null) {
-        FeedListScreen(
-            repo = graph.repo,
-            sync = graph.sync,
-            statusText = status.lastMessage,
-            webUrl = webUrl,
-            onToggleWeb = { graph.web.toggle() },
-            onOpenSettings = { showSettings = true },
-            onOpenShare = { sharingFeed = it },
-            searchQuery = searchQuery,
-            onSearchQueryChange = { searchQuery = it },
-            onOpenFeed = { f -> openFeed = f },
-        )
-    } else {
-        FeedScreen(
-            repo = graph.repo,
-            blobStore = graph.blobStore,
-            feed = feed,
-            settings = graph.settings,
-            searchQuery = searchQuery,
-            onSearchQueryChange = { searchQuery = it },
-            onRequestCalendarSync = { graph.calendarSync.requestSync() },
-            // Zurück zur Übersicht: Suche bleibt erhalten (außer sie wurde hier geschlossen).
-            onBack = { openFeed = null },
-        )
-    }
+    ListScreen(
+        repo = graph.repo,
+        blobStore = graph.blobStore,
+        sync = graph.sync,
+        settings = graph.settings,
+        container = current,
+        statusText = status.lastMessage,
+        webUrl = webUrl,
+        onToggleWeb = { graph.web.toggle() },
+        onOpenSettings = { showSettings = true },
+        onOpenShare = { sharingFeed = it },
+        onOpenList = { navStack.add(it) },
+        onRequestCalendarSync = { graph.calendarSync.requestSync() },
+        searchQuery = searchQuery,
+        onSearchQueryChange = { searchQuery = it },
+        onBack = { navStack.removeAt(navStack.lastIndex) },
+    )
 }

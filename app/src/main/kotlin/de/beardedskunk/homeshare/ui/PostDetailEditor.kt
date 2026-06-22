@@ -118,7 +118,7 @@ private fun endOfLineAt(text: String, offset: Int): Int {
 fun PostDetailEditor(
     repo: FeedRepository,
     blobStore: BlobStore,
-    feed: NodeState,
+    parentId: String,
     post: NodeState?,
     /**
      * Wurde der Beitrag aus einer Suche geoeffnet: dieser Suchbegriff. Die Ansicht startet dann
@@ -225,7 +225,7 @@ fun PostDetailEditor(
             scope.launch {
                 // Eintrags-Knoten sicherstellen (bei neuem Beitrag erst jetzt anlegen).
                 val entryId = currentNodeId ?: withContext(Dispatchers.IO) {
-                    repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.TEXT, text = tfv.text)).nodeId
+                    repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = tfv.text)).nodeId
                 }
                 currentNodeId = entryId
                 val added = withContext(Dispatchers.IO) {
@@ -288,9 +288,9 @@ fun PostDetailEditor(
             val newId = withContext(Dispatchers.IO) {
                 val entryId = currentNodeId
                 val id = if (entryId == null) {
-                    repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.TEXT, text = text)).nodeId
+                    repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = text)).nodeId
                 } else {
-                    val hc = repo.headContent(entryId) ?: NodeContent(parentId = feed.nodeId, type = NodeType.TEXT)
+                    val hc = repo.headContent(entryId) ?: NodeContent(parentId = parentId, type = NodeType.TEXT)
                     repo.editNode(entryId, hc.copy(text = text, type = NodeType.TEXT))
                     entryId
                 }
@@ -335,7 +335,7 @@ fun PostDetailEditor(
             if (newSha != null && pe.index < images.size) {
                 val imgId = imageNodeIds.getOrNull(pe.index)
                 if (imgId != null) withContext(Dispatchers.IO) {
-                    val ihc = repo.headContent(imgId) ?: NodeContent(parentId = currentNodeId ?: feed.nodeId, type = NodeType.IMAGE)
+                    val ihc = repo.headContent(imgId) ?: NodeContent(parentId = currentNodeId ?: parentId, type = NodeType.IMAGE)
                     repo.editNode(imgId, ihc.copy(blobHash = newSha, type = NodeType.IMAGE))
                 }
                 images = images.toMutableList().also { it[pe.index] = newSha }

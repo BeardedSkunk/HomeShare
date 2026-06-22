@@ -87,7 +87,7 @@ private val reminderOptions: List<Pair<String, Int?>> = listOf(
 @Composable
 fun CalendarEntryEditor(
     repo: FeedRepository,
-    feed: NodeState,
+    parentId: String,
     post: NodeState?,
     onClose: () -> Unit,
 ) {
@@ -139,9 +139,9 @@ fun CalendarEntryEditor(
         scope.launch {
             withContext(Dispatchers.IO) {
                 if (post == null) {
-                    repo.createNode(NodeContent(parentId = feed.nodeId, type = NodeType.CALENDAR, text = text))
+                    repo.createNode(NodeContent(parentId = parentId, type = NodeType.CALENDAR, text = text))
                 } else {
-                    val hc = repo.headContent(post.nodeId) ?: NodeContent(parentId = feed.nodeId, type = NodeType.CALENDAR)
+                    val hc = repo.headContent(post.nodeId) ?: NodeContent(parentId = parentId, type = NodeType.CALENDAR)
                     repo.editNode(post.nodeId, hc.copy(text = text, type = NodeType.CALENDAR))
                 }
             }
