@@ -309,7 +309,7 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
 /** Kompakte Listenzeile für einen Kalendereintrag: Titel + Datum/Zeit + Ort. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun CalendarRow(post: NodeState, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
+fun CalendarRow(post: NodeState, onClick: () -> Unit, onLongClick: () -> Unit = {}, trailing: (@Composable () -> Unit)? = null) {
     val ev = remember(post.headVersionId) { EventCodec.parse(post.text) }
     androidx.compose.material3.Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
@@ -321,7 +321,8 @@ fun CalendarRow(post: NodeState, onClick: () -> Unit, onLongClick: () -> Unit = 
             androidx.compose.material3.CardDefaults.cardColors()
         },
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(14.dp)) {
             Text(
                 (if (post.conflicted) "⚠ " else "") +
                     (ev?.title?.ifBlank { "(ohne Titel)" } ?: post.text.lineSequence().firstOrNull().orEmpty()),
@@ -332,6 +333,8 @@ fun CalendarRow(post: NodeState, onClick: () -> Unit, onLongClick: () -> Unit = 
                 if (ev.location.isNotBlank()) Text("📍 ${ev.location}", style = MaterialTheme.typography.bodySmall)
                 if (ev.recurrence != Recurrence.NONE) Text("🔁 ${ev.recurrence.label}", style = MaterialTheme.typography.bodySmall)
             }
+        }
+            trailing?.invoke()
         }
     }
 }

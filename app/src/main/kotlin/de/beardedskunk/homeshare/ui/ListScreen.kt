@@ -21,7 +21,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ListAlt
@@ -186,6 +187,40 @@ fun ListScreen(
         }
     }
     val shown = matchedIds?.let { ids -> children.filter { it.nodeId in ids } } ?: children
+
+    // ---- Drag&Drop-Umsortierung (Handle am Zeilenende) ----
+    val listState = rememberLazyListState()
+    // Vorschau-Reihenfolge während des Zugs; committed wird erst beim Drop (1 Op).
+    var dragPreview by remember { mutableStateOf<List<NodeState>?>(null) }
+    val dragState = rememberDragDropState(
+        listState,
+        onMove = { from, to ->
+            val cur = (dragPreview ?: shown).toMutableList()
+            if (from in cur.indices && to in cur.indices) {
+                cur.add(to, cur.removeAt(from))
+                dragPreview = cur
+            }
+        },
+        onDrop = { _, to ->
+            dragPreview?.takeIf { to in it.indices }?.let { cur ->
+                val moved = cur[to]
+                val prev = cur.getOrNull(to - 1)
+                val next = cur.getOrNull(to + 1)
+                // Revision-Bump löst den Reload aus; die Vorschau bleibt bis dahin stehen.
+                scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+            }
+        },
+    )
+    // Vorschau verwerfen, sobald die echte Liste nachgezogen ist (oder der Drag folgenlos endete).
+    LaunchedEffect(children) { if (!dragState.isDragging) dragPreview = null }
+    LaunchedEffect(dragState.isDragging) {
+        if (!dragState.isDragging && dragPreview != null) {
+            kotlinx.coroutines.delay(500)
+            dragPreview = null
+        }
+    }
+    val displayed = dragPreview ?: shown
+    val canDrag = canWrite && !searching
 
     fun shareImage(sha: String) {
         val file = if (blobStore.hasFull(sha)) blobStore.fullFile(sha) else blobStore.thumbFile(sha)
@@ -375,20 +410,29 @@ fun ListScreen(
                     Text(if (searching && query.isNotBlank()) "Keine Treffer." else if (isRoot) "Noch keine Feeds. Mit + einen anlegen." else "Noch keine Einträge.")
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(shown, key = { it.nodeId }) { node ->
-                        when (node.kind) {
-                            NodeKind.NOTE -> PostRow(
-                                post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore,
-                                onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
-                            )
-                            NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node })
-                            NodeKind.TODO -> TodoRow(
-                                node = node, enabled = canWrite,
-                                onClick = { openChild(node) }, onLongClick = { actionNode = node },
-                                onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
-                            )
-                            else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node })
+                LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    itemsIndexed(displayed, key = { _, n -> n.nodeId }) { index, node ->
+                        val handle: (@Composable () -> Unit)? =
+                            if (canDrag) ({ DragHandle(dragState, index, node.title) }) else null
+                        Box(
+                            Modifier.dragDropItem(dragState, index)
+                                .then(if (dragState.isDragging(index)) Modifier else Modifier.animateItem()),
+                        ) {
+                            when (node.kind) {
+                                NodeKind.NOTE -> PostRow(
+                                    post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore,
+                                    onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
+                                    trailing = handle,
+                                )
+                                NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                                NodeKind.TODO -> TodoRow(
+                                    node = node, enabled = canWrite,
+                                    onClick = { openChild(node) }, onLongClick = { actionNode = node },
+                                    onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
+                                    trailing = handle,
+                                )
+                                else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                            }
                         }
                     }
                 }
@@ -465,7 +509,7 @@ fun ListScreen(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -> Unit, onLongClick: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
     val leading = when (node.kind) {
         NodeKind.LIST -> (node.childDefault ?: NodeKind.LIST).uiIcon()
         NodeKind.FILE -> NodeKind.FILE.uiIcon()
@@ -492,6 +536,7 @@ private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -
                 fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = if (leading != null || node.kind == NodeKind.IMAGE) 12.dp else 0.dp),
             )
+            trailing?.invoke()
         }
     }
 }
@@ -499,7 +544,7 @@ private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -
 /** Aufgaben-Zeile: Haken direkt abhakbar (ohne Öffnen), Tap öffnet die Aufgaben-Ansicht. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TodoRow(node: NodeState, enabled: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit) {
+private fun TodoRow(node: NodeState, enabled: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .tag(rowTag(node.title))
@@ -514,6 +559,7 @@ private fun TodoRow(node: NodeState, enabled: Boolean, onClick: () -> Unit, onLo
                 textDecoration = if (node.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
                 modifier = Modifier.weight(1f),
             )
+            trailing?.invoke()
         }
     }
 }
@@ -549,6 +595,7 @@ private fun PostRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onOpenImage: (String) -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val rowHeight = 56.dp
     Card(
@@ -581,6 +628,7 @@ private fun PostRow(
                     if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
                 }
             }
+            trailing?.invoke()
         }
     }
 }
