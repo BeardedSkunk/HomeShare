@@ -132,6 +132,12 @@ fun PostDetailEditor(
     onSearchQueryChange: (String?) -> Unit = {},
     /** #10: Nur-Lese-Ansicht (Fremdfeed ohne Schreibrecht) – keine Bearbeitung möglich. */
     readOnly: Boolean = false,
+    /**
+     * false = nur Titel+Markdown-Body bearbeiten, KEINE Anhänge laden/anbieten.
+     * Nötig für die Beschreibung von LISTEN: deren IMAGE/FILE-Kinder sind echte
+     * Listeneinträge und dürfen hier nicht als Anhänge erscheinen.
+     */
+    showAttachments: Boolean = true,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -168,7 +174,7 @@ fun PostDetailEditor(
             captionNodeIds = kids.map { it.capId }
         }
     }
-    LaunchedEffect(Unit) { currentNodeId?.let { reloadSubtree(it) } }
+    LaunchedEffect(Unit) { if (showAttachments) currentNodeId?.let { reloadSubtree(it) } }
     // Suche ist geteilter Zustand (siehe onSearchQueryChange): null = zu, sonst offen.
     val findOpen = searchQuery != null
     val findQuery = searchQuery ?: ""
@@ -289,7 +295,9 @@ fun PostDetailEditor(
                     repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = text)).nodeId
                 } else {
                     val hc = repo.headContent(entryId) ?: NodeContent(parentId = parentId, type = NodeType.TEXT)
-                    repo.editNode(entryId, hc.copy(text = text, type = NodeType.TEXT))
+                    // Typ NICHT anfassen: der Editor bearbeitet auch LISTen (Beschreibung) und
+                    // künftig TODOs – deren Knotentyp muss erhalten bleiben.
+                    repo.editNode(entryId, hc.copy(text = text))
                     entryId
                 }
                 imgIds.forEachIndexed { i, imgId ->
@@ -461,7 +469,7 @@ fun PostDetailEditor(
                     }
                     if (!readOnly) {
                         // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
-                        IconButton(onClick = {
+                        if (showAttachments) IconButton(onClick = {
                             pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         }, modifier = Modifier.tag("topbar:add")) {
                             Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")

@@ -1,6 +1,7 @@
 package de.beardedskunk.homeshare.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -306,13 +307,14 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
 }
 
 /** Kompakte Listenzeile für einen Kalendereintrag: Titel + Datum/Zeit + Ort. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun CalendarRow(post: NodeState, onClick: () -> Unit) {
+fun CalendarRow(post: NodeState, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
     val ev = remember(post.headVersionId) { EventCodec.parse(post.text) }
     androidx.compose.material3.Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-            .tag(rowTag(EventCodec.parse(post.text)?.title ?: post.text))
-            .clickable(onClick = onClick),
+            .tag(rowTag(ev?.title ?: post.text))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = if (post.conflicted) {
             androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
         } else {

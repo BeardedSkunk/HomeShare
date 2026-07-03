@@ -140,6 +140,8 @@ fun ListScreen(
 
     // Editor-/Dialog-Zustände
     var noteEdit by remember { mutableStateOf<NodeState?>(null) }
+    // Listen-Beschreibung (Titel+Markdown-Body der Liste) lesen/bearbeiten – ohne Anhänge.
+    var descEdit by remember { mutableStateOf<NodeState?>(null) }
     var creatingNote by remember { mutableStateOf(false) }
     var calEdit by remember { mutableStateOf<NodeState?>(null) }
     var creatingCal by remember { mutableStateOf(false) }
@@ -229,6 +231,15 @@ fun ListScreen(
         DetailMergeScreen(repo = repo, blobStore = blobStore, feed = container ?: p, post = p, onOpenImage = { viewingImage = it }, onResolved = { resolvingDetailed = null; reload() }, onCancel = { resolvingDetailed = null })
         return
     }
+    descEdit?.let { d ->
+        BackHandler { descEdit = null; reload() }
+        PostDetailEditor(
+            repo = repo, blobStore = blobStore, parentId = parentId, post = d,
+            readOnly = !canWrite, showAttachments = false,
+            onClose = { descEdit = null; reload() },
+        )
+        return
+    }
     if (noteEdit != null || creatingNote) {
         BackHandler { noteEdit = null; creatingNote = false; reload() }
         PostDetailEditor(
@@ -269,6 +280,12 @@ fun ListScreen(
                 actions = {
                     IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }, modifier = Modifier.tag("topbar:search")) {
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
+                    }
+                    if (!searching && container != null) {
+                        // Beschreibung der aktuellen Liste (Titel + Markdown-Body) lesen/bearbeiten.
+                        IconButton(onClick = { descEdit = container }, modifier = Modifier.tag("topbar:listinfo")) {
+                            Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = "Listen-Beschreibung")
+                        }
                     }
                     if (!searching) {
                         // QR-Icon auf JEDER Listen-Ansicht: in einer Liste -> diese teilen; in der Wurzel -> einer geteilten Liste beitreten.
@@ -336,10 +353,10 @@ fun ListScreen(
                     items(shown, key = { it.nodeId }) { node ->
                         when (node.kind) {
                             NodeKind.NOTE -> PostRow(
-                                post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore, canMerge = canMerge,
-                                onClick = { openChild(node) }, onResolveWhole = { resolving = node }, onResolveDetailed = { resolvingDetailed = node }, onOpenImage = { viewingImage = it },
+                                post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore,
+                                onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
                             )
-                            NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) })
+                            NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node })
                             else -> NodeRow(node = node, onClick = { openChild(node) }, onLongClick = { actionNode = node })
                         }
                     }
@@ -370,6 +387,13 @@ fun ListScreen(
             title = { Text((node.kind.uiLabel()) + ": " + node.title.ifBlank { "(ohne Namen)" }) },
             text = {
                 Column {
+                    if (node.kind == NodeKind.LIST) {
+                        TextButton(onClick = { val n = node; actionNode = null; descEdit = n }, modifier = Modifier.tag("action:info")) { Text("Beschreibung anzeigen/bearbeiten") }
+                    }
+                    if (node.conflicted && canMerge && node.kind == NodeKind.NOTE) {
+                        TextButton(onClick = { val n = node; actionNode = null; resolving = n }, modifier = Modifier.tag("action:resolve")) { Text("Konflikt: Ganze Fassung wählen") }
+                        TextButton(onClick = { val n = node; actionNode = null; resolvingDetailed = n }, modifier = Modifier.tag("action:resolve-detail")) { Text("Konflikt: Im Detail zusammenführen") }
+                    }
                     if (node.isForeign) {
                         TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.leaveForeignFeed(id) }; reload() } }, modifier = Modifier.tag("action:leave")) { Text("Freigabe verlassen (lokal entfernen)") }
                     } else {
@@ -420,24 +444,17 @@ private fun PostRow(
     post: NodeState,
     imageHashes: List<String>,
     blobStore: BlobStore,
-    canMerge: Boolean = true,
     onClick: () -> Unit,
-    onResolveWhole: () -> Unit,
-    onResolveDetailed: () -> Unit,
+    onLongClick: () -> Unit,
     onOpenImage: (String) -> Unit,
 ) {
     val rowHeight = 56.dp
-    var menuOpen by remember { mutableStateOf(false) }
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .tag(rowTag(if (post.deleted) "(gelöscht)" else post.text))
-            .combinedClickable(onClick = onClick, onLongClick = { if (post.conflicted && canMerge) menuOpen = true }),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = if (post.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(text = { Text("Ganze Fassung wählen") }, onClick = { menuOpen = false; onResolveWhole() })
-            DropdownMenuItem(text = { Text("Im Detail zusammenführen") }, onClick = { menuOpen = false; onResolveDetailed() })
-        }
         Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
             // Einzel-Einträge (Notizen) tragen bewusst KEIN Typ-Icon (konsistent zu Terminen).
             val raw = if (post.deleted) "(gelöscht)" else post.text
