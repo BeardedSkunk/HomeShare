@@ -1,12 +1,15 @@
 package de.beardedskunk.homeshare.ui
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.data.FeedRepository
+import de.beardedskunk.homeshare.data.NodeState
 
 /**
  * Gemeinsame Anlege-Logik für Anhänge (Bild/Datei): Blob speichern, Knoten + leeres
@@ -40,5 +43,16 @@ object AttachmentPicker {
         ).nodeId
         val capId = repo.createNode(NodeContent(parentId = fileId, type = NodeType.TEXT, text = "")).nodeId
         return Added(fileId, sha, capId)
+    }
+
+    /** FILE-/IMAGE-Knoten mit externer App öffnen (ACTION_VIEW über den FileProvider). */
+    fun openExternally(context: Context, blobStore: BlobStore, node: NodeState) {
+        val sha = node.blobHash ?: return toast(context, "Datei ohne Inhalt.")
+        if (!blobStore.hasFull(sha)) return toast(context, "Datei nicht lokal – erst syncen.")
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", blobStore.fullFile(sha))
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, node.mime ?: "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { context.startActivity(view) }.onFailure { toast(context, "Keine App zum Öffnen gefunden.") }
     }
 }

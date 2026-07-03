@@ -47,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -144,6 +145,8 @@ fun ListScreen(
     var noteEdit by remember { mutableStateOf<NodeState?>(null) }
     // Listen-Beschreibung (Titel+Markdown-Body der Liste) lesen/bearbeiten – ohne Anhänge.
     var descEdit by remember { mutableStateOf<NodeState?>(null) }
+    var todoOpen by remember { mutableStateOf<NodeState?>(null) }
+    var showCreateTodo by remember { mutableStateOf(false) }
     var creatingNote by remember { mutableStateOf(false) }
     var calEdit by remember { mutableStateOf<NodeState?>(null) }
     var creatingCal by remember { mutableStateOf(false) }
@@ -215,21 +218,10 @@ fun ListScreen(
             NodeKind.LIST -> showCreateList = true
             NodeKind.NOTE -> creatingNote = true
             NodeKind.CALENDAR -> creatingCal = true
-            NodeKind.TODO -> scope.launch { withContext(Dispatchers.IO) { repo.createNode(NodeContent(parentId = parentId, type = NodeType.TODO, text = "Neue Aufgabe")) } }
+            NodeKind.TODO -> showCreateTodo = true
             NodeKind.IMAGE -> pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             NodeKind.FILE -> pickFile.launch(arrayOf("*/*"))
         }
-    }
-
-    // FILE-Eintrag mit externer App öffnen (ACTION_VIEW über den FileProvider).
-    fun openFile(p: NodeState) {
-        val sha = p.blobHash ?: return toast(context, "Datei ohne Inhalt.")
-        if (!blobStore.hasFull(sha)) return toast(context, "Datei nicht lokal – erst syncen.")
-        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", blobStore.fullFile(sha))
-        val view = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, p.mime ?: "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { context.startActivity(view) }.onFailure { toast(context, "Keine App zum Öffnen gefunden.") }
     }
 
     fun openChild(p: NodeState) {
@@ -237,9 +229,9 @@ fun ListScreen(
             NodeKind.LIST -> onOpenList(p)
             NodeKind.NOTE -> if (p.conflicted && canMerge) resolving = p else noteEdit = p
             NodeKind.CALENDAR -> calEdit = p
-            NodeKind.TODO -> toast(context, "${p.kind.uiLabel()} – Anzeige folgt später")
+            NodeKind.TODO -> todoOpen = p
             NodeKind.IMAGE -> p.blobHash?.let { viewingImage = it } ?: toast(context, "Bild ohne Inhalt.")
-            NodeKind.FILE -> openFile(p)
+            NodeKind.FILE -> AttachmentPicker.openExternally(context, blobStore, p)
         }
     }
 
@@ -258,6 +250,11 @@ fun ListScreen(
     resolvingDetailed?.let { p ->
         BackHandler { resolvingDetailed = null }
         DetailMergeScreen(repo = repo, blobStore = blobStore, feed = container ?: p, post = p, onOpenImage = { viewingImage = it }, onResolved = { resolvingDetailed = null; reload() }, onCancel = { resolvingDetailed = null })
+        return
+    }
+    todoOpen?.let { t ->
+        BackHandler { todoOpen = null; reload() }
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, readOnly = !canWrite, onClose = { todoOpen = null; reload() })
         return
     }
     descEdit?.let { d ->
@@ -386,6 +383,11 @@ fun ListScreen(
                                 onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
                             )
                             NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node })
+                            NodeKind.TODO -> TodoRow(
+                                node = node, enabled = canWrite,
+                                onClick = { openChild(node) }, onLongClick = { actionNode = node },
+                                onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
+                            )
                             else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node })
                         }
                     }
@@ -408,6 +410,23 @@ fun ListScreen(
 
     if (showAddShared) {
         AddSharedFeedDialog(sync = sync, onDone = { showAddShared = false; reload() }, onDismiss = { showAddShared = false })
+    }
+
+    if (showCreateTodo) {
+        CreateTodoDialog(
+            onConfirm = { title ->
+                showCreateTodo = false
+                if (title.isNotBlank()) scope.launch {
+                    val opened = withContext(Dispatchers.IO) {
+                        val v = repo.createNode(NodeContent(parentId = parentId, type = NodeType.TODO, text = title.trim()))
+                        repo.getPostState(v.nodeId)
+                    }
+                    reload()
+                    todoOpen = opened
+                }
+            },
+            onDismiss = { showCreateTodo = false },
+        )
     }
 
     actionNode?.let { node ->
@@ -473,6 +492,49 @@ private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -
                 fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = if (leading != null || node.kind == NodeKind.IMAGE) 12.dp else 0.dp),
             )
+        }
+    }
+}
+
+/** Aufgaben-Zeile: Haken direkt abhakbar (ohne Öffnen), Tap öffnet die Aufgaben-Ansicht. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TodoRow(node: NodeState, enabled: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .tag(rowTag(node.title))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = node.done, onCheckedChange = onDone, enabled = enabled)
+            Text(
+                node.title.ifBlank { "(ohne Titel)" },
+                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                textDecoration = if (node.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** Kleiner Anlege-Dialog für Aufgaben: nur der Titel, danach öffnet sich die Aufgaben-Ansicht. */
+@Composable
+private fun CreateTodoDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var title by remember { mutableStateOf("") }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Neue Aufgabe", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = title, onValueChange = { title = it }, label = { Text("Titel") },
+                    singleLine = true, modifier = Modifier.tag("field:todo-title"),
+                )
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Abbrechen") }
+                    androidx.compose.material3.Button(onClick = { onConfirm(title) }, modifier = Modifier.tag("dialog:create-todo")) { Text("Anlegen") }
+                }
+            }
         }
     }
 }
