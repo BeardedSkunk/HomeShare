@@ -91,7 +91,11 @@ class Node(val nodeId: String) {
         }
         val (okType, type) = pick(base.type, a.type, b.type); if (!okType) return null
         val (okParent, parent) = pick(base.parentId, a.parentId, b.parentId); if (!okParent) return null
-        val (okOrder, order) = pick(base.orderKey, a.orderKey, b.orderKey); if (!okOrder) return null
+        // Reine Umsortierung soll den Nutzer nie mit einem Konflikt behelligen: haben BEIDE
+        // Seiten den orderKey (unterschiedlich) geändert, gewinnt deterministisch der spätere
+        // Editor (Last-Writer-Wins über headOrder) statt manueller Auflösung.
+        val (okOrder, orderPick) = pick(base.orderKey, a.orderKey, b.orderKey)
+        val order = if (okOrder) orderPick else (if (headOrder.compare(x, y) >= 0) x else y).content.orderKey
         val text = ThreeWayMerge.text(base.text, a.text, b.text) ?: return null
 
         // Offene Meta-Map generisch pro Key 3-Wege mergen (bekannte UND zukünftige Keys).

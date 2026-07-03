@@ -12,6 +12,7 @@ import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.core.NodeVersion
+import de.beardedskunk.homeshare.core.OrderKeys
 import de.beardedskunk.homeshare.core.ROOT
 import de.beardedskunk.homeshare.sync.FeedScopedSource
 import de.beardedskunk.homeshare.sync.OpDto
@@ -104,6 +105,21 @@ class FeedRepository(
         editNode(nodeId, hc.copy(parentId = newParentId, orderKey = orderKey))
     }
 
+    /**
+     * Setzt den orderKey von [nodeId] zwischen die Geschwister [prev] und [next]
+     * (null = Anfang/Ende). Genau EIN Op pro Umsortierung; unbeteiligte Geschwister
+     * behalten ihre (ggf. virtuellen) Schlüssel – siehe [OrderKeys].
+     */
+    fun reorderNode(nodeId: String, prev: NodeState?, next: NodeState?) {
+        val hc = headContent(nodeId) ?: return
+        val lo = prev?.let { OrderKeys.effective(it.orderKey, it.created) }
+        var hi = next?.let { OrderKeys.effective(it.orderKey, it.created) }
+        // Defensive: identische/vertauschte Nachbar-Keys (z. B. identischer Midpoint von zwei
+        // Geräten) -> nur an der unteren Grenze einsortieren statt zu crashen.
+        if (lo != null && hi != null && lo >= hi) hi = null
+        editNode(nodeId, hc.copy(orderKey = OrderKeys.between(lo, hi)))
+    }
+
     fun resolveConflict(nodeId: String, chosen: NodeContent): NodeVersion =
         author(nodeId, currentHeads(nodeId), chosen)
 
@@ -126,10 +142,11 @@ class FeedRepository(
     fun deleteFeed(feedId: String) { deleteNode(feedId) }
 
     /** Wurzelknoten (Feeds), inkl. abonnierte Fremd-Wurzeln. */
-    fun listFeeds(): List<NodeState> = queryNodeStates("n.parent_id = ? AND n.deleted = 0", arrayOf(ROOT))
+    fun listFeeds(): List<NodeState> =
+        queryNodeStates("n.parent_id = ? AND n.deleted = 0", arrayOf(ROOT)).sortedWith(siblingOrder)
 
     fun children(parentId: String): List<NodeState> =
-        queryNodeStates("n.parent_id = ? AND (n.deleted = 0 OR n.conflicted = 1)", arrayOf(parentId))
+        queryNodeStates("n.parent_id = ? AND (n.deleted = 0 OR n.conflicted = 1)", arrayOf(parentId)).sortedWith(siblingOrder)
 
     fun listPosts(feedId: String): List<NodeState> = children(feedId)
 

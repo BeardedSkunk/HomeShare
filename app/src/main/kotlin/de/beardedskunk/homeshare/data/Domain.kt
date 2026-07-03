@@ -3,6 +3,14 @@ package de.beardedskunk.homeshare.data
 import de.beardedskunk.homeshare.core.Hlc
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.core.OrderKeys
+
+/**
+ * Geschwister-Sortierung: manueller orderKey (bzw. virtueller HLC-Seed für ungesetzte Keys,
+ * siehe [OrderKeys]), dann Erzeugungs-HLC, dann nodeId als deterministischer Tie-Breaker.
+ */
+val siblingOrder: Comparator<NodeState> =
+    compareBy({ OrderKeys.effective(it.orderKey, it.created) }, { it.created }, { it.nodeId })
 
 /**
  * Materialisierter aktueller Stand EINES Knotens (aus dem Op-Log abgeleitet, Lese-Modell für die UI).
