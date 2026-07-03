@@ -151,6 +151,26 @@ object OpCodec {
     fun encodeOpLine(op: OpDto): String = b64(encodeOp(op))
     fun decodeOpLine(line: String): OpDto = decodeOp(unb64(line))
 
+    /** Ops-Block: erste Zeile Anzahl, dann je Op eine base64-Zeile. */
+    fun encodeOps(ops: List<OpDto>): String = buildString {
+        append(ops.size).append('\n')
+        for (op in ops) append(encodeOpLine(op)).append('\n')
+    }
+
+    fun decodeOps(text: String): List<OpDto> {
+        if (text.isBlank()) return emptyList()
+        val lines = text.split('\n')
+        val count = lines[0].toIntOrNull() ?: return emptyList()
+        val out = ArrayList<OpDto>(count)
+        var i = 1
+        while (i <= count && i < lines.size) {
+            val line = lines[i]
+            if (line.isNotBlank()) out += decodeOpLine(line)
+            i++
+        }
+        return out
+    }
+
     fun encodeVv(vv: Map<String, PeerState>): String =
         vv.entries.joinToString("\n") { (dev, st) ->
             if (st.gaps.isEmpty()) "$dev ${st.maxSeq}"
