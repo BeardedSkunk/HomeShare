@@ -2,6 +2,9 @@ package de.beardedskunk.homeshare.ui
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -28,7 +31,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -86,7 +89,7 @@ fun NodeKind.uiIcon(): ImageVector = when (this) {
     NodeKind.CALENDAR -> Icons.Filled.CalendarMonth
     NodeKind.TODO -> Icons.Filled.TaskAlt
     NodeKind.IMAGE -> Icons.Filled.Image
-    NodeKind.FILE -> Icons.Filled.InsertDriveFile
+    NodeKind.FILE -> Icons.AutoMirrored.Filled.InsertDriveFile
 }
 
 fun NodeKind.uiLabel(): String = when (this) {
@@ -99,7 +102,6 @@ fun NodeKind.uiLabel(): String = when (this) {
 }
 
 /** Reihenfolge im FAB-Long-Press-Menü. */
-private val CREATE_KINDS = listOf(NodeKind.LIST, NodeKind.NOTE, NodeKind.CALENDAR, NodeKind.TODO, NodeKind.IMAGE, NodeKind.FILE)
 
 /**
  * Vereinheitlichte Listen-Ansicht für die Kinder EINES Knotens – oder der Wurzel ([container] == null
@@ -192,6 +194,21 @@ fun ListScreen(
         runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
     }
 
+    // Bild-/Datei-Anlage: echte Picker statt Platzhalter-Knoten. Der Knoten entsteht erst,
+    // wenn wirklich etwas ausgewählt wurde.
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            withContext(Dispatchers.IO) { uris.forEach { AttachmentPicker.addImage(context, repo, blobStore, parentId, it) } }
+            reload()
+        }
+    }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            withContext(Dispatchers.IO) { AttachmentPicker.addFile(context, repo, blobStore, parentId, uri) }
+            reload()
+        }
+    }
+
     fun startCreate(kind: NodeKind) {
         if (!canWrite) return
         when (kind) {
@@ -199,9 +216,20 @@ fun ListScreen(
             NodeKind.NOTE -> creatingNote = true
             NodeKind.CALENDAR -> creatingCal = true
             NodeKind.TODO -> scope.launch { withContext(Dispatchers.IO) { repo.createNode(NodeContent(parentId = parentId, type = NodeType.TODO, text = "Neue Aufgabe")) } }
-            NodeKind.IMAGE -> scope.launch { withContext(Dispatchers.IO) { repo.createNode(NodeContent(parentId = parentId, type = NodeType.IMAGE, text = "Neues Bild")) } }
-            NodeKind.FILE -> scope.launch { withContext(Dispatchers.IO) { repo.createNode(NodeContent(parentId = parentId, type = NodeType.FILE, text = "Neue Datei")) } }
+            NodeKind.IMAGE -> pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            NodeKind.FILE -> pickFile.launch(arrayOf("*/*"))
         }
+    }
+
+    // FILE-Eintrag mit externer App öffnen (ACTION_VIEW über den FileProvider).
+    fun openFile(p: NodeState) {
+        val sha = p.blobHash ?: return toast(context, "Datei ohne Inhalt.")
+        if (!blobStore.hasFull(sha)) return toast(context, "Datei nicht lokal – erst syncen.")
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", blobStore.fullFile(sha))
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, p.mime ?: "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { context.startActivity(view) }.onFailure { toast(context, "Keine App zum Öffnen gefunden.") }
     }
 
     fun openChild(p: NodeState) {
@@ -209,8 +237,9 @@ fun ListScreen(
             NodeKind.LIST -> onOpenList(p)
             NodeKind.NOTE -> if (p.conflicted && canMerge) resolving = p else noteEdit = p
             NodeKind.CALENDAR -> calEdit = p
-            NodeKind.TODO, NodeKind.IMAGE, NodeKind.FILE ->
-                toast(context, "${p.kind.uiLabel()} – Anzeige folgt später")
+            NodeKind.TODO -> toast(context, "${p.kind.uiLabel()} – Anzeige folgt später")
+            NodeKind.IMAGE -> p.blobHash?.let { viewingImage = it } ?: toast(context, "Bild ohne Inhalt.")
+            NodeKind.FILE -> openFile(p)
         }
     }
 
@@ -316,7 +345,7 @@ fun ListScreen(
                         }
                     }
                     DropdownMenu(expanded = fabMenu, onDismissRequest = { fabMenu = false }) {
-                        for (k in CREATE_KINDS) {
+                        for (k in KindRules.allowedChildKinds(container?.kind)) {
                             DropdownMenuItem(
                                 leadingIcon = { Icon(k.uiIcon(), contentDescription = null) },
                                 text = { Text(k.uiLabel() + if (k == defaultKind) "  (Standard)" else "") },
@@ -357,7 +386,7 @@ fun ListScreen(
                                 onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
                             )
                             NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node })
-                            else -> NodeRow(node = node, onClick = { openChild(node) }, onLongClick = { actionNode = node })
+                            else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node })
                         }
                     }
                 }
@@ -411,14 +440,18 @@ fun ListScreen(
 }
 
 /**
- * Generische Zeile für Listen + Platzhalter-Einträge (Aufgabe/Bild/Datei). Nur **Listen** tragen ein
- * Icon, und zwar das ihres Default-Kindtyps ([NodeState.childDefault]) — also z. B. das Termin-Symbol
- * für eine Kalender-Liste. Einzel-Einträge bekommen (wie Notizen/Termine) kein Icon.
+ * Generische Zeile für Listen + Einzel-Einträge (Aufgabe/Bild/Datei). **Listen** tragen das Icon
+ * ihres Default-Kindtyps ([NodeState.childDefault]) — z. B. das Termin-Symbol für eine
+ * Kalender-Liste. **Bilder** zeigen ein Mini-Thumbnail, **Dateien** ein Datei-Icon + Namen.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NodeRow(node: NodeState, onClick: () -> Unit, onLongClick: () -> Unit) {
-    val leading = if (node.kind == NodeKind.LIST) (node.childDefault ?: NodeKind.LIST).uiIcon() else null
+private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val leading = when (node.kind) {
+        NodeKind.LIST -> (node.childDefault ?: NodeKind.LIST).uiIcon()
+        NodeKind.FILE -> NodeKind.FILE.uiIcon()
+        else -> null
+    }
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .tag(rowTag(node.title))
@@ -426,12 +459,19 @@ private fun NodeRow(node: NodeState, onClick: () -> Unit, onLongClick: () -> Uni
         colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (leading != null) Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+            if (node.kind == NodeKind.IMAGE && node.blobHash != null && blobStore != null) {
+                val bmp = rememberBlobBitmap(blobStore, node.blobHash, preferFull = false)
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
+                }
+            } else if (leading != null) {
+                Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+            }
             val extra = if (node.kind == NodeKind.LIST && FeedShareCodec.isShared(node.text)) "📤 " else ""
             Text(
                 extra + node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" },
                 fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = if (leading != null) 12.dp else 0.dp),
+                modifier = Modifier.weight(1f).padding(start = if (leading != null || node.kind == NodeKind.IMAGE) 12.dp else 0.dp),
             )
         }
     }
@@ -506,7 +546,7 @@ fun CreateListDialog(
                         Text("▾")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        for (k in CREATE_KINDS) {
+                        for (k in KindRules.allowedChildKinds(NodeKind.LIST)) {
                             DropdownMenuItem(leadingIcon = { Icon(k.uiIcon(), contentDescription = null) }, text = { Text(k.uiLabel()) }, onClick = { childDefault = k; menuOpen = false })
                         }
                     }
