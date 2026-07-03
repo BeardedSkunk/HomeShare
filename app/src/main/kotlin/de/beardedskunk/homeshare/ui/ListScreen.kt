@@ -148,6 +148,7 @@ fun ListScreen(
     var descEdit by remember { mutableStateOf<NodeState?>(null) }
     var todoOpen by remember { mutableStateOf<NodeState?>(null) }
     var showCreateTodo by remember { mutableStateOf(false) }
+    var attOpen by remember { mutableStateOf<NodeState?>(null) }
     var creatingNote by remember { mutableStateOf(false) }
     var calEdit by remember { mutableStateOf<NodeState?>(null) }
     var creatingCal by remember { mutableStateOf(false) }
@@ -265,8 +266,9 @@ fun ListScreen(
             NodeKind.NOTE -> if (p.conflicted && canMerge) resolving = p else noteEdit = p
             NodeKind.CALENDAR -> calEdit = p
             NodeKind.TODO -> todoOpen = p
-            NodeKind.IMAGE -> p.blobHash?.let { viewingImage = it } ?: toast(context, "Bild ohne Inhalt.")
-            NodeKind.FILE -> AttachmentPicker.openExternally(context, blobStore, p)
+            // Eigenständige Anhänge in Listen öffnen dieselbe Detailansicht wie Anhänge
+            // an Notizen/Aufgaben (Beschreibung + Bild/Datei).
+            NodeKind.IMAGE, NodeKind.FILE -> attOpen = p
         }
     }
 
@@ -285,6 +287,11 @@ fun ListScreen(
     resolvingDetailed?.let { p ->
         BackHandler { resolvingDetailed = null }
         DetailMergeScreen(repo = repo, blobStore = blobStore, feed = container ?: p, post = p, onOpenImage = { viewingImage = it }, onResolved = { resolvingDetailed = null; reload() }, onCancel = { resolvingDetailed = null })
+        return
+    }
+    attOpen?.let { a ->
+        BackHandler { attOpen = null; reload() }
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = !canWrite, onClose = { attOpen = null; reload() })
         return
     }
     todoOpen?.let { t ->

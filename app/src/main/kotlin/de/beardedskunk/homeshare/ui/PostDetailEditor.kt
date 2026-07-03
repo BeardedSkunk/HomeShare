@@ -1,17 +1,11 @@
 package de.beardedskunk.homeshare.ui
 
-import android.content.ComponentName
-import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,17 +21,13 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -53,19 +43,19 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,8 +67,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
@@ -92,20 +80,10 @@ import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.NodeState
-import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
-/**
- * Detail-/Editier-Ansicht eines Beitrags. Zwei Modi:
- *  - gerendert (Standard bei bestehendem Beitrag): Markdown wird angezeigt, Haken sind
- *    antippbar (jeder Klick = neue, gesyncte Version). Oben rechts der grüne Haken.
- *  - Quelltext (Standard bei neuem Beitrag): roher Markdown mit Toolbar. Oben rechts ✎.
- * Tippen auf den grünen Haken -> Quelltext; tippen auf ✎ -> speichern + zurück zu gerendert.
- * Die erste Zeile ist immer der markup-freie Titel.
- */
 /**
  * Offset des ZEILENENDES der Zeile, die [offset] enthaelt. Fuer #5-lite: Tipp auf
  * gerenderten Text -> Edit-Modus mit Cursor am Ende genau dieser Zeile.
@@ -116,6 +94,15 @@ private fun endOfLineAt(text: String, offset: Int): Int {
     return if (nl < 0) text.length else nl
 }
 
+/**
+ * Detail-/Editier-Ansicht eines Beitrags. Zwei Modi:
+ *  - gerendert (Standard bei bestehendem Beitrag): Markdown wird angezeigt, Haken sind
+ *    antippbar, Listen-Zeilen per Handle verschiebbar. Oben rechts der grüne Haken.
+ *  - Quelltext (Standard bei neuem Beitrag): roher Markdown mit Toolbar. Oben rechts ✎.
+ * Die erste Zeile ist immer der markup-freie Titel. Anhänge (Bilder/Dateien) hängen als
+ * Kindknoten am Beitrag und erscheinen als „Anhänge“-Kasten unter dem Text (beide Modi);
+ * angelegt werden sie über den FAB (nur Bild + Datei), Details in [AttachmentDetailScreen].
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PostDetailEditor(
@@ -125,9 +112,7 @@ fun PostDetailEditor(
     post: NodeState?,
     /**
      * Wurde der Beitrag aus einer Suche geoeffnet: dieser Suchbegriff. Die Ansicht startet dann
-     * im RENDER-Modus mit aktiver Suche (Treffer hervorgehoben, durchsteppbar, Bild-Beschreibungen
-     * klappen am Treffer auf). Tippt man dann in einen Treffer, oeffnet der Edit-Modus mit
-     * markiertem Treffer.
+     * im RENDER-Modus mit aktiver Suche (Treffer hervorgehoben, durchsteppbar).
      */
     searchQuery: String? = null,
     /**
@@ -147,128 +132,59 @@ fun PostDetailEditor(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val maxImageHeight = (LocalConfiguration.current.screenHeightDp * 0.2f).dp
-    // Tastaturhöhe hier (noch unkonsumiert) als Zahl lesen: begrenzt unten das Viewport UND liefert
-    // den gleichen Wert als Scroll-Puffer, damit der Cursor des letzten Felds nie hinter der Tastatur landet.
     val density = LocalDensity.current
     val imeBottom = with(density) { WindowInsets.ime.getBottom(density).toDp() }
 
     var sourceMode by remember { mutableStateOf(post == null) }
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
-    // Bild-/Datei-Anhänge sind Kindknoten des Eintrags; ihre Beschreibung je ein TEXT-Kindknoten.
-    // Parallele Listen (Index-gleich): Blob-Hash, Beschreibung, Bild-Knoten-Id, Beschreibungs-Knoten-Id.
-    var images by remember { mutableStateOf<List<String>>(emptyList()) }
-    var imageTitles by remember { mutableStateOf<List<TextFieldValue>>(emptyList()) }
-    var imageNodeIds by remember { mutableStateOf<List<String>>(emptyList()) }
-    var captionNodeIds by remember { mutableStateOf<List<String?>>(emptyList()) }
     var currentNodeId by remember { mutableStateOf(post?.nodeId) }
 
-    fun reloadSubtree(entryId: String) {
-        scope.launch {
-            val kids = withContext(Dispatchers.IO) {
-                repo.children(entryId)
-                    .filter { it.type == NodeType.IMAGE || it.type == NodeType.FILE }
-                    .map { img ->
-                        val cap = repo.children(img.nodeId).firstOrNull { it.type == NodeType.TEXT }
-                        ImgKid(img.nodeId, img.blobHash ?: "", cap?.nodeId, cap?.text ?: "")
-                    }
-            }
-            images = kids.map { it.hash }
-            imageTitles = kids.map { TextFieldValue(it.caption) }
-            imageNodeIds = kids.map { it.imgId }
-            captionNodeIds = kids.map { it.capId }
+    // ---- Anhänge (IMAGE/FILE-Kinder mit Caption-Titel) ----
+    var attachments by remember { mutableStateOf<List<AttachmentRow>>(emptyList()) }
+    var attOpen by remember { mutableStateOf<NodeState?>(null) }
+    val revision by repo.revision.collectAsState()
+    LaunchedEffect(revision, currentNodeId, showAttachments) {
+        val id = currentNodeId
+        attachments = if (showAttachments && id != null) {
+            withContext(Dispatchers.IO) { loadAttachmentRows(repo, id) }
+        } else {
+            emptyList()
         }
     }
-    LaunchedEffect(Unit) { if (showAttachments) currentNodeId?.let { reloadSubtree(it) } }
-    // Suche ist geteilter Zustand (siehe onSearchQueryChange): null = zu, sonst offen.
+
+    // ---- Suche (nur im Body; Anhang-Texte haben ihre eigene Detailansicht) ----
     val findOpen = searchQuery != null
     val findQuery = searchQuery ?: ""
     var matchIdx by remember { mutableStateOf(0) }
     var helpOpen by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
-    val titleFocusers = remember(images.size) { List(images.size) { FocusRequester() } }
-
-    val matches: List<FindHit> = remember(tfv.text, imageTitles, findQuery) {
-        if (findQuery.isBlank()) emptyList() else buildList {
-            findAllMatches(tfv.text, findQuery).forEach { add(FindHit(-1, it)) }
-            imageTitles.forEachIndexed { i, t -> findAllMatches(t.text, findQuery).forEach { add(FindHit(i, it)) } }
-        }
+    val matches: List<Int> = remember(tfv.text, findQuery) {
+        if (findQuery.isBlank()) emptyList() else findAllMatches(tfv.text, findQuery)
     }
 
     fun jumpTo(index: Int) {
         if (matches.isEmpty()) return
         val i = ((index % matches.size) + matches.size) % matches.size
         matchIdx = i
-        val hit = matches[i]
-        val range = TextRange(hit.start, hit.start + findQuery.length)
-        if (hit.target < 0) {
-            tfv = tfv.copy(selection = range); focusRequester.requestFocus()
-        } else {
-            imageTitles = imageTitles.toMutableList().also {
-                if (hit.target < it.size) it[hit.target] = it[hit.target].copy(selection = range)
-            }
-            titleFocusers.getOrNull(hit.target)?.requestFocus()
-        }
+        tfv = tfv.copy(selection = TextRange(matches[i], matches[i] + findQuery.length))
+        focusRequester.requestFocus()
     }
 
     // Im Render-Modus zaehlt die RenderedView ihre (gerenderten) Treffer; im Edit-Modus die Quell-Treffer.
     var renderMatchCount by remember { mutableStateOf(0) }
     val matchCount = if (sourceMode) matches.size else renderMatchCount
-    // Beim Wechsel Render<->Edit bzw. neuer Suche von vorne zaehlen.
     LaunchedEffect(sourceMode) { matchIdx = 0 }
+    LaunchedEffect(searchQuery) { matchIdx = 0 }
 
     fun stepMatch(delta: Int) {
         val c = matchCount
         if (c == 0) return
         val next = ((matchIdx + delta) % c + c) % c
-        if (sourceMode) jumpTo(next) else matchIdx = next // render: RenderedView scrollt/klappt auf
+        if (sourceMode) jumpTo(next) else matchIdx = next // render: RenderedView scrollt
     }
 
-    // Nach Bildauswahl in der Renderview: zum neuen Bild springen + dessen Titel-Feld fokussieren (Tbd #6).
-    var pendingFocusImage by remember { mutableStateOf<Int?>(null) }
     // Tipp auf gerenderten Text -> Quelltext fokussieren (Cursor sitzt schon an der Quellstelle, Tbd #2).
     var pendingEditFocus by remember { mutableStateOf(false) }
-    // Mehrfachauswahl: man kann gleich mehrere Bilder picken, ohne extra "OK" (Tbd #11).
-    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
-        if (uris.isNotEmpty()) {
-            scope.launch {
-                // Eintrags-Knoten sicherstellen (bei neuem Beitrag erst jetzt anlegen).
-                val entryId = currentNodeId ?: withContext(Dispatchers.IO) {
-                    repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = tfv.text)).nodeId
-                }
-                currentNodeId = entryId
-                val added = withContext(Dispatchers.IO) {
-                    uris.mapNotNull { uri ->
-                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@mapNotNull null
-                        val sha = blobStore.put(bytes)
-                        // Bild-Knoten + zugehörigen (leeren) Beschreibungs-Textknoten gleich miterzeugen.
-                        val imgId = repo.createNode(NodeContent(parentId = entryId, type = NodeType.IMAGE, blobHash = sha)).nodeId
-                        val capId = repo.createNode(NodeContent(parentId = imgId, type = NodeType.TEXT, text = "")).nodeId
-                        ImgKid(imgId, sha, capId, "")
-                    }
-                }
-                if (added.isNotEmpty()) {
-                    images = images + added.map { it.hash }
-                    imageTitles = imageTitles + added.map { TextFieldValue(it.caption) }
-                    imageNodeIds = imageNodeIds + added.map { it.imgId }
-                    captionNodeIds = captionNodeIds + added.map { it.capId }
-                    sourceMode = true
-                    pendingFocusImage = images.size - 1
-                }
-            }
-        }
-    }
-
-    // Neu hinzugefügtes Bild fokussieren -> Compose scrollt das Titel-Feld automatisch in den Blick (Tbd #6).
-    LaunchedEffect(pendingFocusImage, sourceMode) {
-        val idx = pendingFocusImage
-        if (idx != null && sourceMode && idx < titleFocusers.size) {
-            kotlinx.coroutines.delay(150)
-            runCatching { titleFocusers[idx].requestFocus() }
-            pendingFocusImage = null
-        }
-    }
-    // Tipp auf gerenderten Text: Quelltext-Feld fokussieren (Cursor wurde schon gesetzt, Tbd #2).
     LaunchedEffect(pendingEditFocus, sourceMode) {
         if (pendingEditFocus && sourceMode) {
             kotlinx.coroutines.delay(120)
@@ -277,128 +193,44 @@ fun PostDetailEditor(
         }
     }
 
-    // Neue Suche / geänderter Begriff -> Trefferzähler von vorne.
-    LaunchedEffect(searchQuery) { matchIdx = 0 }
+    // ---- Anhänge anlegen (FAB): Eintrags-Knoten bei neuem Beitrag erst jetzt anlegen. ----
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            val entryId = currentNodeId ?: withContext(Dispatchers.IO) {
+                repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = tfv.text)).nodeId
+            }
+            currentNodeId = entryId
+            withContext(Dispatchers.IO) { uris.forEach { AttachmentPicker.addImage(context, repo, blobStore, entryId, it) } }
+        }
+    }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val entryId = currentNodeId ?: withContext(Dispatchers.IO) {
+                repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = tfv.text)).nodeId
+            }
+            currentNodeId = entryId
+            withContext(Dispatchers.IO) { AttachmentPicker.addFile(context, repo, blobStore, entryId, uri) }
+        }
+    }
 
-    val editTargets = remember { imageEditTargets(context) }
-    var imageMenuFor by remember { mutableStateOf<Int?>(null) }
-    var viewingIndex by remember { mutableStateOf<Int?>(null) }
-    var pendingEdit by remember { mutableStateOf<PendingEdit?>(null) }
-    val authority = remember { context.packageName + ".fileprovider" }
-
-    // Persistiert Text des Eintrags + Beschreibungen der Bild-Kinder (Bilder selbst werden schon
-    // beim Hinzufügen/Entfernen sofort persistiert).
+    /** Persistiert den Text des Eintrags (Anhänge werden sofort beim Anlegen/Löschen persistiert). */
     fun save() {
         val text = tfv.text
-        val caps = imageTitles.map { it.text }
-        val imgIds = imageNodeIds
-        val capIds = captionNodeIds
         scope.launch {
             val newId = withContext(Dispatchers.IO) {
                 val entryId = currentNodeId
-                val id = if (entryId == null) {
+                if (entryId == null) {
                     repo.createNode(NodeContent(parentId = parentId, type = NodeType.TEXT, text = text)).nodeId
                 } else {
                     val hc = repo.headContent(entryId) ?: NodeContent(parentId = parentId, type = NodeType.TEXT)
                     // Typ NICHT anfassen: der Editor bearbeitet auch LISTen (Beschreibung) und
-                    // künftig TODOs – deren Knotentyp muss erhalten bleiben.
+                    // TODOs – deren Knotentyp muss erhalten bleiben.
                     repo.editNode(entryId, hc.copy(text = text))
                     entryId
                 }
-                imgIds.forEachIndexed { i, imgId ->
-                    val cap = caps.getOrElse(i) { "" }
-                    val capId = capIds.getOrNull(i)
-                    if (capId != null) {
-                        val chc = repo.headContent(capId) ?: NodeContent(parentId = imgId, type = NodeType.TEXT)
-                        repo.editNode(capId, chc.copy(text = cap, type = NodeType.TEXT))
-                    } else {
-                        repo.createNode(NodeContent(parentId = imgId, type = NodeType.TEXT, text = cap))
-                    }
-                }
-                id
             }
             currentNodeId = newId
         }
-    }
-
-    // Bild-Bearbeitung kommt über einen temporären Galerie-Eintrag zurück (Markup u. a.
-    // schreiben nur dort in-place). Änderung -> Arbeitsstand ersetzen und in den
-    // Quelltext-Modus wechseln (ungespeichert; erst ✎->✓ übernimmt sie).
-    val editLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val pe = pendingEdit ?: return@rememberLauncherForActivityResult
-        pendingEdit = null
-        scope.launch {
-            val newSha = withContext(Dispatchers.IO) {
-                val candidates = buildList {
-                    result.data?.data?.let { u ->
-                        runCatching { context.contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull()?.let { add(it) }
-                    }
-                    MediaStoreEdit.read(context, pe.galleryUri)?.let { add(it) }
-                }
-                var picked: String? = null
-                for (b in candidates) if (b.isNotEmpty()) {
-                    val s = blobStore.put(b)
-                    if (s != pe.originalSha) { picked = s; break }
-                }
-                MediaStoreEdit.delete(context, pe.galleryUri)
-                picked
-            }
-            if (newSha != null && pe.index < images.size) {
-                val imgId = imageNodeIds.getOrNull(pe.index)
-                if (imgId != null) withContext(Dispatchers.IO) {
-                    val ihc = repo.headContent(imgId) ?: NodeContent(parentId = currentNodeId ?: parentId, type = NodeType.IMAGE)
-                    repo.editNode(imgId, ihc.copy(blobHash = newSha, type = NodeType.IMAGE))
-                }
-                images = images.toMutableList().also { it[pe.index] = newSha }
-                viewingIndex = null
-                sourceMode = true
-                toast(context, "Bild geändert.")
-            } else if (newSha == null) {
-                toast(context, "Keine Änderung übernommen.")
-            }
-        }
-    }
-
-    fun launchEdit(index: Int, sha: String, target: EditTarget?, forceChooser: Boolean) {
-        val full = blobStore.readFull(sha)
-        if (full == null) {
-            toast(context, "Vollbild nicht lokal – erst antippen zum Laden."); return
-        }
-        val uri = MediaStoreEdit.createPending(context, full, "homeshare_edit_${System.currentTimeMillis()}.png")
-        if (uri == null) {
-            toast(context, "Konnte Bild nicht vorbereiten."); return
-        }
-        val base = Intent(Intent.ACTION_EDIT).apply {
-            setDataAndType(uri, "image/*")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        }
-        val toLaunch = when {
-            target != null -> Intent(base).setComponent(ComponentName(target.pkg, target.cls))
-            forceChooser -> Intent.createChooser(base, "Bearbeiten mit…").apply {
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            }
-            else -> base
-        }
-        pendingEdit = PendingEdit(index, uri, sha)
-        runCatching { editLauncher.launch(toLaunch) }.onFailure {
-            pendingEdit = null
-            MediaStoreEdit.delete(context, uri)
-            toast(context, "Keine App zum Bearbeiten gefunden.")
-        }
-    }
-
-    fun shareImage(sha: String) {
-        val file: File? = when {
-            blobStore.hasFull(sha) -> blobStore.fullFile(sha)
-            blobStore.hasThumb(sha) -> blobStore.thumbFile(sha)
-            else -> null
-        }
-        if (file == null) { toast(context, "Bild nicht lokal."); return }
-        val uri = FileProvider.getUriForFile(context, authority, file)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "image/*"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { context.startActivity(Intent.createChooser(send, "Bild teilen")) }
     }
 
     fun delete() {
@@ -417,44 +249,16 @@ fun PostDetailEditor(
         }
     }
 
-    fun toggleImageTask(index: Int, sourceLine: Int) {
-        val cur = imageTitles.getOrNull(index) ?: return
-        val lines = cur.text.split("\n").toMutableList()
-        if (sourceLine in lines.indices) {
-            lines[sourceLine] = flipTaskLine(lines[sourceLine])
-            imageTitles = imageTitles.toMutableList().also { it[index] = cur.copy(text = lines.joinToString("\n")) }
-            save()
-        }
-    }
-
-    // --- Vollbild-Ansicht mit Aktionen (Bearbeiten/Löschen verändern -> Quelltext-Modus). ---
-    val vi = viewingIndex
-    if (vi != null && vi < images.size) {
-        BackHandler { viewingIndex = null }
-        val sha = images[vi]
-        ImageViewerScreen(
-            blobStore = blobStore,
-            sha = sha,
-            title = imageTitles.getOrNull(vi)?.text?.substringBefore('\n'),
-            onShare = { shareImage(sha) },
-            onEdit = { force -> launchEdit(vi, images[vi], null, force) },
-            onDelete = {
-                val imgId = imageNodeIds.getOrNull(vi)
-                scope.launch {
-                    if (imgId != null) withContext(Dispatchers.IO) { repo.deleteNode(imgId) }
-                    images = images.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
-                    imageTitles = imageTitles.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
-                    imageNodeIds = imageNodeIds.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
-                    captionNodeIds = captionNodeIds.toMutableList().also { if (vi < it.size) it.removeAt(vi) }
-                    viewingIndex = null
-                }
-            },
-            onBack = { viewingIndex = null },
-        )
+    // ---- Anhang-Detailansicht (modal) ----
+    attOpen?.let { a ->
+        BackHandler { attOpen = null }
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onClose = { attOpen = null })
         return
     }
 
     if (helpOpen) MarkdownHelpDialog(onDismiss = { helpOpen = false })
+
+    var fabMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -464,8 +268,7 @@ fun PostDetailEditor(
                     BackIconButton(onClick = onClose, contentDescription = "Abbrechen")
                 },
                 actions = {
-                    // Suche in BEIDEN Modi (gerendert + Quelltext). Schließen leert den Begriff
-                    // und propagiert nach oben (siehe onSearchQueryChange).
+                    // Suche in BEIDEN Modi (gerendert + Quelltext).
                     IconButton(onClick = { onSearchQueryChange(if (findOpen) null else "") }, modifier = Modifier.tag("topbar:search")) {
                         Icon(
                             if (findOpen) Icons.Filled.Close else Icons.Filled.Search,
@@ -473,12 +276,6 @@ fun PostDetailEditor(
                         )
                     }
                     if (!readOnly) {
-                        // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
-                        if (showAttachments) IconButton(onClick = {
-                            pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        }, modifier = Modifier.tag("topbar:add")) {
-                            Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")
-                        }
                         if (post != null) {
                             IconButton(onClick = { delete() }, modifier = Modifier.tag("topbar:delete")) {
                                 Icon(Icons.Filled.Delete, contentDescription = "Löschen")
@@ -503,6 +300,19 @@ fun PostDetailEditor(
                 },
             )
         },
+        floatingActionButton = {
+            // Anhänge (nur Bild + Datei) über den FAB – wie in der Aufgaben-Ansicht.
+            if (!readOnly && showAttachments) Box {
+                FloatingActionButton(onClick = { fabMenu = true }, modifier = Modifier.tag("fab:add")) {
+                    Icon(Icons.Filled.Add, contentDescription = "Anhang hinzufügen")
+                }
+                AttachmentFabMenu(
+                    expanded = fabMenu, onDismiss = { fabMenu = false },
+                    onPickImages = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onPickFile = { pickFile.launch(arrayOf("*/*")) },
+                )
+            }
+        },
     ) { padding ->
         // Such-Leiste FIX oben (ausserhalb des scrollenden Inhalts) -> sie bleibt sichtbar,
         // auch wenn die Tastatur hochpoppt (#7). Inhalt darunter bekommt imePadding.
@@ -525,41 +335,9 @@ fun PostDetailEditor(
                         focusRequester = focusRequester,
                         onHelp = { helpOpen = true },
                         applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
-                        // Bildtext-Toolbar wirkt auf das jeweilige Beschreibungsfeld (gleiche Mechanik wie Haupttext).
-                        titleApply = { idx, transform ->
-                            imageTitles = imageTitles.toMutableList().also {
-                                while (it.size <= idx) it.add(TextFieldValue(""))
-                                it[idx] = transform(it[idx])
-                            }
-                            titleFocusers.getOrNull(idx)?.requestFocus()
-                        },
-                        images = images,
-                        imageTitles = imageTitles,
-                        titleFocusers = titleFocusers,
-                        maxImageHeight = maxImageHeight,
+                        attachments = attachments,
                         blobStore = blobStore,
-                        editTargets = editTargets,
-                        imageMenuFor = imageMenuFor,
-                        onImageMenu = { imageMenuFor = it },
-                        onView = { viewingIndex = it },
-                        onEdit = { idx, sha, t, force -> launchEdit(idx, sha, t, force) },
-                        onShare = { shareImage(it) },
-                        onRemove = { idx ->
-                            val imgId = imageNodeIds.getOrNull(idx)
-                            scope.launch {
-                                if (imgId != null) withContext(Dispatchers.IO) { repo.deleteNode(imgId) }
-                                images = images.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                                imageTitles = imageTitles.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                                imageNodeIds = imageNodeIds.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                                captionNodeIds = captionNodeIds.toMutableList().also { if (idx < it.size) it.removeAt(idx) }
-                            }
-                        },
-                        onTitleChange = { idx, nv ->
-                            imageTitles = imageTitles.toMutableList().also {
-                                while (it.size <= idx) it.add(TextFieldValue(""))
-                                it[idx] = handleEnter(it[idx], nv) ?: nv
-                            }
-                        },
+                        onOpenAttachment = { attOpen = it.node },
                         bottomInset = imeBottom,
                     )
                 } else {
@@ -586,16 +364,9 @@ fun PostDetailEditor(
                                 pendingEditFocus = true
                             }
                         },
-                        images = images,
-                        imageTitles = imageTitles,
-                        maxImageHeight = maxImageHeight,
+                        attachments = attachments,
                         blobStore = blobStore,
-                        imageMenuFor = imageMenuFor,
-                        onImageMenu = { imageMenuFor = it },
-                        onView = { viewingIndex = it },
-                        onEdit = { idx, sha, force -> launchEdit(idx, sha, null, force) },
-                        onShare = { shareImage(it) },
-                        onToggleImageTask = { idx, line -> toggleImageTask(idx, line) },
+                        onOpenAttachment = { attOpen = it.node },
                         query = if (findOpen) findQuery else null,
                         currentMatch = matchIdx,
                         onMatchCount = { renderMatchCount = it },
@@ -603,6 +374,25 @@ fun PostDetailEditor(
                 }
             }
         }
+    }
+}
+
+/** FAB-Menü für Anhänge: bewusst NUR Bild + Datei (keine Termine/Notizen über den FAB). */
+@Composable
+fun AttachmentFabMenu(expanded: Boolean, onDismiss: () -> Unit, onPickImages: () -> Unit, onPickFile: () -> Unit) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(de.beardedskunk.homeshare.core.NodeKind.IMAGE.uiIcon(), contentDescription = null) },
+            text = { Text("Bild") },
+            onClick = { onDismiss(); onPickImages() },
+            modifier = Modifier.tag("menu:create:image"),
+        )
+        DropdownMenuItem(
+            leadingIcon = { Icon(de.beardedskunk.homeshare.core.NodeKind.FILE.uiIcon(), contentDescription = null) },
+            text = { Text("Datei") },
+            onClick = { onDismiss(); onPickFile() },
+            modifier = Modifier.tag("menu:create:file"),
+        )
     }
 }
 
@@ -632,8 +422,8 @@ private fun FindBar(
     }
 }
 
-/** Quelltext-Editor: Haupttext-Feld + Bild-Felder, jeweils mit der gleichen [MarkdownToolbar]. */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+/** Quelltext-Editor: Haupttext-Feld + Toolbar; darunter der Anhänge-Kasten. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SourceEditor(
     tfv: TextFieldValue,
@@ -641,26 +431,11 @@ private fun SourceEditor(
     focusRequester: FocusRequester,
     onHelp: () -> Unit,
     applyToTfv: ((TextFieldValue) -> TextFieldValue) -> Unit,
-    titleApply: (Int, (TextFieldValue) -> TextFieldValue) -> Unit,
-    images: List<String>,
-    imageTitles: List<TextFieldValue>,
-    titleFocusers: List<FocusRequester>,
-    maxImageHeight: androidx.compose.ui.unit.Dp,
+    attachments: List<AttachmentRow>,
     blobStore: BlobStore,
-    editTargets: List<EditTarget>,
-    imageMenuFor: Int?,
-    onImageMenu: (Int?) -> Unit,
-    onView: (Int) -> Unit,
-    onEdit: (Int, String, EditTarget?, Boolean) -> Unit,
-    onShare: (String) -> Unit,
-    onRemove: (Int) -> Unit,
-    onTitleChange: (Int, TextFieldValue) -> Unit,
+    onOpenAttachment: (AttachmentRow) -> Unit,
     bottomInset: androidx.compose.ui.unit.Dp,
 ) {
-    val scope = rememberCoroutineScope()
-    // Pro Bildbeschreibungsfeld ein Requester: beim Tippen aktiv ins Sichtfeld holen, da Composes
-    // automatisches bringIntoView nur beim Fokussieren feuert, nicht beim Wachsen durch Eingabe.
-    val titleBivrs = remember(images.size) { List(images.size) { BringIntoViewRequester() } }
     // Editier-Flaeche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         OutlinedTextField(
@@ -670,57 +445,22 @@ private fun SourceEditor(
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).tag("field:body").focusRequester(focusRequester),
         )
         MarkdownToolbar(value = tfv, apply = applyToTfv, onHelp = onHelp)
-
-        images.forEachIndexed { index, sha ->
-            Column(Modifier.fillMaxWidth().padding(8.dp)) {
-                Box(Modifier.fillMaxWidth()) {
-                    val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
-                    val imgModifier = Modifier.fillMaxWidth().heightIn(max = maxImageHeight).combinedClickable(
-                        onClick = { onView(index) }, onLongClick = { onImageMenu(index) },
-                    )
-                    if (bmp != null) Image(bitmap = bmp, contentDescription = imageTitles.getOrNull(index)?.text, contentScale = ContentScale.Fit, modifier = imgModifier)
-                    else Text("🖼 (Bild nicht lokal)", modifier = imgModifier)
-                    IconButton(onClick = { onRemove(index) }, modifier = Modifier.align(Alignment.TopEnd)) {
-                        Icon(Icons.Filled.Close, contentDescription = "Bild entfernen")
-                    }
-                    ImageActionMenu(
-                        expanded = imageMenuFor == index, onDismiss = { onImageMenu(null) },
-                        editTargets = editTargets,
-                        onView = { onImageMenu(null); onView(index) },
-                        onEdit = { t, force -> onImageMenu(null); onEdit(index, sha, t, force) },
-                        onShare = { onImageMenu(null); onShare(sha) },
-                        onRemove = { onImageMenu(null); onRemove(index) },
-                    )
-                }
-                val titleValue = imageTitles.getOrElse(index) { TextFieldValue("") }
-                OutlinedTextField(
-                    value = titleValue,
-                    onValueChange = { onTitleChange(index, it); scope.launch { titleBivrs[index].bringIntoView() } },
-                    placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                        .tag("field:caption:$index")
-                        .bringIntoViewRequester(titleBivrs[index])
-                        .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
-                )
-                // Gleiche Toolbar wie beim Haupttext – wirkt auf genau dieses Beschreibungsfeld.
-                MarkdownToolbar(value = titleValue, apply = { transform -> titleApply(index, transform) }, onHelp = onHelp)
-            }
-        }
-        // Tastaturhoher Puffer: das letzte (Bild-)Feld kann so über die Tastatur gescrollt
+        AttachmentBox(attachments, blobStore, onOpen = onOpenAttachment)
+        // Tastaturhoher Puffer: das letzte Feld kann so über die Tastatur gescrollt
         // werden, damit der Cursor beim Tippen nie dahinter verschwindet.
         Spacer(Modifier.height(bottomInset))
     }
 }
 
 /**
- * Markdown-Toolbar (Aufgabe/Fett/Kursiv/Durchgestrichen/Code/Zeile↑↓). Wird sowohl für den
- * Haupttext als auch für jede Bildbeschreibung verwendet – damit beide identisch funktionieren.
- * [value] dient der Aktiv/Inaktiv-Logik (Titelzeile, Zeilenauswahl), [apply] wendet eine
- * Transformation auf das zugehörige Feld an (und fokussiert es danach wieder).
+ * Markdown-Toolbar (Aufgabe/Fett/Kursiv/Durchgestrichen/Code/Hilfe). Auch von der
+ * [AttachmentDetailScreen] genutzt – deshalb nicht private.
+ * [value] dient der Aktiv/Inaktiv-Logik (Titelzeile), [apply] wendet eine
+ * Transformation auf das zugehörige Feld an.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MarkdownToolbar(
+fun MarkdownToolbar(
     value: TextFieldValue,
     apply: ((TextFieldValue) -> TextFieldValue) -> Unit,
     onHelp: () -> Unit,
@@ -729,8 +469,6 @@ private fun MarkdownToolbar(
     val firstNl = value.text.indexOf('\n').let { if (it < 0) value.text.length else it }
     val onTitleLine = value.selection.start <= firstNl
     // Rendert genau MARKDOWN_TOOLBAR (datengetrieben + exhaustives when => kein Knopf fällt unbemerkt weg).
-    // FlowRow statt horizontalem Scroll: passt nicht alles in eine Zeile (schmale Geräte), bricht der
-    // Rest (↑ ↓ ?) in eine zweite Zeile um – nie abgeschnitten, alle Labels bleiben sichtbar.
     FlowRow(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -746,30 +484,22 @@ private fun MarkdownToolbar(
     }
 }
 
-/** Gerenderte Ansicht: Titel als Überschrift, Markdown-Körper mit antippbaren Haken, Bilder mit Beschreibung. */
-@OptIn(ExperimentalFoundationApi::class)
+/** Gerenderte Ansicht: Titel als Überschrift, Markdown-Körper mit antippbaren Haken und
+ *  verschiebbaren Listen-Zeilen; darunter der Anhänge-Kasten. */
 @Composable
 private fun RenderedView(
     text: String,
     onToggleTask: (Int) -> Unit,
     onEditAt: (Int) -> Unit,
-    images: List<String>,
-    imageTitles: List<TextFieldValue>,
-    maxImageHeight: androidx.compose.ui.unit.Dp,
+    attachments: List<AttachmentRow>,
     blobStore: BlobStore,
-    imageMenuFor: Int?,
-    onImageMenu: (Int?) -> Unit,
-    onView: (Int) -> Unit,
-    onEdit: (Int, String, Boolean) -> Unit,
-    onShare: (String) -> Unit,
-    onToggleImageTask: (Int, Int) -> Unit,
+    onOpenAttachment: (AttachmentRow) -> Unit,
     query: String?,
     currentMatch: Int,
     onMatchCount: (Int) -> Unit,
     /** Zeile [from] vor/hinter Zeile [to] verschieben (absolute Quellzeilen); null = kein Drag. */
     onMoveLine: ((from: Int, to: Int) -> Unit)? = null,
 ) {
-    val descExpanded = remember { mutableStateMapOf<Int, Boolean>() }
     val listState = rememberLazyListState()
     val body = MaterialTheme.typography.bodyLarge
     val title = postTitle(text)
@@ -777,29 +507,23 @@ private fun RenderedView(
     val q = query?.takeIf { it.isNotBlank() }
     val titleItems = if (title.isNotBlank()) 1 else 0
 
-    // Treffer-Anker in LazyColumn-Item-Reihenfolge: [Titel?] + Bloecke + Bilder.
-    // Triple(itemIndex, bildIndexOder-1, gerenderter Treffer-Bereich).
-    val anchors = remember(text, q, imageTitles.map { it.text }, images) {
+    // Treffer-Anker in LazyColumn-Item-Reihenfolge: [Titel?] + Bloecke.
+    val anchors = remember(text, q) {
         if (q == null) emptyList() else buildList {
             var item = 0
-            if (title.isNotBlank()) { matchRanges(title, q).forEach { add(Triple(item, -1, it)) }; item++ }
-            for (b in blocks) { matchRanges(b.plain, q).forEach { add(Triple(item, -1, it)) }; item++ }
-            images.indices.forEach { i ->
-                matchRanges(imageTitles.getOrNull(i)?.text ?: "", q).forEach { add(Triple(item, i, it)) }
-                item++
-            }
+            if (title.isNotBlank()) { matchRanges(title, q).forEach { add(item to it) }; item++ }
+            for (b in blocks) { matchRanges(b.plain, q).forEach { add(item to it) }; item++ }
         }
     }
     LaunchedEffect(anchors.size) { onMatchCount(anchors.size) }
     LaunchedEffect(currentMatch, anchors) {
-        anchors.getOrNull(currentMatch)?.let { (itemIdx, img, _) ->
-            if (img >= 0) descExpanded[img] = true // Treffer in Bild-Beschreibung -> diese aufklappen
+        anchors.getOrNull(currentMatch)?.let { (itemIdx, _) ->
             runCatching { listState.animateScrollToItem(itemIdx) }
         }
     }
     val cur = anchors.getOrNull(currentMatch)
     fun curRangeFor(itemIndex: Int): IntRange? =
-        if (cur != null && cur.first == itemIndex && cur.second < 0) cur.third else null
+        if (cur != null && cur.first == itemIndex) cur.second else null
 
     // ---- Zeilen-Drag in der gerenderten Ansicht (ersetzt die ↑/↓-Toolbar-Pfeile) ----
     // Nur Listen-Zeilen (Task/Bullet/Nummer) sind greifbar; der Drop ist auf den
@@ -879,81 +603,16 @@ private fun RenderedView(
                 MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
             }
         }
-        itemsIndexed(images) { i, sha ->
-            Column(Modifier.fillMaxWidth()) {
-                Spacer(Modifier.size(12.dp))
-                Box(Modifier.fillMaxWidth()) {
-                    val bmp = rememberBlobBitmap(blobStore, sha, preferFull = true)
-                    val imgModifier = Modifier.fillMaxWidth().heightIn(max = maxImageHeight).combinedClickable(
-                        onClick = { onView(i) }, onLongClick = { onImageMenu(i) },
-                    )
-                    if (bmp != null) Image(bitmap = bmp, contentDescription = null, contentScale = ContentScale.Fit, modifier = imgModifier)
-                    else Text("🖼 (Bild nicht lokal)", modifier = imgModifier)
-                    ImageActionMenu(
-                        expanded = imageMenuFor == i, onDismiss = { onImageMenu(null) },
-                        editTargets = emptyList(),
-                        onView = { onImageMenu(null); onView(i) },
-                        onEdit = { _, force -> onImageMenu(null); onEdit(i, sha, force) },
-                        onShare = { onImageMenu(null); onShare(sha) },
-                        onRemove = null,
-                    )
-                }
-                val desc = imageTitles.getOrNull(i)?.text ?: ""
-                val dTitle = postTitle(desc)
-                val hasBody = postBody(desc).isNotBlank()
-                val isOpen = descExpanded[i] == true
-                if (dTitle.isNotBlank() || hasBody) {
-                    Row(
-                        Modifier.fillMaxWidth().let { if (hasBody) it.clickable { descExpanded[i] = !isOpen } else it },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            highlightedText(dTitle.ifBlank { "Details" }, q, null),
-                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f).padding(top = 4.dp),
-                        )
-                        if (hasBody) {
-                            Icon(
-                                if (isOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                                contentDescription = if (isOpen) "Einklappen" else "Aufklappen",
-                            )
-                        }
-                    }
-                }
-                if (hasBody && isOpen) MarkdownBody(desc, onToggleTask = { line -> onToggleImageTask(i, line) }, highlight = q)
+        if (attachments.isNotEmpty()) {
+            item("attachments") {
+                AttachmentBox(attachments, blobStore, onOpen = onOpenAttachment)
             }
         }
-    }
-}
-
-/** Aktionsmenü pro Bild: Öffnen / Bearbeiten(…) / Teilen / (Löschen). */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ImageActionMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    editTargets: List<EditTarget>,
-    onView: () -> Unit,
-    onEdit: (EditTarget?, Boolean) -> Unit,
-    onShare: () -> Unit,
-    onRemove: (() -> Unit)?,
-) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        DropdownMenuItem(text = { Text("Öffnen") }, onClick = onView)
-        if (editTargets.size in 1..3) {
-            editTargets.forEach { t ->
-                DropdownMenuItem(text = { Text("Bearbeiten mit ${t.label}") }, onClick = { onEdit(t, false) })
-            }
-        } else {
-            EditMenuItem(onTap = { onEdit(null, false) }, onLongPress = { onEdit(null, true) })
-        }
-        DropdownMenuItem(text = { Text("Teilen") }, onClick = onShare)
-        if (onRemove != null) DropdownMenuItem(text = { Text("Löschen") }, onClick = onRemove)
     }
 }
 
 /** Kleiner Toolbar-Knopf. defaultMinSize hebt den 58-dp-Mindestbreiten-Boden von TextButton auf,
- *  sonst passen die 8 Knöpfe (inkl. ↑ ↓ ?) auf schmalen Geräten nicht nebeneinander. */
+ *  sonst passen die Knöpfe auf schmalen Geräten nicht nebeneinander. */
 @Composable
 private fun TbButton(label: String, enabled: Boolean, bold: Boolean = false, italic: Boolean = false, strike: Boolean = false, tag: String = "", onClick: () -> Unit) {
     val color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
@@ -973,9 +632,9 @@ private fun TbButton(label: String, enabled: Boolean, bold: Boolean = false, ita
     }
 }
 
-/** Kurzhilfe zu Markdown – ohne das, wofür es Knöpfe gibt (fett/kursiv/durchgestrichen/code). */
+/** Kurzhilfe zu Markdown – auch von der [AttachmentDetailScreen] genutzt. */
 @Composable
-private fun MarkdownHelpDialog(onDismiss: () -> Unit) {
+fun MarkdownHelpDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } },
@@ -1009,25 +668,4 @@ private fun HelpRow(syntax: String, meaning: String) {
         Text(syntax, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(170.dp))
         Text(meaning, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-}
-
-/** Ein Suchtreffer: [target] == -1 -> Haupttext, sonst Index des Bildtitel-Felds. */
-private data class FindHit(val target: Int, val start: Int)
-
-/** Geladener Bild-/Datei-Kindknoten mit seinem Beschreibungs-Textknoten. */
-private data class ImgKid(val imgId: String, val hash: String, val capId: String?, val caption: String)
-
-/** Laufende externe Bearbeitung: welches Bild, vorläufiger Galerie-Eintrag und Original-SHA. */
-private data class PendingEdit(val index: Int, val galleryUri: android.net.Uri, val originalSha: String)
-
-/**
- * Menüeintrag „Bearbeiten" mit Doppelfunktion: Tippen öffnet Standard/Chooser,
- * langes Drücken erzwingt den Chooser.
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun EditMenuItem(onTap: () -> Unit, onLongPress: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().combinedClickable(onClick = onTap, onLongClick = onLongPress).padding(horizontal = 16.dp, vertical = 12.dp),
-    ) { Text("Bearbeiten") }
 }

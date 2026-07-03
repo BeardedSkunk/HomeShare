@@ -86,16 +86,17 @@ fun TodoDetailScreen(
 
     var node by remember { mutableStateOf(todo) }
     var kids by remember { mutableStateOf<List<NodeState>>(emptyList()) }
+    var attachments by remember { mutableStateOf<List<AttachmentRow>>(emptyList()) }
     LaunchedEffect(revision) {
         val fresh = withContext(Dispatchers.IO) {
-            (repo.getPostState(todo.nodeId) ?: todo) to repo.children(todo.nodeId)
+            Triple(repo.getPostState(todo.nodeId) ?: todo, repo.children(todo.nodeId), loadAttachmentRows(repo, todo.nodeId))
         }
         node = fresh.first
         kids = fresh.second
+        attachments = fresh.third
     }
 
     val subItems = kids.filter { it.kind == NodeKind.TODO || it.kind == NodeKind.NOTE }
-    val attachments = kids.filter { it.kind == NodeKind.IMAGE || it.kind == NodeKind.FILE }
     val events = kids.filter { it.kind == NodeKind.CALENDAR }
 
     fun setDone(id: String, done: Boolean) {
@@ -109,14 +110,12 @@ fun TodoDetailScreen(
     var bodyEdit by remember { mutableStateOf(false) }
     var subTodo by remember { mutableStateOf<NodeState?>(null) }
     var subNote by remember { mutableStateOf<NodeState?>(null) }
-    var creatingNote by remember { mutableStateOf(false) }
     var calEdit by remember { mutableStateOf<NodeState?>(null) }
-    var creatingCal by remember { mutableStateOf(false) }
-    var viewingImage by remember { mutableStateOf<String?>(null) }
+    var attOpen by remember { mutableStateOf<NodeState?>(null) }
 
-    viewingImage?.let { sha ->
-        BackHandler { viewingImage = null }
-        ImageViewerScreen(blobStore = blobStore, sha = sha, onBack = { viewingImage = null })
+    attOpen?.let { a ->
+        BackHandler { attOpen = null }
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onClose = { attOpen = null })
         return
     }
     if (bodyEdit) {
@@ -132,17 +131,17 @@ fun TodoDetailScreen(
         TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, readOnly = readOnly, onClose = { subTodo = null })
         return
     }
-    if (subNote != null || creatingNote) {
-        BackHandler { subNote = null; creatingNote = false }
+    subNote?.let { n ->
+        BackHandler { subNote = null }
         PostDetailEditor(
-            repo = repo, blobStore = blobStore, parentId = node.nodeId, post = subNote,
-            readOnly = readOnly, onClose = { subNote = null; creatingNote = false },
+            repo = repo, blobStore = blobStore, parentId = node.nodeId, post = n,
+            readOnly = readOnly, onClose = { subNote = null },
         )
         return
     }
-    if (calEdit != null || creatingCal) {
-        BackHandler { calEdit = null; creatingCal = false }
-        CalendarEntryEditor(repo = repo, parentId = node.nodeId, post = calEdit, onClose = { calEdit = null; creatingCal = false })
+    calEdit?.let { c ->
+        BackHandler { calEdit = null }
+        CalendarEntryEditor(repo = repo, parentId = node.nodeId, post = c, onClose = { calEdit = null })
         return
     }
     BackHandler { onClose() }
@@ -207,32 +206,13 @@ fun TodoDetailScreen(
                 FloatingActionButton(onClick = { fabMenu = true }, modifier = Modifier.tag("fab:add")) {
                     Icon(Icons.Filled.Add, contentDescription = "Hinzufügen")
                 }
-                DropdownMenu(expanded = fabMenu, onDismissRequest = { fabMenu = false }) {
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(NodeKind.NOTE.uiIcon(), contentDescription = null) },
-                        text = { Text(NodeKind.NOTE.uiLabel()) },
-                        onClick = { fabMenu = false; creatingNote = true },
-                        modifier = Modifier.tag("menu:create:note"),
-                    )
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(NodeKind.CALENDAR.uiIcon(), contentDescription = null) },
-                        text = { Text(NodeKind.CALENDAR.uiLabel()) },
-                        onClick = { fabMenu = false; creatingCal = true },
-                        modifier = Modifier.tag("menu:create:calendar"),
-                    )
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(NodeKind.IMAGE.uiIcon(), contentDescription = null) },
-                        text = { Text(NodeKind.IMAGE.uiLabel()) },
-                        onClick = { fabMenu = false; pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                        modifier = Modifier.tag("menu:create:image"),
-                    )
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(NodeKind.FILE.uiIcon(), contentDescription = null) },
-                        text = { Text(NodeKind.FILE.uiLabel()) },
-                        onClick = { fabMenu = false; pickFile.launch(arrayOf("*/*")) },
-                        modifier = Modifier.tag("menu:create:file"),
-                    )
-                }
+                // Über den FAB gibt es bewusst NUR Anhänge (Bild + Datei); Unterpunkte laufen
+                // über die Quick-Add-Zeile, Termine über die Liste selbst.
+                AttachmentFabMenu(
+                    expanded = fabMenu, onDismiss = { fabMenu = false },
+                    onPickImages = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onPickFile = { pickFile.launch(arrayOf("*/*")) },
+                )
             }
         },
     ) { padding ->
@@ -348,42 +328,7 @@ fun TodoDetailScreen(
             }
             if (attachments.isNotEmpty()) {
                 item(key = "attachments") {
-                    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).tag("box:attachments")) {
-                        Column(Modifier.padding(vertical = 6.dp)) {
-                            Text(
-                                "Anhänge",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            )
-                            for (a in attachments) {
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .tag(rowTag(a.title.ifBlank { "Anhang" }))
-                                        .clickable {
-                                            if (a.kind == NodeKind.IMAGE) a.blobHash?.let { viewingImage = it }
-                                            else AttachmentPicker.openExternally(context, blobStore, a)
-                                        }
-                                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    if (a.kind == NodeKind.IMAGE && a.blobHash != null) {
-                                        val bmp = rememberBlobBitmap(blobStore, a.blobHash, preferFull = false)
-                                        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                                            if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
-                                        }
-                                    } else {
-                                        Icon(NodeKind.FILE.uiIcon(), contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-                                    }
-                                    Text(
-                                        a.title.ifBlank { if (a.kind == NodeKind.IMAGE) "Bild" else "Datei" },
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).padding(start = 12.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    AttachmentBox(attachments, blobStore, onOpen = { attOpen = it.node })
                 }
             }
             if (events.isNotEmpty()) {

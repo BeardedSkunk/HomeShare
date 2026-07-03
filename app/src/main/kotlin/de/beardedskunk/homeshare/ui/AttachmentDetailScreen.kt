@@ -1,0 +1,336 @@
+package de.beardedskunk.homeshare.ui
+
+import android.content.ComponentName
+import android.content.Intent
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import de.beardedskunk.homeshare.core.NodeContent
+import de.beardedskunk.homeshare.core.NodeKind
+import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.data.BlobStore
+import de.beardedskunk.homeshare.data.FeedRepository
+import de.beardedskunk.homeshare.data.NodeState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * Detailansicht EINES Anhangs (Bild oder Datei): oben Titel + Markdown der Anhang-Notiz
+ * (das TEXT-Kind des Anhang-Knotens), darunter FIX das Bild (mit Pinch-to-Zoom) bzw. die
+ * Datei-Zeile – in Render- UND Edit-Modus. Kein FAB, keine weiteren Anhänge.
+ * Long-Press aufs Bild: Teilen / Bearbeiten (externe App). Long-Press auf Datei:
+ * Teilen / Öffnen (/ Als Text öffnen bei text-artigem MIME).
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun AttachmentDetailScreen(
+    repo: FeedRepository,
+    blobStore: BlobStore,
+    attachment: NodeState,
+    readOnly: Boolean = false,
+    onClose: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val revision by repo.revision.collectAsState()
+
+    var att by remember { mutableStateOf(attachment) }
+    var capId by remember { mutableStateOf<String?>(null) }
+    var tfv by remember { mutableStateOf(TextFieldValue("")) }
+    var loaded by remember { mutableStateOf(false) }
+    var sourceMode by remember { mutableStateOf(false) }
+    var helpOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(revision) {
+        val fresh = withContext(Dispatchers.IO) {
+            val a = repo.getPostState(attachment.nodeId)
+            val cap = repo.children(attachment.nodeId).firstOrNull { it.type == NodeType.TEXT }
+            a to cap
+        }
+        fresh.first?.let { att = it }
+        capId = fresh.second?.nodeId
+        // Text nur beim ersten Laden übernehmen – laufende Bearbeitung nicht überschreiben.
+        if (!loaded) { tfv = TextFieldValue(fresh.second?.text ?: ""); loaded = true }
+    }
+
+    fun save() {
+        val text = tfv.text
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val id = capId
+                if (id != null) {
+                    repo.headContent(id)?.let { repo.editNode(id, it.copy(text = text)) }
+                } else {
+                    capId = repo.createNode(NodeContent(parentId = att.nodeId, type = NodeType.TEXT, text = text)).nodeId
+                }
+            }
+        }
+    }
+
+    fun toggleTask(line: Int) {
+        val lines = tfv.text.split("\n").toMutableList()
+        if (line in lines.indices) {
+            lines[line] = flipTaskLine(lines[line])
+            tfv = tfv.copy(text = lines.joinToString("\n"))
+            save()
+        }
+    }
+
+    // ---- Externe Bild-Bearbeitung (via temporärem Galerie-Eintrag, wie früher im Editor) ----
+    val editTargets = remember { imageEditTargets(context) }
+    var pendingEditUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val editLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val galleryUri = pendingEditUri ?: return@rememberLauncherForActivityResult
+        pendingEditUri = null
+        val originalSha = att.blobHash
+        scope.launch {
+            val newSha = withContext(Dispatchers.IO) {
+                val candidates = buildList {
+                    result.data?.data?.let { u ->
+                        runCatching { context.contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull()?.let { add(it) }
+                    }
+                    MediaStoreEdit.read(context, galleryUri)?.let { add(it) }
+                }
+                var picked: String? = null
+                for (b in candidates) if (b.isNotEmpty()) {
+                    val s = blobStore.put(b)
+                    if (s != originalSha) { picked = s; break }
+                }
+                MediaStoreEdit.delete(context, galleryUri)
+                picked
+            }
+            if (newSha != null) {
+                withContext(Dispatchers.IO) {
+                    repo.headContent(att.nodeId)?.let { repo.editNode(att.nodeId, it.copy(blobHash = newSha)) }
+                }
+                toast(context, "Bild geändert.")
+            } else {
+                toast(context, "Keine Änderung übernommen.")
+            }
+        }
+    }
+
+    fun launchEdit(target: EditTarget?, forceChooser: Boolean) {
+        val sha = att.blobHash ?: return
+        val full = blobStore.readFull(sha) ?: return toast(context, "Vollbild nicht lokal – erst syncen.")
+        val uri = MediaStoreEdit.createPending(context, full, "homeshare_edit_${System.currentTimeMillis()}.png")
+            ?: return toast(context, "Konnte Bild nicht vorbereiten.")
+        val base = Intent(Intent.ACTION_EDIT).apply {
+            setDataAndType(uri, "image/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        val toLaunch = when {
+            target != null -> Intent(base).setComponent(ComponentName(target.pkg, target.cls))
+            forceChooser -> Intent.createChooser(base, "Bearbeiten mit…").apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+            else -> base
+        }
+        pendingEditUri = uri
+        runCatching { editLauncher.launch(toLaunch) }.onFailure {
+            pendingEditUri = null
+            MediaStoreEdit.delete(context, uri)
+            toast(context, "Keine App zum Bearbeiten gefunden.")
+        }
+    }
+
+    if (helpOpen) MarkdownHelpDialog(onDismiss = { helpOpen = false })
+    BackHandler { if (sourceMode) { save(); sourceMode = false } else onClose() }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {},
+                navigationIcon = { BackIconButton(onClick = onClose) },
+                actions = {
+                    if (!readOnly) {
+                        IconButton(
+                            onClick = { scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(att.nodeId) }; onClose() } },
+                            modifier = Modifier.tag("topbar:delete"),
+                        ) { Icon(Icons.Filled.Delete, contentDescription = "Anhang löschen") }
+                        IconButton(
+                            onClick = { if (sourceMode) { save(); sourceMode = false } else sourceMode = true },
+                            modifier = Modifier.tag(if (sourceMode) "topbar:save" else "topbar:edit"),
+                        ) {
+                            if (sourceMode) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
+                            } else {
+                                Icon(Icons.Filled.Check, contentDescription = "Bearbeiten", tint = Color(0xFF2E7D32), modifier = Modifier.size(30.dp))
+                            }
+                        }
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+            // ---- Beschreibung (Titel + Markdown) – scrollt; der Anhang darunter bleibt fix. ----
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                if (sourceMode) {
+                    OutlinedTextField(
+                        value = tfv,
+                        onValueChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
+                        placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp).padding(8.dp).tag("field:body"),
+                    )
+                    MarkdownToolbar(value = tfv, apply = { transform -> tfv = transform(tfv) }, onHelp = { helpOpen = true })
+                } else {
+                    val title = postTitle(tfv.text)
+                    if (title.isNotBlank()) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    MarkdownBody(
+                        text = tfv.text,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        onToggleTask = if (readOnly) null else ::toggleTask,
+                        onEditAt = if (readOnly) null else { _ -> sourceMode = true },
+                    )
+                }
+            }
+
+            // ---- Fixer Anhang: Bild (Pinch-to-Zoom) bzw. Datei-Zeile ----
+            var menuOpen by remember { mutableStateOf(false) }
+            if (att.kind == NodeKind.IMAGE && att.blobHash != null) {
+                val bmp = rememberBlobBitmap(blobStore, att.blobHash!!, preferFull = true)
+                var scale by remember { mutableStateOf(1f) }
+                var offset by remember { mutableStateOf(Offset.Zero) }
+                Box(
+                    Modifier.fillMaxWidth().weight(1f)
+                        .pointerInput(att.blobHash) {
+                            detectTapGestures(
+                                onDoubleTap = { scale = 1f; offset = Offset.Zero },
+                                onLongPress = { menuOpen = true },
+                            )
+                        }
+                        .pointerInput(att.blobHash) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 6f)
+                                offset = if (scale > 1f) offset + pan else Offset.Zero
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp, contentDescription = postTitle(tfv.text),
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                scaleX = scale; scaleY = scale
+                                translationX = offset.x; translationY = offset.y
+                            },
+                        )
+                    } else {
+                        Text("🖼 (Bild nicht lokal)")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Teilen") }, onClick = { menuOpen = false; AttachmentPicker.shareExternally(context, blobStore, att) })
+                        if (!readOnly) {
+                            if (editTargets.size in 1..3) {
+                                editTargets.forEach { t ->
+                                    DropdownMenuItem(text = { Text("Bearbeiten mit ${t.label}") }, onClick = { menuOpen = false; launchEdit(t, false) })
+                                }
+                            } else {
+                                EditMenuItem(onTap = { menuOpen = false; launchEdit(null, false) }, onLongPress = { menuOpen = false; launchEdit(null, true) })
+                            }
+                        }
+                    }
+                }
+            } else {
+                Box {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .tag("attachment:file")
+                            .combinedClickable(
+                                onClick = { AttachmentPicker.openExternally(context, blobStore, att) },
+                                onLongClick = { menuOpen = true },
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(NodeKind.FILE.uiIcon(), contentDescription = null, modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(att.fileName ?: att.title.ifBlank { "Datei" }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                            att.mime?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Teilen") }, onClick = { menuOpen = false; AttachmentPicker.shareExternally(context, blobStore, att) })
+                        DropdownMenuItem(text = { Text("Öffnen") }, onClick = { menuOpen = false; AttachmentPicker.openExternally(context, blobStore, att) })
+                        if (AttachmentPicker.isTextLike(att.mime)) {
+                            DropdownMenuItem(text = { Text("Als Text öffnen") }, onClick = { menuOpen = false; AttachmentPicker.openAsText(context, blobStore, att) })
+                        }
+                    }
+                }
+                Spacer(Modifier.size(24.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Menüeintrag „Bearbeiten" mit Doppelfunktion: Tippen öffnet Standard/Chooser,
+ * langes Drücken erzwingt den Chooser.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun EditMenuItem(onTap: () -> Unit, onLongPress: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().combinedClickable(onClick = onTap, onLongClick = onLongPress).padding(horizontal = 16.dp, vertical = 12.dp),
+    ) { Text("Bearbeiten") }
+}
