@@ -15,6 +15,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -57,7 +61,10 @@ class MainActivity : ComponentActivity() {
         val shared = parseShared(intent)
         setContent {
             ClipTheme {
-                Surface {
+                // testTags als resource-id im uiautomator-Dump sichtbar machen
+                // (automatisierte UI-Pruefung ohne Pixelsuche).
+                @OptIn(ExperimentalComposeUiApi::class)
+                Surface(Modifier.semantics { testTagsAsResourceId = true }) {
                     AppRoot(graph, shared)
                 }
             }

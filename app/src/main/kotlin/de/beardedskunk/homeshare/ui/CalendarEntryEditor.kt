@@ -310,7 +310,9 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
 fun CalendarRow(post: NodeState, onClick: () -> Unit) {
     val ev = remember(post.headVersionId) { EventCodec.parse(post.text) }
     androidx.compose.material3.Card(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clickable(onClick = onClick),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .tag(rowTag(EventCodec.parse(post.text)?.title ?: post.text))
+            .clickable(onClick = onClick),
         colors = if (post.conflicted) {
             androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
         } else {

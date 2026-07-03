@@ -255,7 +255,7 @@ fun ListScreen(
                         OutlinedTextField(
                             value = query, onValueChange = { onSearchQueryChange(it) },
                             placeholder = { Text(if (isRoot) "Feeds durchsuchen…" else "Durchsuchen…") }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().tag("field:search"),
                         )
                     } else if (isRoot) {
                         Text("Feeds")
@@ -267,15 +267,15 @@ fun ListScreen(
                     if (!isRoot) BackIconButton(onClick = onBack)
                 },
                 actions = {
-                    IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }) {
+                    IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }, modifier = Modifier.tag("topbar:search")) {
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
                     }
                     if (!searching) {
                         // QR-Icon auf JEDER Listen-Ansicht: in einer Liste -> diese teilen; in der Wurzel -> einer geteilten Liste beitreten.
-                        IconButton(onClick = { if (container != null) onOpenShare(container) else showAddShared = true }) {
+                        IconButton(onClick = { if (container != null) onOpenShare(container) else showAddShared = true }, modifier = Modifier.tag("topbar:share")) {
                             Icon(Icons.Filled.QrCode2, contentDescription = if (container != null) "Diese Liste teilen" else "Geteilte Liste beitreten")
                         }
-                        IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
+                        IconButton(onClick = onOpenSettings, modifier = Modifier.tag("topbar:settings")) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
                     }
                 },
             )
@@ -286,7 +286,7 @@ fun ListScreen(
                     // Eigene FAB-Fläche statt FloatingActionButton: dessen interne onClick-Clickable
                     // würde sonst den Long-Press schlucken.
                     Surface(
-                        modifier = Modifier.size(56.dp).combinedClickable(
+                        modifier = Modifier.size(56.dp).tag("fab:add").combinedClickable(
                             onClick = { startCreate(defaultKind) },
                             onLongClick = { fabMenu = true },
                         ),
@@ -304,6 +304,7 @@ fun ListScreen(
                                 leadingIcon = { Icon(k.uiIcon(), contentDescription = null) },
                                 text = { Text(k.uiLabel() + if (k == defaultKind) "  (Standard)" else "") },
                                 onClick = { fabMenu = false; startCreate(k) },
+                                modifier = Modifier.tag("menu:create:" + k.name.lowercase()),
                             )
                         }
                     }
@@ -370,17 +371,17 @@ fun ListScreen(
             text = {
                 Column {
                     if (node.isForeign) {
-                        TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.leaveForeignFeed(id) }; reload() } }) { Text("Freigabe verlassen (lokal entfernen)") }
+                        TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.leaveForeignFeed(id) }; reload() } }, modifier = Modifier.tag("action:leave")) { Text("Freigabe verlassen (lokal entfernen)") }
                     } else {
                         if (isRoot && node.kind == NodeKind.LIST) {
-                            TextButton(onClick = { val n = node; actionNode = null; onOpenShare(n) }) { Text("Mit Gruppe teilen / Freigaben…") }
+                            TextButton(onClick = { val n = node; actionNode = null; onOpenShare(n) }, modifier = Modifier.tag("action:share")) { Text("Mit Gruppe teilen / Freigaben…") }
                         }
-                        TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) }; reload() } }) { Text("Löschen") }
+                        TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) }; reload() } }, modifier = Modifier.tag("action:delete")) { Text("Löschen") }
                     }
                 }
             },
             confirmButton = {},
-            dismissButton = { TextButton(onClick = { actionNode = null }) { Text("Abbrechen") } },
+            dismissButton = { TextButton(onClick = { actionNode = null }, modifier = Modifier.tag("action:cancel")) { Text("Abbrechen") } },
         )
     }
 }
@@ -396,6 +397,7 @@ private fun NodeRow(node: NodeState, onClick: () -> Unit, onLongClick: () -> Uni
     val leading = if (node.kind == NodeKind.LIST) (node.childDefault ?: NodeKind.LIST).uiIcon() else null
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .tag(rowTag(node.title))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
@@ -428,6 +430,7 @@ private fun PostRow(
     var menuOpen by remember { mutableStateOf(false) }
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .tag(rowTag(if (post.deleted) "(gelöscht)" else post.text))
             .combinedClickable(onClick = onClick, onLongClick = { if (post.conflicted && canMerge) menuOpen = true }),
         colors = if (post.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {

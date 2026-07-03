@@ -453,7 +453,7 @@ fun PostDetailEditor(
                 actions = {
                     // Suche in BEIDEN Modi (gerendert + Quelltext). Schließen leert den Begriff
                     // und propagiert nach oben (siehe onSearchQueryChange).
-                    IconButton(onClick = { onSearchQueryChange(if (findOpen) null else "") }) {
+                    IconButton(onClick = { onSearchQueryChange(if (findOpen) null else "") }, modifier = Modifier.tag("topbar:search")) {
                         Icon(
                             if (findOpen) Icons.Filled.Close else Icons.Filled.Search,
                             contentDescription = if (findOpen) "Suche schließen" else "Im Text suchen",
@@ -463,18 +463,18 @@ fun PostDetailEditor(
                         // Bild hinzufügen in beiden Modi – auch in der Renderview (Tbd #6).
                         IconButton(onClick = {
                             pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        }) {
+                        }, modifier = Modifier.tag("topbar:add")) {
                             Icon(Icons.Filled.Add, contentDescription = "Bild hinzufügen")
                         }
                         if (post != null) {
-                            IconButton(onClick = { delete() }) {
+                            IconButton(onClick = { delete() }, modifier = Modifier.tag("topbar:delete")) {
                                 Icon(Icons.Filled.Delete, contentDescription = "Löschen")
                             }
                         }
                         // Modus-Umschalter: gerendert zeigt ✓ (grün), Quelltext zeigt ✎.
                         IconButton(onClick = {
                             if (sourceMode) { save(); sourceMode = false } else { sourceMode = true }
-                        }) {
+                        }, modifier = Modifier.tag(if (sourceMode) "topbar:save" else "topbar:edit")) {
                             if (sourceMode) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
                             } else {
@@ -607,11 +607,11 @@ private fun FindBar(
     ) {
         OutlinedTextField(
             value = query, onValueChange = onQuery,
-            placeholder = { Text("Suchen…") }, singleLine = true, modifier = Modifier.weight(1f),
+            placeholder = { Text("Suchen…") }, singleLine = true, modifier = Modifier.weight(1f).tag("field:find"),
         )
         Text(label)
-        IconButton(enabled = hasMatches, onClick = onPrev) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Vorheriger Treffer") }
-        IconButton(enabled = hasMatches, onClick = onNext) { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Nächster Treffer") }
+        IconButton(enabled = hasMatches, onClick = onPrev, modifier = Modifier.tag("find:prev")) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Vorheriger Treffer") }
+        IconButton(enabled = hasMatches, onClick = onNext, modifier = Modifier.tag("find:next")) { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Nächster Treffer") }
     }
 }
 
@@ -650,7 +650,7 @@ private fun SourceEditor(
             value = tfv,
             onValueChange = onTfvChange,
             placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).focusRequester(focusRequester),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).tag("field:body").focusRequester(focusRequester),
         )
         MarkdownToolbar(value = tfv, apply = applyToTfv, onHelp = onHelp)
 
@@ -681,6 +681,7 @@ private fun SourceEditor(
                     onValueChange = { onTitleChange(index, it); scope.launch { titleBivrs[index].bringIntoView() } },
                     placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                        .tag("field:caption:$index")
                         .bringIntoViewRequester(titleBivrs[index])
                         .then(titleFocusers.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier),
                 )
@@ -719,15 +720,15 @@ private fun MarkdownToolbar(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         for (item in MARKDOWN_TOOLBAR) when (item) {
-            MarkdownToolbarItem.TASK -> TbButton("☐ Aufgabe", enabled = !onTitleLine) { apply(::insertTask) }
-            MarkdownToolbarItem.BOLD -> TbButton("B", enabled = !onTitleLine, bold = true) { apply { toggleWrap(it, "**") } }
-            MarkdownToolbarItem.ITALIC -> TbButton("I", enabled = !onTitleLine, italic = true) { apply { toggleWrap(it, "*") } }
-            MarkdownToolbarItem.STRIKE -> TbButton("S", enabled = !onTitleLine, strike = true) { apply { toggleWrap(it, "~~") } }
-            MarkdownToolbarItem.CODE -> TbButton("</>", enabled = !onTitleLine) { apply { applyCode(it) } }
+            MarkdownToolbarItem.TASK -> TbButton("☐ Aufgabe", enabled = !onTitleLine, tag = "toolbar:task") { apply(::insertTask) }
+            MarkdownToolbarItem.BOLD -> TbButton("B", enabled = !onTitleLine, bold = true, tag = "toolbar:bold") { apply { toggleWrap(it, "**") } }
+            MarkdownToolbarItem.ITALIC -> TbButton("I", enabled = !onTitleLine, italic = true, tag = "toolbar:italic") { apply { toggleWrap(it, "*") } }
+            MarkdownToolbarItem.STRIKE -> TbButton("S", enabled = !onTitleLine, strike = true, tag = "toolbar:strike") { apply { toggleWrap(it, "~~") } }
+            MarkdownToolbarItem.CODE -> TbButton("</>", enabled = !onTitleLine, tag = "toolbar:code") { apply { applyCode(it) } }
             // Markierte Zeilen-/Blöcke nach oben/unten verschieben (nur bei Zeilenauswahl aktiv).
-            MarkdownToolbarItem.MOVE_UP -> TbButton("↑", enabled = hasLineSelection) { apply { moveLines(it, up = true) } }
-            MarkdownToolbarItem.MOVE_DOWN -> TbButton("↓", enabled = hasLineSelection) { apply { moveLines(it, up = false) } }
-            MarkdownToolbarItem.HELP -> TbButton("?", enabled = true) { onHelp() }
+            MarkdownToolbarItem.MOVE_UP -> TbButton("↑", enabled = hasLineSelection, tag = "toolbar:moveup") { apply { moveLines(it, up = true) } }
+            MarkdownToolbarItem.MOVE_DOWN -> TbButton("↓", enabled = hasLineSelection, tag = "toolbar:movedown") { apply { moveLines(it, up = false) } }
+            MarkdownToolbarItem.HELP -> TbButton("?", enabled = true, tag = "toolbar:help") { onHelp() }
         }
     }
 }
@@ -874,13 +875,13 @@ private fun ImageActionMenu(
 /** Kleiner Toolbar-Knopf. defaultMinSize hebt den 58-dp-Mindestbreiten-Boden von TextButton auf,
  *  sonst passen die 8 Knöpfe (inkl. ↑ ↓ ?) auf schmalen Geräten nicht nebeneinander. */
 @Composable
-private fun TbButton(label: String, enabled: Boolean, bold: Boolean = false, italic: Boolean = false, strike: Boolean = false, onClick: () -> Unit) {
+private fun TbButton(label: String, enabled: Boolean, bold: Boolean = false, italic: Boolean = false, strike: Boolean = false, tag: String = "", onClick: () -> Unit) {
     val color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     TextButton(
         onClick = onClick,
         enabled = enabled,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-        modifier = Modifier.defaultMinSize(minWidth = 1.dp, minHeight = 36.dp),
+        modifier = Modifier.defaultMinSize(minWidth = 1.dp, minHeight = 36.dp).then(if (tag.isEmpty()) Modifier else Modifier.tag(tag)),
     ) {
         Text(
             label,

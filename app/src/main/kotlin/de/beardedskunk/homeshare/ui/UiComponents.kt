@@ -7,13 +7,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 
 // Gemeinsame Kleinteile der UI-Screens.
 
 /** Zurück-/Abbrechen-Pfeil für TopAppBar-navigationIcon. */
 @Composable
 fun BackIconButton(onClick: () -> Unit, contentDescription: String = "Zurück") {
-    IconButton(onClick = onClick) {
+    IconButton(onClick = onClick, modifier = Modifier.tag("topbar:back")) {
         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = contentDescription)
     }
 }
