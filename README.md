@@ -1,20 +1,28 @@
 # HomeShare
 
-Eine sideloadbare Android-App (min. Android 10 / API 29) für **geteilte, chat-artige Feeds über alle
-eigenen Geräte** – ohne Login, ohne Cloud, ohne fremden Server. Replikation läuft Gerät-zu-Gerät im
-LAN (Auto-Discovery), mit git-artiger Versionierung pro Beitrag, **automatischer** Konfliktauflösung
-im Hintergrund (manuell nur bei echten Überlappungen), Zugriff per Webbrowser vom PC und einer
-FRITZ!Box als passivem Voll-Backup.
+Eine sideloadbare Android-App (min. Android 10 / API 29): ein **Verzeichnisbaum aus Listen-in-Listen**
+für Notizen, Aufgaben, Termine und Datei-Anhänge – **auf allen eigenen Geräten synchron**, ohne Login,
+ohne Cloud, ohne fremden Server. Replikation läuft Gerät-zu-Gerät im LAN (Auto-Discovery), mit
+git-artiger Versionierung pro Knoten, **automatischer** Konfliktauflösung im Hintergrund (manuell nur
+bei echten Überlappungen), Zugriff per Webbrowser vom PC und einer FRITZ!Box als passivem Voll-Backup.
 
 > Persönliches Projekt. Läuft bewusst **ohne Google Play Services** – also auch auf
 > de-googelten Systemen wie LineageOS ohne Play Store.
 
 ## Was es kann
 
-- **Beliebig viele benannte Feeds**, kein ausgezeichneter Hauptfeed; alle eigenen Geräte sehen alle Feeds.
-- **Text- und Bildbeiträge** mit Markdown (Editor mit Toolbar, Aufgabenlisten, In-Beitrag-Suche),
-  Bildbeschreibungen, Teilen aus anderen Apps (Share-Intent).
-- **Git-artige Versionierung** pro Beitrag (DAG aus inhaltsadressierten Versionen). Nebenläufige
+- **Listen in Listen** (Verzeichnisbaum): jede Liste hat einen Default-Eintragstyp (Notiz, Termin,
+  Aufgabe, …) und eine eigene Beschreibung (Titel + Markdown). Gemischte Inhalte pro Liste sind normal.
+- **Notizen**: erste Zeile = Titel, Rest Markdown (eigener Renderer: Überschriften, Listen,
+  antippbare Aufgaben-Haken, Zitate, Code, Links; Editor mit Toolbar, In-Text-Suche,
+  Tipp-auf-gerenderten-Text springt an die Quellstelle).
+- **Aufgaben** mit Haken, Markdown-Body, abhakbaren Unterpunkten (Quick-Add) und Anhängen.
+- **Anhänge beliebigen Typs** (Fotos + Dateien, content-adressiert/dedupliziert): jede*r mit eigener
+  Beschreibungs-Notiz und Detailansicht (Bild mit Pinch-Zoom, extern bearbeiten/teilen/öffnen).
+- **Manuelles Umsortieren per Drag-Handle** (Listen, Unterpunkte, Anhänge, Markdown-Listenzeilen) –
+  die Reihenfolge ist versioniert und synct mit (fraktionale Sortierschlüssel, 1 Op pro Drag).
+- **Swipe-links → Mülltonne** zum schnellen Löschen (zweistufig: Tonne bleibt stehen, Tap löscht).
+- **Git-artige Versionierung** pro Knoten (DAG aus inhaltsadressierten Versionen). Nebenläufige
   Bearbeitung wird per **deterministischem 3-Wege-Merge** (diff3) im Hintergrund zusammengeführt;
   nur echte, überlappende Konflikte landen in der manuellen Auflösung (farbiger Wort-Diff). Eine
   einmal getroffene Auflösung gilt danach für alle Geräte.
@@ -33,23 +41,29 @@ FRITZ!Box als passivem Voll-Backup.
 
 ## Architektur (Kurzüberblick)
 
-Quelle der Wahrheit ist ein **append-only Op-Log**: jeder Beitrag hat eine git-artige History aus
-inhaltsadressierten Versionsknoten (`versionId = SHA-256(Inhalt + Eltern + Gerät + HLC)`). Mehrere
-„Heads" = nebenläufige Bearbeitung. Versionen werden nie gelöscht, nur überholt – alte Stände bleiben
-rekonstruierbar.
+Alles ist **ein Knotenbaum**: Listen, Notizen, Aufgaben, Termine und Anhänge sind Knoten mit
+`parentId`, Typ, Text (1. Zeile = Titel), Sortierschlüssel und offenem Meta-System (unbekannte Felder
+überleben den Sync mit älteren App-Versionen). Quelle der Wahrheit ist ein **append-only Op-Log**:
+jeder Knoten hat eine git-artige History aus inhaltsadressierten Versionsknoten
+(`versionId = SHA-256(Inhalt + Eltern + Gerät + HLC)`). Mehrere „Heads" = nebenläufige Bearbeitung.
+Versionen werden nie gelöscht, nur überholt – alte Stände bleiben rekonstruierbar.
 
-- `core/` – reine, Android-freie Logik (JVM-getestet): `Post` (Versions-DAG, Heads, LCA,
-  Konflikt/Merge), `ThreeWayMerge` (deterministischer diff3), `Hashing`, `TextDiff`.
+- `core/` – reine, Android-freie Logik (JVM-getestet): `Model` (NodeContent, Meta-Codec, HLC),
+  `Node` (Versions-DAG, Heads, LCA, Auto-Merge), `OrderKeys` (fraktionale Sortierschlüssel),
+  `ThreeWayMerge` (deterministischer diff3), `Hashing`, `TextDiff`.
 - `data/` – Persistenz (Framework-SQLite, kein Room): `Db`, `FeedRepository` (Autoring, Sync-Ingest,
-  Auto-Merge, FTS4-Suche, Versions-Vektor), `BlobStore` (content-adressiert, Thumbnails),
+  Auto-Merge, Umsortieren, FTS4-Suche, Versions-Vektor), `BlobStore` (content-adressiert, Thumbnails),
   `EvictionPlanner`, `DeviceIdentity`, `Settings`.
 - `sync/` – `Sync` (Wire-Codec + Reconciler), `SecureChannel` (AES-GCM), `PeerProtocol` /
   `CrossGroupProtocol` (inkl. Blob-Austausch), `SyncManager` (NSD/mDNS + TCP, Gruppenfilter),
   `SyncForegroundService` (Hintergrundbetrieb).
 - `web/` – `WebServer` (NanoHTTPD, JSON-API + Blob-Serving) + `WebUi` (Single-Page, Clipboard-Paste).
 - `backup/` – `FritzReplica` (FTPES) + `FritzController` (Voll-Backup auf der FRITZ!Box).
-- `ui/` – Jetpack-Compose-UI: Feed-Liste, Feed-Ansicht, Markdown-Editor (geteilte Toolbar für Text
-  und Bildbeschreibungen, In-Beitrag-Suche), Konfliktauflösung, Kalender-Editor, Einstellungen.
+- `ui/` – Jetpack-Compose-UI: `ListScreen` (Baum-Navigation, gemischte Zeilen, Drag-Sortierung,
+  Swipe-Löschen), `PostDetailEditor` (Notizen/Listen-Beschreibung, Markdown gerendert ↔ Quelltext),
+  `TodoDetailScreen` (Aufgabe + Unterpunkte), `AttachmentDetailScreen` (Anhang + Beschreibung),
+  Konfliktauflösung, Kalender-Editor, Einstellungen. Interaktive Elemente tragen testTags
+  (per uiautomator automatisierbar, siehe `CLAUDE.md`).
 
 ### Bewusste Abweichungen (gleiche Funktion, robuster Build)
 - **Framework-SQLite statt Room** (kein KSP/Annotation-Processing).
