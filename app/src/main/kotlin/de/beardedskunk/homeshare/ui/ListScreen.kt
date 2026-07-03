@@ -353,7 +353,8 @@ fun ListScreen(
                         IconButton(onClick = { if (container != null) onOpenShare(container) else showAddShared = true }, modifier = Modifier.tag("topbar:share")) {
                             Icon(Icons.Filled.QrCode2, contentDescription = if (container != null) "Diese Liste teilen" else "Geteilte Liste beitreten")
                         }
-                        IconButton(onClick = onOpenSettings, modifier = Modifier.tag("topbar:settings")) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
+                        // Allgemeine Einstellungen nur auf der Wurzelebene anbieten.
+                        if (isRoot) IconButton(onClick = onOpenSettings, modifier = Modifier.tag("topbar:settings")) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
                     }
                 },
             )

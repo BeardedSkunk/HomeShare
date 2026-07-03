@@ -310,7 +310,10 @@ fun TodoDetailScreen(
                                                 onDrag = { change, amount -> change.consume(); subDragOffset += amount.y },
                                                 onDragEnd = {
                                                     val h = subRowHeight.takeIf { it > 0 } ?: 1
-                                                    val target = (i + Math.round(subDragOffset / h)).coerceIn(0, subItems.lastIndex)
+                                                    // Mittellinien-Regel: erst wenn das Zentrum des gezogenen Items die
+                                                    // Mitte des Nachbarn (= volle Zeilenhöhe) passiert hat, wird umsortiert
+                                                    // -> Richtung Null abschneiden, NICHT runden.
+                                                    val target = (i + (subDragOffset / h).toInt()).coerceIn(0, subItems.lastIndex)
                                                     if (target != i) {
                                                         val cur = subItems.toMutableList()
                                                         val moved = cur.removeAt(i)

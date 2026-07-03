@@ -819,12 +819,20 @@ private fun RenderedView(
             val dragged = items.firstOrNull { it.index == itemIdx }
             if (dragged != null) {
                 val center = dragged.offset + mdDragOffset + dragged.size / 2f
-                val over = items.firstOrNull { center >= it.offset && center < it.offset + it.size }
+                // Mittellinien-Regel: umsortiert wird um so viele Positionen, wie das Zentrum
+                // des gezogenen Items Nachbar-ZENTREN überquert hat (kein "berührt reicht").
+                var target = idx
+                for (it2 in items) {
+                    if (it2.index == itemIdx) continue
+                    val c2 = it2.offset + it2.size / 2f
+                    if (it2.index > itemIdx && center > c2) target++
+                    if (it2.index < itemIdx && center < c2) target--
+                }
                 var lo = idx
                 while (lo - 1 >= 0 && dragLine(blocks[lo - 1]) > 0) lo--
                 var hi = idx
                 while (hi + 1 < blocks.size && dragLine(blocks[hi + 1]) > 0) hi++
-                val target = ((over?.index ?: itemIdx) - titleItems).coerceIn(lo, hi)
+                target = target.coerceIn(lo, hi)
                 if (target != idx) onMoveLine(dragLine(blocks[idx]), dragLine(blocks[target]))
             }
         }
