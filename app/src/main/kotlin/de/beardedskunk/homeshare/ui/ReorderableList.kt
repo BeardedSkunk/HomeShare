@@ -1,11 +1,17 @@
 package de.beardedskunk.homeshare.ui
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -15,9 +21,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -136,4 +146,112 @@ fun DragHandle(state: DragDropState, index: Int, title: String) {
                 )
             },
     )
+}
+
+// ---------------------------------------------------------------------------------------------
+// Spalten-Drag: einfacher Drag&Drop für kurze, ~gleichhohe Zeilenlisten in Karten-Kästen
+// (Todo-Unterpunkte, Anhänge). Landeplatz nach der Mittellinien-Regel (Truncation).
+// ---------------------------------------------------------------------------------------------
+
+class ColumnDragState {
+    var index by mutableIntStateOf(-1)
+    var offset by mutableFloatStateOf(0f)
+    var rowHeight by mutableIntStateOf(0)
+    fun reset() { index = -1; offset = 0f }
+}
+
+@Composable
+fun rememberColumnDragState(): ColumnDragState = remember { ColumnDragState() }
+
+/** Auf die ZEILE legen: misst die Zeilenhöhe und hebt die gezogene Zeile an. */
+fun Modifier.columnDragItem(state: ColumnDragState, index: Int): Modifier =
+    onGloballyPositioned { if (state.rowHeight == 0) state.rowHeight = it.size.height }
+        .then(if (index == state.index) Modifier.zIndex(1f).graphicsLayer { translationY = state.offset } else Modifier)
+
+/** Drag-Handle (Punkte-Doppelreihe) für den Spalten-Drag. [onDrop] liefert (from, to). */
+@Composable
+fun ColumnDragHandle(
+    state: ColumnDragState,
+    index: Int,
+    title: String,
+    itemCount: Int,
+    onDragStart: () -> Unit = {},
+    onDrop: (from: Int, to: Int) -> Unit,
+) {
+    val curIndex by rememberUpdatedState(index)
+    val curCount by rememberUpdatedState(itemCount)
+    val startCb by rememberUpdatedState(onDragStart)
+    val dropCb by rememberUpdatedState(onDrop)
+    Icon(
+        Icons.Filled.DragIndicator,
+        contentDescription = "Verschieben",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.tag(dragTag(title)).pointerInput(state) {
+            detectDragGestures(
+                onDragStart = { startCb(); state.index = curIndex; state.offset = 0f },
+                onDrag = { change, amount -> change.consume(); state.offset += amount.y },
+                onDragEnd = {
+                    val h = state.rowHeight.takeIf { it > 0 } ?: 1
+                    // Mittellinien-Regel: erst eine volle Zeilenhöhe = Nachbar-Mitte passiert -> umsortieren.
+                    val target = (state.index + (state.offset / h).toInt()).coerceIn(0, curCount - 1)
+                    val from = state.index
+                    state.reset()
+                    if (target != from && from >= 0) dropCb(from, target)
+                },
+                onDragCancel = { state.reset() },
+            )
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------------------------
+// Links-Swipe -> stehende Mülltonne. Kein direktes Swipe-to-delete: Loslassen lässt die Tonne
+// stehen, erst der Tap auf die Tonne löscht (sofort, ohne Rückfrage). Höchstens EINE Tonne
+// offen ([openKey], vom Screen verwaltet); jeder Swipe/Drag an anderer Stelle schließt sie.
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+fun SwipeRevealRow(
+    key: String,
+    openKey: String?,
+    onOpenChange: (String?) -> Unit,
+    onDelete: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val revealPx = with(LocalDensity.current) { 64.dp.toPx() }
+    val open = openKey == key
+    var dragX by remember { mutableFloatStateOf(0f) }
+    val settled by animateFloatAsState(if (open) -revealPx else 0f, label = "swipeReveal")
+    val shift = (settled + dragX).coerceIn(-revealPx, 0f)
+    val openCb by rememberUpdatedState(onOpenChange)
+    val deleteCb by rememberUpdatedState(onDelete)
+    val curOpen by rememberUpdatedState(open)
+    Box {
+        if (shift < -1f) {
+            Box(Modifier.matchParentSize().padding(end = 16.dp), contentAlignment = Alignment.CenterEnd) {
+                IconButton(onClick = { openCb(null); deleteCb() }, modifier = Modifier.tag("trash:$key")) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Löschen", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        Box(
+            Modifier
+                .graphicsLayer { translationX = shift }
+                .pointerInput(key) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { if (!curOpen) openCb(null) }, // fremde Tonne schließen
+                        onHorizontalDrag = { change, amount ->
+                            change.consume()
+                            dragX = (dragX + amount).coerceIn(-revealPx * 1.2f, revealPx)
+                        },
+                        onDragEnd = {
+                            val pos = (if (curOpen) -revealPx else 0f) + dragX
+                            openCb(if (pos < -revealPx / 2) key else null)
+                            dragX = 0f
+                        },
+                        onDragCancel = { dragX = 0f },
+                    )
+                },
+        ) { content() }
+    }
 }

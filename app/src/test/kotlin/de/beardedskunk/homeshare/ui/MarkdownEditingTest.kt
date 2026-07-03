@@ -130,6 +130,19 @@ class MarkdownEditingTest {
         assertEquals("Titel\na\nb", moveLineTo("Titel\na\nb", 1, 9))
     }
 
+    @Test fun deleteLineWithChildren_removesLineAndDeeperIndented() {
+        val t = "Titel\n- [ ] a\n  - [ ] a1\n    - a1x\n- [ ] b"
+        assertEquals("Titel\n- [ ] b", deleteLineWithChildren(t, 1))
+        // Nur das Kind entfernen: Geschwister gleicher Tiefe bleiben.
+        assertEquals("Titel\n- [ ] a\n- [ ] b", deleteLineWithChildren(t, 2))
+    }
+
+    @Test fun deleteLineWithChildren_protectsTitleAndRange() {
+        assertEquals("Titel\na", deleteLineWithChildren("Titel\na", 0))
+        assertEquals("Titel\na", deleteLineWithChildren("Titel\na", 5))
+        assertEquals("Titel", deleteLineWithChildren("Titel\na", 1))
+    }
+
     @Test fun applyCode_putsFencesOnOwnLinesForPartialLines() {
         val t = "vorher UND\nmitte\nENDE rest"
         val start = t.indexOf("UND")

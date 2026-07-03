@@ -259,6 +259,23 @@ fun PostDetailEditor(
     if (helpOpen) MarkdownHelpDialog(onDismiss = { helpOpen = false })
 
     var fabMenu by remember { mutableStateOf(false) }
+    // Links-Swipe -> stehende Mülltonne; EIN Zustand für Anhänge und Markdown-Zeilen.
+    var openTrash by remember { mutableStateOf<String?>(null) }
+    val attachmentBox: @Composable () -> Unit = {
+        AttachmentBox(
+            attachments, blobStore,
+            openTrashKey = openTrash,
+            onOpenTrash = if (readOnly) null else ({ openTrash = it }),
+            onDelete = if (readOnly) null else ({ a ->
+                openTrash = null
+                scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(a.node.nodeId) } }
+            }),
+            onReorder = if (readOnly) null else ({ moved, prev, next ->
+                scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+            }),
+            onOpen = { attOpen = it.node },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -335,9 +352,7 @@ fun PostDetailEditor(
                         focusRequester = focusRequester,
                         onHelp = { helpOpen = true },
                         applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
-                        attachments = attachments,
-                        blobStore = blobStore,
-                        onOpenAttachment = { attOpen = it.node },
+                        attachmentBox = attachmentBox,
                         bottomInset = imeBottom,
                     )
                 } else {
@@ -364,9 +379,15 @@ fun PostDetailEditor(
                                 pendingEditFocus = true
                             }
                         },
-                        attachments = attachments,
-                        blobStore = blobStore,
-                        onOpenAttachment = { attOpen = it.node },
+                        attachmentBox = attachmentBox,
+                        hasAttachments = attachments.isNotEmpty(),
+                        openTrashKey = openTrash,
+                        onOpenTrash = if (readOnly) null else ({ openTrash = it }),
+                        onDeleteLine = if (readOnly) null else ({ line ->
+                            openTrash = null
+                            tfv = TextFieldValue(deleteLineWithChildren(tfv.text, line))
+                            save()
+                        }),
                         query = if (findOpen) findQuery else null,
                         currentMatch = matchIdx,
                         onMatchCount = { renderMatchCount = it },
@@ -431,9 +452,7 @@ private fun SourceEditor(
     focusRequester: FocusRequester,
     onHelp: () -> Unit,
     applyToTfv: ((TextFieldValue) -> TextFieldValue) -> Unit,
-    attachments: List<AttachmentRow>,
-    blobStore: BlobStore,
-    onOpenAttachment: (AttachmentRow) -> Unit,
+    attachmentBox: @Composable () -> Unit,
     bottomInset: androidx.compose.ui.unit.Dp,
 ) {
     // Editier-Flaeche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
@@ -445,7 +464,7 @@ private fun SourceEditor(
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).tag("field:body").focusRequester(focusRequester),
         )
         MarkdownToolbar(value = tfv, apply = applyToTfv, onHelp = onHelp)
-        AttachmentBox(attachments, blobStore, onOpen = onOpenAttachment)
+        attachmentBox()
         // Tastaturhoher Puffer: das letzte Feld kann so über die Tastatur gescrollt
         // werden, damit der Cursor beim Tippen nie dahinter verschwindet.
         Spacer(Modifier.height(bottomInset))
@@ -491,9 +510,13 @@ private fun RenderedView(
     text: String,
     onToggleTask: (Int) -> Unit,
     onEditAt: (Int) -> Unit,
-    attachments: List<AttachmentRow>,
-    blobStore: BlobStore,
-    onOpenAttachment: (AttachmentRow) -> Unit,
+    attachmentBox: @Composable () -> Unit,
+    hasAttachments: Boolean,
+    /** Tonnen-Zustand des Screens (geteilt mit dem Anhänge-Kasten). */
+    openTrashKey: String?,
+    onOpenTrash: ((String?) -> Unit)?,
+    /** Quellzeile samt tiefer eingerückter Folgezeilen löschen; null = kein Swipe-Löschen. */
+    onDeleteLine: ((Int) -> Unit)?,
     query: String?,
     currentMatch: Int,
     onMatchCount: (Int) -> Unit,
@@ -577,36 +600,45 @@ private fun RenderedView(
         itemsIndexed(blocks) { idx, b ->
             val line = dragLine(b)
             if (onMoveLine != null && line > 0) {
-                Row(
-                    Modifier.fillMaxWidth()
-                        .then(if (idx == mdDragIndex) Modifier.zIndex(1f).graphicsLayer { translationY = mdDragOffset } else Modifier),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.weight(1f)) {
-                        MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
+                val row: @Composable () -> Unit = {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .then(if (idx == mdDragIndex) Modifier.zIndex(1f).graphicsLayer { translationY = mdDragOffset } else Modifier),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.weight(1f)) {
+                            MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
+                        }
+                        Icon(
+                            Icons.Filled.DragIndicator,
+                            contentDescription = "Zeile verschieben",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.tag("drag:line:$line").pointerInput(idx, blocks) {
+                                detectDragGestures(
+                                    onDragStart = { onOpenTrash?.invoke(null); mdDragIndex = idx; mdDragOffset = 0f },
+                                    onDrag = { change, amount -> change.consume(); mdDragOffset += amount.y },
+                                    onDragEnd = { endLineDrag(idx) },
+                                    onDragCancel = { mdDragIndex = -1; mdDragOffset = 0f },
+                                )
+                            },
+                        )
                     }
-                    Icon(
-                        Icons.Filled.DragIndicator,
-                        contentDescription = "Zeile verschieben",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.tag("drag:line:$line").pointerInput(idx, blocks) {
-                            detectDragGestures(
-                                onDragStart = { mdDragIndex = idx; mdDragOffset = 0f },
-                                onDrag = { change, amount -> change.consume(); mdDragOffset += amount.y },
-                                onDragEnd = { endLineDrag(idx) },
-                                onDragCancel = { mdDragIndex = -1; mdDragOffset = 0f },
-                            )
-                        },
-                    )
+                }
+                if (onDeleteLine != null && onOpenTrash != null) {
+                    // Tonne löscht die Zeile samt ihrer eingerückten Unterpunkte.
+                    SwipeRevealRow(
+                        key = "line:$line", openKey = openTrashKey, onOpenChange = onOpenTrash,
+                        onDelete = { onDeleteLine(line) },
+                    ) { row() }
+                } else {
+                    row()
                 }
             } else {
                 MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
             }
         }
-        if (attachments.isNotEmpty()) {
-            item("attachments") {
-                AttachmentBox(attachments, blobStore, onOpen = onOpenAttachment)
-            }
+        if (hasAttachments) {
+            item("attachments") { attachmentBox() }
         }
     }
 }

@@ -186,6 +186,20 @@ fun handleEnter(old: TextFieldValue, new: TextFieldValue): TextFieldValue? {
  * Zeile 0 ist der Titel: weder verschiebbar noch überschreitbar. Ersetzt die früheren
  * ↑/↓-Toolbar-Pfeile – umsortiert wird jetzt per Drag-Handle in der gerenderten Ansicht.
  */
+/**
+ * Entfernt Zeile [line] samt direkt folgender, tiefer eingerückter Zeilen (ihre „Unterpunkte").
+ * Zeile 0 = Titel bleibt unantastbar. Für das Tonnen-Löschen in der gerenderten Listenansicht.
+ */
+fun deleteLineWithChildren(text: String, line: Int): String {
+    val lines = text.split("\n")
+    if (line <= 0 || line >= lines.size) return text
+    fun indentOf(s: String) = s.takeWhile { it == ' ' }.length
+    val base = indentOf(lines[line])
+    var end = line + 1
+    while (end < lines.size && lines[end].isNotBlank() && indentOf(lines[end]) > base) end++
+    return (lines.subList(0, line) + lines.subList(end, lines.size)).joinToString("\n")
+}
+
 fun moveLineTo(text: String, fromLine: Int, toLine: Int): String {
     val lines = text.split("\n")
     if (fromLine == toLine || fromLine <= 0 || toLine <= 0) return text

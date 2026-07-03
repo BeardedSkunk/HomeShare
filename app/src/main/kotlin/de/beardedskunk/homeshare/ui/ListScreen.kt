@@ -222,6 +222,10 @@ fun ListScreen(
     }
     val displayed = dragPreview ?: shown
     val canDrag = canWrite && !searching
+    // Links-Swipe -> stehende Mülltonne (max. eine offen); vertikaler Drag schließt sie.
+    var openTrash by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(dragState.isDragging) { if (dragState.isDragging) openTrash = null }
+    LaunchedEffect(parentId) { openTrash = null }
 
     fun shareImage(sha: String) {
         val file = if (blobStore.hasFull(sha)) blobStore.fullFile(sha) else blobStore.thumbFile(sha)
@@ -426,20 +430,33 @@ fun ListScreen(
                             Modifier.dragDropItem(dragState, index)
                                 .then(if (dragState.isDragging(index)) Modifier else Modifier.animateItem()),
                         ) {
-                            when (node.kind) {
-                                NodeKind.NOTE -> PostRow(
-                                    post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore,
-                                    onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
-                                    trailing = handle,
-                                )
-                                NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
-                                NodeKind.TODO -> TodoRow(
-                                    node = node, enabled = canWrite,
-                                    onClick = { openChild(node) }, onLongClick = { actionNode = node },
-                                    onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
-                                    trailing = handle,
-                                )
-                                else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                            val rowContent: @Composable () -> Unit = {
+                                when (node.kind) {
+                                    NodeKind.NOTE -> PostRow(
+                                        post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore,
+                                        onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
+                                        trailing = handle,
+                                    )
+                                    NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                                    NodeKind.TODO -> TodoRow(
+                                        node = node, enabled = canWrite,
+                                        onClick = { openChild(node) }, onLongClick = { actionNode = node },
+                                        onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
+                                        trailing = handle,
+                                    )
+                                    else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                                }
+                            }
+                            if (canDrag) {
+                                SwipeRevealRow(
+                                    key = node.nodeId, openKey = openTrash, onOpenChange = { openTrash = it },
+                                    onDelete = {
+                                        val id = node.nodeId
+                                        scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) }; reload() }
+                                    },
+                                ) { rowContent() }
+                            } else {
+                                rowContent()
                             }
                         }
                     }

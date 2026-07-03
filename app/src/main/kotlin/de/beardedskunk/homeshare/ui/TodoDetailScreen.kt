@@ -182,6 +182,15 @@ fun TodoDetailScreen(
     }
 
     var fabMenu by remember { mutableStateOf(false) }
+    // Links-Swipe -> stehende Mülltonne; ein Zustand für Unterpunkte UND Anhänge (max. eine offen).
+    var openTrash by remember { mutableStateOf<String?>(null) }
+    val subDrag = rememberColumnDragState()
+
+    fun deleteChild(id: String) {
+        if (readOnly) return
+        openTrash = null
+        scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) } }
+    }
 
     Scaffold(
         topBar = {
@@ -256,59 +265,45 @@ fun TodoDetailScreen(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         )
-                        // Einfacher Spalten-Drag (wenige Zeilen, ~gleiche Höhe): Handle greifen,
-                        // beim Loslassen um ganze Zeilenhöhen versetzt einsortieren (1 Op).
-                        var subDragIndex by remember { mutableStateOf(-1) }
-                        var subDragOffset by remember { mutableStateOf(0f) }
-                        var subRowHeight by remember { mutableStateOf(0) }
                         for ((i, s) in subItems.withIndex()) {
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .tag(rowTag(s.title))
-                                    .onGloballyPositioned { if (subRowHeight == 0) subRowHeight = it.size.height }
-                                    .then(if (i == subDragIndex) Modifier.zIndex(1f).graphicsLayer { translationY = subDragOffset } else Modifier)
-                                    .clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s }
-                                    .padding(horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                // Auch Text-/Notiz-Unterpunkte tragen einen Haken (done gibt es auf jedem Knoten).
-                                Checkbox(checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly)
-                                Text(
-                                    s.title.ifBlank { "(ohne Titel)" },
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    textDecoration = if (s.done) TextDecoration.LineThrough else null,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (!readOnly) {
-                                    Icon(
-                                        Icons.Filled.DragIndicator,
-                                        contentDescription = "Verschieben",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.tag(dragTag(s.title)).pointerInput(subItems) {
-                                            detectDragGestures(
-                                                onDragStart = { subDragIndex = i; subDragOffset = 0f },
-                                                onDrag = { change, amount -> change.consume(); subDragOffset += amount.y },
-                                                onDragEnd = {
-                                                    val h = subRowHeight.takeIf { it > 0 } ?: 1
-                                                    // Mittellinien-Regel: erst wenn das Zentrum des gezogenen Items die
-                                                    // Mitte des Nachbarn (= volle Zeilenhöhe) passiert hat, wird umsortiert
-                                                    // -> Richtung Null abschneiden, NICHT runden.
-                                                    val target = (i + (subDragOffset / h).toInt()).coerceIn(0, subItems.lastIndex)
-                                                    if (target != i) {
-                                                        val cur = subItems.toMutableList()
-                                                        val moved = cur.removeAt(i)
-                                                        cur.add(target, moved)
-                                                        val prev = cur.getOrNull(target - 1)
-                                                        val next = cur.getOrNull(target + 1)
-                                                        scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
-                                                    }
-                                                    subDragIndex = -1; subDragOffset = 0f
-                                                },
-                                                onDragCancel = { subDragIndex = -1; subDragOffset = 0f },
-                                            )
-                                        },
+                            val row: @Composable () -> Unit = {
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .tag(rowTag(s.title))
+                                        .columnDragItem(subDrag, i)
+                                        .clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s }
+                                        .padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    // Auch Text-/Notiz-Unterpunkte tragen einen Haken (done gibt es auf jedem Knoten).
+                                    Checkbox(checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly)
+                                    Text(
+                                        s.title.ifBlank { "(ohne Titel)" },
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        textDecoration = if (s.done) TextDecoration.LineThrough else null,
+                                        modifier = Modifier.weight(1f),
                                     )
+                                    if (!readOnly) {
+                                        ColumnDragHandle(
+                                            subDrag, i, s.title, subItems.size,
+                                            onDragStart = { openTrash = null },
+                                            onDrop = { from, to ->
+                                                val cur = subItems.toMutableList()
+                                                val moved = cur.removeAt(from)
+                                                cur.add(to, moved)
+                                                scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, cur.getOrNull(to - 1), cur.getOrNull(to + 1)) } }
+                                            },
+                                        )
+                                    }
                                 }
+                            }
+                            if (!readOnly) {
+                                SwipeRevealRow(
+                                    key = s.nodeId, openKey = openTrash, onOpenChange = { openTrash = it },
+                                    onDelete = { deleteChild(s.nodeId) },
+                                ) { row() }
+                            } else {
+                                row()
                             }
                         }
                         if (!readOnly) {
@@ -328,7 +323,16 @@ fun TodoDetailScreen(
             }
             if (attachments.isNotEmpty()) {
                 item(key = "attachments") {
-                    AttachmentBox(attachments, blobStore, onOpen = { attOpen = it.node })
+                    AttachmentBox(
+                        attachments, blobStore,
+                        openTrashKey = openTrash,
+                        onOpenTrash = if (readOnly) null else ({ openTrash = it }),
+                        onDelete = if (readOnly) null else ({ a -> deleteChild(a.node.nodeId) }),
+                        onReorder = if (readOnly) null else ({ moved, prev, next ->
+                            scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+                        }),
+                        onOpen = { attOpen = it.node },
+                    )
                 }
             }
             if (events.isNotEmpty()) {

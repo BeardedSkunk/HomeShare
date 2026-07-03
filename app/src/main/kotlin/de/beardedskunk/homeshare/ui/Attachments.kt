@@ -52,9 +52,17 @@ fun AttachmentBox(
     attachments: List<AttachmentRow>,
     blobStore: BlobStore,
     modifier: Modifier = Modifier,
+    /** Tonnen-Zustand des Screens (max. eine offene Tonne pro Screen). */
+    openTrashKey: String? = null,
+    onOpenTrash: ((String?) -> Unit)? = null,
+    /** Löschen per Tonne (Anhang-Knoten samt Beschreibung). null = kein Swipe-Löschen. */
+    onDelete: ((AttachmentRow) -> Unit)? = null,
+    /** Umsortieren per Drag-Handle. null = keine Handles. */
+    onReorder: ((moved: NodeState, prev: NodeState?, next: NodeState?) -> Unit)? = null,
     onOpen: (AttachmentRow) -> Unit,
 ) {
     if (attachments.isEmpty()) return
+    val drag = rememberColumnDragState()
     Card(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).tag("box:attachments")) {
         Column(Modifier.padding(vertical = 6.dp)) {
             Text(
@@ -63,15 +71,49 @@ fun AttachmentBox(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
-            for (a in attachments) AttachmentRowView(a, blobStore, onOpen = { onOpen(a) })
+            for ((i, a) in attachments.withIndex()) {
+                val row: @Composable () -> Unit = {
+                    AttachmentRowView(
+                        a, blobStore,
+                        modifier = Modifier.columnDragItem(drag, i),
+                        trailing = if (onReorder != null) ({
+                            ColumnDragHandle(
+                                drag, i, a.label(), attachments.size,
+                                onDragStart = { onOpenTrash?.invoke(null) },
+                                onDrop = { from, to ->
+                                    val cur = attachments.toMutableList()
+                                    val moved = cur.removeAt(from)
+                                    cur.add(to, moved)
+                                    onReorder(moved.node, cur.getOrNull(to - 1)?.node, cur.getOrNull(to + 1)?.node)
+                                },
+                            )
+                        }) else null,
+                        onOpen = { onOpen(a) },
+                    )
+                }
+                if (onDelete != null && onOpenTrash != null) {
+                    SwipeRevealRow(
+                        key = a.node.nodeId, openKey = openTrashKey, onOpenChange = onOpenTrash,
+                        onDelete = { onDelete(a) },
+                    ) { row() }
+                } else {
+                    row()
+                }
+            }
         }
     }
 }
 
 @Composable
-fun AttachmentRowView(a: AttachmentRow, blobStore: BlobStore, onOpen: () -> Unit) {
+fun AttachmentRowView(
+    a: AttachmentRow,
+    blobStore: BlobStore,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
+    onOpen: () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth()
+        modifier.fillMaxWidth()
             .tag(rowTag(a.label()))
             .clickable(onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 6.dp),
@@ -90,5 +132,6 @@ fun AttachmentRowView(a: AttachmentRow, blobStore: BlobStore, onOpen: () -> Unit
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(start = 12.dp),
         )
+        trailing?.invoke()
     }
 }
