@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -21,7 +20,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -110,9 +108,7 @@ fun SettingsScreen(
             TopAppBar(
                 title = { Text("Einstellungen") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
-                    }
+                    BackIconButton(onClick = onBack)
                 },
             )
         },
@@ -136,7 +132,7 @@ fun SettingsScreen(
                     onCheckedChange = {
                         syncEnabled = it
                         onSyncEnabledChanged(it)
-                        Toast.makeText(context, if (it) "Sync aktiviert" else "Sync deaktiviert", Toast.LENGTH_SHORT).show()
+                        toast(context, if (it) "Sync aktiviert" else "Sync deaktiviert")
                     },
                 )
             }
@@ -202,7 +198,7 @@ fun SettingsScreen(
                         val result = withContext(Dispatchers.IO) { fritz.testAndSync() }
                         busy = false
                         val msg = result.getOrElse { "FRITZ!Box-Fehler: ${it.message}" }
-                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        toast(context, msg, long = true)
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),

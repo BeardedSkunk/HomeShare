@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -43,7 +42,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import android.widget.Toast
 import com.google.zxing.BarcodeFormat
 import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
@@ -79,7 +77,7 @@ fun FeedShareScreen(repo: FeedRepository, sync: SyncManager, feed: NodeState, on
         topBar = {
             TopAppBar(
                 title = { Text("Freigaben: ${feed.title}") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") } },
+                navigationIcon = { BackIconButton(onClick = onBack) },
             )
         },
     ) { padding ->
@@ -158,12 +156,12 @@ fun AddSharedFeedDialog(sync: SyncManager, onDone: () -> Unit, onDismiss: () -> 
     }
     fun subscribe() {
         val payload = PairingPayload.parse(code.trim())
-        if (payload == null) { Toast.makeText(context, "Ungültiger Code", Toast.LENGTH_SHORT).show(); return }
+        if (payload == null) { toast(context, "Ungültiger Code"); return }
         busy = true
         scope.launch {
             val ok = withContext(Dispatchers.IO) { sync.pairAndSubscribe(payload) }
             busy = false
-            Toast.makeText(context, if (ok) "Feed „${payload.feedName}“ abonniert" else "Kopplung fehlgeschlagen", Toast.LENGTH_LONG).show()
+            toast(context, if (ok) "Feed „${payload.feedName}“ abonniert" else "Kopplung fehlgeschlagen", long = true)
             if (ok) onDone()
         }
     }
@@ -176,7 +174,7 @@ fun AddSharedFeedDialog(sync: SyncManager, onDone: () -> Unit, onDismiss: () -> 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = {
                     runCatching { scanLauncher.launch(ScanOptions().setOrientationLocked(false).setBeepEnabled(false).setPrompt("Freigabe-QR scannen")) }
-                        .onFailure { Toast.makeText(context, "Scanner nicht verfügbar – Code einfügen", Toast.LENGTH_SHORT).show() }
+                        .onFailure { toast(context, "Scanner nicht verfügbar – Code einfügen") }
                 }) { Text("QR scannen") }
                 OutlinedTextField(value = code, onValueChange = { code = it }, label = { Text("oder Code einfügen") }, modifier = Modifier.fillMaxWidth())
             }

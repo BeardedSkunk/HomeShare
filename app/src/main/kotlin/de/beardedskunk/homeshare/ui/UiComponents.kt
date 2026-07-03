@@ -1,0 +1,37 @@
+package de.beardedskunk.homeshare.ui
+
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.Composable
+
+// Gemeinsame Kleinteile der UI-Screens.
+
+/** Zurück-/Abbrechen-Pfeil für TopAppBar-navigationIcon. */
+@Composable
+fun BackIconButton(onClick: () -> Unit, contentDescription: String = "Zurück") {
+    IconButton(onClick = onClick) {
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = contentDescription)
+    }
+}
+
+fun toast(context: Context, msg: String, long: Boolean = false) {
+    Toast.makeText(context, msg, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+}
+
+/** Alle Start-Indizes von [needle] in [haystack] (case-insensitive, ueberlappungsfrei). */
+internal fun findAllMatches(haystack: String, needle: String): List<Int> {
+    if (needle.isEmpty()) return emptyList()
+    val out = ArrayList<Int>()
+    var from = 0
+    while (true) {
+        val idx = haystack.indexOf(needle, from, ignoreCase = true)
+        if (idx < 0) break
+        out += idx
+        from = idx + needle.length
+    }
+    return out
+}

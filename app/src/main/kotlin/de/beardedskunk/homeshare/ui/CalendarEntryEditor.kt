@@ -1,6 +1,5 @@
 package de.beardedskunk.homeshare.ui
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -162,9 +160,7 @@ fun CalendarEntryEditor(
             TopAppBar(
                 title = { Text(if (post == null) "Neuer Termin" else "Termin bearbeiten") },
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
-                    }
+                    BackIconButton(onClick = onClose)
                 },
                 actions = {
                     if (post != null) {
@@ -365,5 +361,3 @@ private fun dateOf(s: String): LocalDate = runCatching { parseZoned(s).toLocalDa
 
 private fun timeOf(s: String): LocalTime = runCatching { parseZoned(s).toLocalTime() }
     .getOrDefault(LocalTime.of(9, 0))
-
-private fun toast(ctx: android.content.Context, msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()

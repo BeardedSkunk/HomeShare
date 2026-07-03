@@ -2,7 +2,6 @@ package de.beardedskunk.homeshare.ui
 
 import android.content.ComponentName
 import android.content.Intent
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -40,7 +39,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -341,9 +339,9 @@ fun PostDetailEditor(
                 images = images.toMutableList().also { it[pe.index] = newSha }
                 viewingIndex = null
                 sourceMode = true
-                Toast.makeText(context, "Bild geändert.", Toast.LENGTH_SHORT).show()
+                toast(context, "Bild geändert.")
             } else if (newSha == null) {
-                Toast.makeText(context, "Keine Änderung übernommen.", Toast.LENGTH_SHORT).show()
+                toast(context, "Keine Änderung übernommen.")
             }
         }
     }
@@ -351,11 +349,11 @@ fun PostDetailEditor(
     fun launchEdit(index: Int, sha: String, target: EditTarget?, forceChooser: Boolean) {
         val full = blobStore.readFull(sha)
         if (full == null) {
-            Toast.makeText(context, "Vollbild nicht lokal – erst antippen zum Laden.", Toast.LENGTH_SHORT).show(); return
+            toast(context, "Vollbild nicht lokal – erst antippen zum Laden."); return
         }
         val uri = MediaStoreEdit.createPending(context, full, "homeshare_edit_${System.currentTimeMillis()}.png")
         if (uri == null) {
-            Toast.makeText(context, "Konnte Bild nicht vorbereiten.", Toast.LENGTH_SHORT).show(); return
+            toast(context, "Konnte Bild nicht vorbereiten."); return
         }
         val base = Intent(Intent.ACTION_EDIT).apply {
             setDataAndType(uri, "image/*")
@@ -372,7 +370,7 @@ fun PostDetailEditor(
         runCatching { editLauncher.launch(toLaunch) }.onFailure {
             pendingEdit = null
             MediaStoreEdit.delete(context, uri)
-            Toast.makeText(context, "Keine App zum Bearbeiten gefunden.", Toast.LENGTH_SHORT).show()
+            toast(context, "Keine App zum Bearbeiten gefunden.")
         }
     }
 
@@ -382,7 +380,7 @@ fun PostDetailEditor(
             blobStore.hasThumb(sha) -> blobStore.thumbFile(sha)
             else -> null
         }
-        if (file == null) { Toast.makeText(context, "Bild nicht lokal.", Toast.LENGTH_SHORT).show(); return }
+        if (file == null) { toast(context, "Bild nicht lokal."); return }
         val uri = FileProvider.getUriForFile(context, authority, file)
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "image/*"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -450,9 +448,7 @@ fun PostDetailEditor(
             TopAppBar(
                 title = {},
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Abbrechen")
-                    }
+                    BackIconButton(onClick = onClose, contentDescription = "Abbrechen")
                 },
                 actions = {
                     // Suche in BEIDEN Modi (gerendert + Quelltext). Schließen leert den Begriff
@@ -953,17 +949,4 @@ private fun EditMenuItem(onTap: () -> Unit, onLongPress: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().combinedClickable(onClick = onTap, onLongClick = onLongPress).padding(horizontal = 16.dp, vertical = 12.dp),
     ) { Text("Bearbeiten") }
-}
-
-/** Alle Start-Indizes von [needle] in [haystack] (case-insensitive, ueberlappungsfrei). */
-private fun findAllMatches(haystack: String, needle: String): List<Int> {
-    if (needle.isEmpty()) return emptyList()
-    val out = ArrayList<Int>()
-    var from = 0
-    while (true) {
-        val idx = haystack.indexOf(needle, from, ignoreCase = true)
-        if (idx < 0) break
-        out += idx; from = idx + needle.length
-    }
-    return out
 }

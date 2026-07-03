@@ -1,7 +1,6 @@
 package de.beardedskunk.homeshare.ui
 
 import android.content.Intent
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -22,7 +21,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Add
@@ -161,7 +159,7 @@ fun ListScreen(
             val result = withContext(Dispatchers.IO) {
                 val list = repo.children(parentId)
                 val imgs = list.filter { it.kind == NodeKind.NOTE }.associate { p ->
-                    p.nodeId to repo.children(p.nodeId).filter { it.type == NodeType.IMAGE && it.blobHash != null }.map { it.blobHash!! }
+                    p.nodeId to repo.children(p.nodeId).mapNotNull { c -> if (c.type == NodeType.IMAGE) c.blobHash else null }
                 }
                 list to imgs
             }
@@ -174,7 +172,7 @@ fun ListScreen(
         matchedIds = if (searching && query.isNotBlank()) {
             withContext(Dispatchers.IO) {
                 if (isRoot) repo.feedsMatching(query)
-                else repo.search(container!!.rootId, query).map { it.nodeId }.toSet()
+                else repo.search(container.rootId, query).map { it.nodeId }.toSet()
             }
         } else {
             null
@@ -210,7 +208,7 @@ fun ListScreen(
             NodeKind.NOTE -> if (p.conflicted && canMerge) resolving = p else noteEdit = p
             NodeKind.CALENDAR -> calEdit = p
             NodeKind.TODO, NodeKind.IMAGE, NodeKind.FILE ->
-                Toast.makeText(context, "${p.kind.uiLabel()} – Anzeige folgt später", Toast.LENGTH_SHORT).show()
+                toast(context, "${p.kind.uiLabel()} – Anzeige folgt später")
         }
     }
 
@@ -262,11 +260,11 @@ fun ListScreen(
                     } else if (isRoot) {
                         Text("Feeds")
                     } else {
-                        Text(container!!.title.ifBlank { "(ohne Namen)" })
+                        Text(container.title.ifBlank { "(ohne Namen)" })
                     }
                 },
                 navigationIcon = {
-                    if (!isRoot) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück") }
+                    if (!isRoot) BackIconButton(onClick = onBack)
                 },
                 actions = {
                     IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }) {

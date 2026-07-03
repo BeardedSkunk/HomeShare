@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -54,7 +53,7 @@ fun PostEditor(
     val focusRequester = remember { FocusRequester() }
 
     val matches: List<Int> = remember(tfv.text, findQuery) {
-        if (findQuery.isBlank()) emptyList() else findAll(tfv.text, findQuery)
+        if (findQuery.isBlank()) emptyList() else findAllMatches(tfv.text, findQuery)
     }
 
     fun jumpTo(index: Int) {
@@ -71,9 +70,7 @@ fun PostEditor(
             TopAppBar(
                 title = { Text("Bearbeiten") },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Abbrechen")
-                    }
+                    BackIconButton(onClick = onCancel, contentDescription = "Abbrechen")
                 },
                 actions = {
                     IconButton(onClick = { findOpen = !findOpen }) {
@@ -122,18 +119,4 @@ fun PostEditor(
             )
         }
     }
-}
-
-/** Alle Start-Indizes von [needle] in [haystack] (case-insensitive, ueberlappungsfrei). */
-private fun findAll(haystack: String, needle: String): List<Int> {
-    if (needle.isEmpty()) return emptyList()
-    val out = ArrayList<Int>()
-    var from = 0
-    while (true) {
-        val idx = haystack.indexOf(needle, from, ignoreCase = true)
-        if (idx < 0) break
-        out += idx
-        from = idx + needle.length
-    }
-    return out
 }
