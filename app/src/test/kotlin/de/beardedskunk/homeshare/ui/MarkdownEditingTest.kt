@@ -113,32 +113,21 @@ class MarkdownEditingTest {
         assertNull(handleEnter(old, new))
     }
 
-    @Test fun moveLines_movesSelectedLineUp() {
-        // Zeilen: 0 "Titel", 1 "a", 2 "b"; Auswahl in Zeile 2 -> b nach oben.
-        val v = TextFieldValue("Titel\na\nb", TextRange(8))
-        val r = moveLines(v, up = true)
-        assertEquals("Titel\nb\na", r.text)
+    @Test fun moveLineTo_movesLineDown() {
+        assertEquals("Titel\nb\na\nc", moveLineTo("Titel\na\nb\nc", 2, 1))
+        assertEquals("Titel\nb\nc\na", moveLineTo("Titel\na\nb\nc", 1, 3))
     }
 
-    @Test fun moveLines_downAtEndIsNoop() {
-        val v = TextFieldValue("Titel\na\nb", TextRange(8))
-        val r = moveLines(v, up = false)
-        assertEquals("Titel\na\nb", r.text)
+    @Test fun moveLineTo_protectsTitleLine() {
+        // Zeile 0 (Titel) ist weder Quelle noch Ziel.
+        assertEquals("Titel\na\nb", moveLineTo("Titel\na\nb", 0, 1))
+        assertEquals("Titel\na\nb", moveLineTo("Titel\na\nb", 1, 0))
     }
 
-    @Test fun moveLines_keepsSelectionOnMovedBlock() {
-        // "Titel\na\nb\nc"; Zeile "b" (Index 2) markiert -> nach oben -> bleibt markiert.
-        val v = TextFieldValue("Titel\na\nb\nc", TextRange(8, 9))
-        val r = moveLines(v, up = true)
-        assertEquals("Titel\nb\na\nc", r.text)
-        assertEquals(6, r.selection.start)
-        assertEquals(7, r.selection.end)
-    }
-
-    @Test fun moveLines_doesNotCrossTitleLine() {
-        // Erste Körperzeile darf nicht über den Titel (Zeile 0) wandern.
-        val v = TextFieldValue("Titel\na\nb", TextRange(6, 7))
-        assertEquals("Titel\na\nb", moveLines(v, up = true).text)
+    @Test fun moveLineTo_ignoresOutOfRangeAndNoop() {
+        assertEquals("Titel\na\nb", moveLineTo("Titel\na\nb", 1, 1))
+        assertEquals("Titel\na\nb", moveLineTo("Titel\na\nb", 5, 1))
+        assertEquals("Titel\na\nb", moveLineTo("Titel\na\nb", 1, 9))
     }
 
     @Test fun applyCode_putsFencesOnOwnLinesForPartialLines() {
@@ -150,32 +139,11 @@ class MarkdownEditingTest {
         assertEquals("vorher \n```\nUND\nmitte\nENDE\n```\n rest", r.text)
     }
 
-    @Test fun moveLines_movesSelectedLineDown() {
-        // Zeilen: 0 "Titel", 1 "a", 2 "b"; Auswahl in Zeile 1 -> a nach unten.
-        val v = TextFieldValue("Titel\na\nb", TextRange(6))
-        assertEquals("Titel\nb\na", moveLines(v, up = false).text)
-    }
-
-    @Test fun moveLines_movesMultiLineBlock() {
-        // Block "a"+"b" (Zeilen 1..2) markiert -> nach unten, "c" rutscht hoch.
-        val v = TextFieldValue("Titel\na\nb\nc", TextRange(6, 9))
-        val r = moveLines(v, up = false)
-        assertEquals("Titel\nc\na\nb", r.text)
-        // Markierung bleibt auf dem verschobenen Block.
-        assertEquals(8, r.selection.start)
-        assertEquals(11, r.selection.end)
-    }
-
-    @Test fun moveLines_upAtFirstBodyLineIsNoop() {
-        // Erste Körperzeile (Index 1) darf nicht über den Titel wandern.
-        val v = TextFieldValue("Titel\na\nb", TextRange(6))
-        assertEquals("Titel\na\nb", moveLines(v, up = true).text)
-    }
 
     /**
-     * Struktur-Regressionstest: pinnt die Markdown-Toolbar (Inhalt UND Reihenfolge). Verschwindet ein
-     * Knopf (z. B. die Zeilen-Pfeile) oder verrutscht die Reihenfolge, schlägt dieser Test an –
-     * genau das, was zuletzt unbemerkt durchgegangen wäre.
+     * Struktur-Regressionstest: pinnt die Markdown-Toolbar (Inhalt UND Reihenfolge). Die früheren
+     * ↑/↓-Zeilen-Pfeile sind BEWUSST entfernt (2026-07): Zeilen werden jetzt per Drag-Handle in
+     * der gerenderten Ansicht umsortiert.
      */
     @Test fun markdownToolbar_hasAllButtonsInOrder() {
         assertEquals(
@@ -185,15 +153,11 @@ class MarkdownEditingTest {
                 MarkdownToolbarItem.ITALIC,
                 MarkdownToolbarItem.STRIKE,
                 MarkdownToolbarItem.CODE,
-                MarkdownToolbarItem.MOVE_UP,
-                MarkdownToolbarItem.MOVE_DOWN,
                 MarkdownToolbarItem.HELP,
             ),
             MARKDOWN_TOOLBAR,
         )
-        // "?" muss ganz rechts hinter den Zeilen-Pfeilen stehen.
+        // "?" muss ganz rechts stehen.
         assertEquals(MarkdownToolbarItem.HELP, MARKDOWN_TOOLBAR.last())
-        // Beide Zeilen-Verschiebe-Pfeile sind vorhanden.
-        assert(MARKDOWN_TOOLBAR.containsAll(listOf(MarkdownToolbarItem.MOVE_UP, MarkdownToolbarItem.MOVE_DOWN)))
     }
 }

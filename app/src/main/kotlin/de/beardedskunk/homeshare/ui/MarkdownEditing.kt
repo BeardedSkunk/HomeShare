@@ -16,7 +16,7 @@ import kotlin.math.min
  * Die UI rendert genau [MARKDOWN_TOOLBAR] (exhaustives `when`), ein Test pinnt Inhalt+Reihenfolge.
  * Fällt ein Knopf raus oder ändert sich die Reihenfolge, schlägt der Test an (Regressionsschutz).
  */
-enum class MarkdownToolbarItem { TASK, BOLD, ITALIC, STRIKE, CODE, MOVE_UP, MOVE_DOWN, HELP }
+enum class MarkdownToolbarItem { TASK, BOLD, ITALIC, STRIKE, CODE, HELP }
 
 val MARKDOWN_TOOLBAR: List<MarkdownToolbarItem> = listOf(
     MarkdownToolbarItem.TASK,
@@ -24,8 +24,6 @@ val MARKDOWN_TOOLBAR: List<MarkdownToolbarItem> = listOf(
     MarkdownToolbarItem.ITALIC,
     MarkdownToolbarItem.STRIKE,
     MarkdownToolbarItem.CODE,
-    MarkdownToolbarItem.MOVE_UP,
-    MarkdownToolbarItem.MOVE_DOWN,
     MarkdownToolbarItem.HELP,
 )
 
@@ -183,44 +181,17 @@ fun handleEnter(old: TextFieldValue, new: TextFieldValue): TextFieldValue? {
     }
 }
 
-/** Verschiebt die von der Auswahl berührten Zeilen um eine Position nach oben/unten. */
-fun moveLines(v: TextFieldValue, up: Boolean): TextFieldValue {
-    val lines = v.text.split("\n").toMutableList()
-    val selStart = min(v.selection.start, v.selection.end)
-    val selEnd = max(v.selection.start, v.selection.end)
-    // Zeilenindizes aus Zeichenoffsets bestimmen.
-    fun lineOf(offset: Int): Int {
-        var acc = 0
-        for (idx in lines.indices) {
-            val len = lines[idx].length
-            if (offset <= acc + len) return idx
-            acc += len + 1
-        }
-        return lines.lastIndex
-    }
-    val first = lineOf(selStart)
-    val last = lineOf(selEnd)
-    // Zeile 0 ist der Titel und bleibt oben: nicht über sie hinaus nach oben schieben.
-    if (up && first <= 1) return v
-    if (!up && last == lines.lastIndex) return v
-    val newFirst: Int
-    val newLast: Int
-    if (up) {
-        val moved = lines.removeAt(first - 1); lines.add(last, moved)
-        newFirst = first - 1; newLast = last - 1
-    } else {
-        val moved = lines.removeAt(last + 1); lines.add(first, moved)
-        newFirst = first + 1; newLast = last + 1
-    }
-    val nt = lines.joinToString("\n")
-    // Markierung erhalten: den verschobenen Zeilenblock weiter selektieren,
-    // damit man ihn ohne Neu-Markieren um mehrere Zeilen bewegen kann.
-    var startOff = 0
-    for (idx in 0 until newFirst) startOff += lines[idx].length + 1
-    var endOff = startOff
-    for (idx in newFirst..newLast) {
-        endOff += lines[idx].length
-        if (idx < newLast) endOff += 1
-    }
-    return TextFieldValue(nt, TextRange(startOff, endOff))
+/**
+ * Verschiebt EINE Zeile von [fromLine] nach [toLine] (absolute Zeilenindizes im Gesamttext).
+ * Zeile 0 ist der Titel: weder verschiebbar noch überschreitbar. Ersetzt die früheren
+ * ↑/↓-Toolbar-Pfeile – umsortiert wird jetzt per Drag-Handle in der gerenderten Ansicht.
+ */
+fun moveLineTo(text: String, fromLine: Int, toLine: Int): String {
+    val lines = text.split("\n")
+    if (fromLine == toLine || fromLine <= 0 || toLine <= 0) return text
+    if (fromLine !in lines.indices || toLine !in lines.indices) return text
+    val mut = lines.toMutableList()
+    val moved = mut.removeAt(fromLine)
+    mut.add(toLine, moved)
+    return mut.joinToString("\n")
 }

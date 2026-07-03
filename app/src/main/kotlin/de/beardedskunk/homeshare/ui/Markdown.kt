@@ -81,8 +81,8 @@ fun taskCounts(text: String): Pair<Int, Int>? {
 sealed interface MdBlock {
     data class Heading(val level: Int, val inline: Inline) : MdBlock
     data class Para(val inline: Inline) : MdBlock
-    data class Bullet(val indent: Int, val inline: Inline) : MdBlock
-    data class Numbered(val indent: Int, val number: Int, val inline: Inline) : MdBlock
+    data class Bullet(val indent: Int, val inline: Inline, val sourceLine: Int = -1) : MdBlock
+    data class Numbered(val indent: Int, val number: Int, val inline: Inline, val sourceLine: Int = -1) : MdBlock
     data class Task(val indent: Int, val checked: Boolean, val inline: Inline, val sourceLine: Int) : MdBlock
     data class Quote(val inline: Inline) : MdBlock
     data class Code(val text: String, val srcStart: Int) : MdBlock
@@ -169,10 +169,10 @@ private fun parseBlocks(body: String, lineOffset: Int, bodyStart: Int): List<MdB
             }
             num != null -> {
                 numberCounter = if (lastWasNumber) numberCounter + 1 else 1
-                out += MdBlock.Numbered(num.groupValues[1].length, numberCounter, buildInline(num.groupValues[3], abs + col(num, 3)))
+                out += MdBlock.Numbered(num.groupValues[1].length, numberCounter, buildInline(num.groupValues[3], abs + col(num, 3)), lineOffset + i)
                 lastWasNumber = true
             }
-            bullet != null -> { out += MdBlock.Bullet(bullet.groupValues[1].length, buildInline(bullet.groupValues[2], abs + col(bullet, 2))); lastWasNumber = false }
+            bullet != null -> { out += MdBlock.Bullet(bullet.groupValues[1].length, buildInline(bullet.groupValues[2], abs + col(bullet, 2)), lineOffset + i); lastWasNumber = false }
             quote != null -> { out += MdBlock.Quote(buildInline(quote.groupValues[1], abs + col(quote, 1))); lastWasNumber = false }
             else -> { out += MdBlock.Para(buildInline(line, abs)); lastWasNumber = false }
         }

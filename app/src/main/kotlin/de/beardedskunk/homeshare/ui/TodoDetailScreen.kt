@@ -6,6 +6,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -43,11 +45,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
@@ -270,10 +276,17 @@ fun TodoDetailScreen(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         )
-                        for (s in subItems) {
+                        // Einfacher Spalten-Drag (wenige Zeilen, ~gleiche Höhe): Handle greifen,
+                        // beim Loslassen um ganze Zeilenhöhen versetzt einsortieren (1 Op).
+                        var subDragIndex by remember { mutableStateOf(-1) }
+                        var subDragOffset by remember { mutableStateOf(0f) }
+                        var subRowHeight by remember { mutableStateOf(0) }
+                        for ((i, s) in subItems.withIndex()) {
                             Row(
                                 Modifier.fillMaxWidth()
                                     .tag(rowTag(s.title))
+                                    .onGloballyPositioned { if (subRowHeight == 0) subRowHeight = it.size.height }
+                                    .then(if (i == subDragIndex) Modifier.zIndex(1f).graphicsLayer { translationY = subDragOffset } else Modifier)
                                     .clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s }
                                     .padding(horizontal = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -286,6 +299,33 @@ fun TodoDetailScreen(
                                     textDecoration = if (s.done) TextDecoration.LineThrough else null,
                                     modifier = Modifier.weight(1f),
                                 )
+                                if (!readOnly) {
+                                    Icon(
+                                        Icons.Filled.DragIndicator,
+                                        contentDescription = "Verschieben",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.tag(dragTag(s.title)).pointerInput(subItems) {
+                                            detectDragGestures(
+                                                onDragStart = { subDragIndex = i; subDragOffset = 0f },
+                                                onDrag = { change, amount -> change.consume(); subDragOffset += amount.y },
+                                                onDragEnd = {
+                                                    val h = subRowHeight.takeIf { it > 0 } ?: 1
+                                                    val target = (i + Math.round(subDragOffset / h)).coerceIn(0, subItems.lastIndex)
+                                                    if (target != i) {
+                                                        val cur = subItems.toMutableList()
+                                                        val moved = cur.removeAt(i)
+                                                        cur.add(target, moved)
+                                                        val prev = cur.getOrNull(target - 1)
+                                                        val next = cur.getOrNull(target + 1)
+                                                        scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+                                                    }
+                                                    subDragIndex = -1; subDragOffset = 0f
+                                                },
+                                                onDragCancel = { subDragIndex = -1; subDragOffset = 0f },
+                                            )
+                                        },
+                                    )
+                                }
                             }
                         }
                         if (!readOnly) {

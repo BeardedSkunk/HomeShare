@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -73,6 +75,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -82,6 +86,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
@@ -561,6 +566,10 @@ fun PostDetailEditor(
                     RenderedView(
                         text = tfv.text,
                         onToggleTask = { if (!readOnly) toggleTask(it) },
+                        onMoveLine = if (readOnly) null else { from, to ->
+                            tfv = TextFieldValue(moveLineTo(tfv.text, from, to))
+                            save()
+                        },
                         onEditAt = { off ->
                             if (!readOnly) {
                                 // Tipp auf gerenderten Text -> Edit. Bei aktiver Suche den Treffer
@@ -719,7 +728,6 @@ private fun MarkdownToolbar(
     // Auf der Titelzeile (1. Zeile) sind die Format-Knöpfe inaktiv.
     val firstNl = value.text.indexOf('\n').let { if (it < 0) value.text.length else it }
     val onTitleLine = value.selection.start <= firstNl
-    val hasLineSelection = !value.selection.collapsed && minOf(value.selection.start, value.selection.end) > firstNl
     // Rendert genau MARKDOWN_TOOLBAR (datengetrieben + exhaustives when => kein Knopf fällt unbemerkt weg).
     // FlowRow statt horizontalem Scroll: passt nicht alles in eine Zeile (schmale Geräte), bricht der
     // Rest (↑ ↓ ?) in eine zweite Zeile um – nie abgeschnitten, alle Labels bleiben sichtbar.
@@ -733,9 +741,6 @@ private fun MarkdownToolbar(
             MarkdownToolbarItem.ITALIC -> TbButton("I", enabled = !onTitleLine, italic = true, tag = "toolbar:italic") { apply { toggleWrap(it, "*") } }
             MarkdownToolbarItem.STRIKE -> TbButton("S", enabled = !onTitleLine, strike = true, tag = "toolbar:strike") { apply { toggleWrap(it, "~~") } }
             MarkdownToolbarItem.CODE -> TbButton("</>", enabled = !onTitleLine, tag = "toolbar:code") { apply { applyCode(it) } }
-            // Markierte Zeilen-/Blöcke nach oben/unten verschieben (nur bei Zeilenauswahl aktiv).
-            MarkdownToolbarItem.MOVE_UP -> TbButton("↑", enabled = hasLineSelection, tag = "toolbar:moveup") { apply { moveLines(it, up = true) } }
-            MarkdownToolbarItem.MOVE_DOWN -> TbButton("↓", enabled = hasLineSelection, tag = "toolbar:movedown") { apply { moveLines(it, up = false) } }
             MarkdownToolbarItem.HELP -> TbButton("?", enabled = true, tag = "toolbar:help") { onHelp() }
         }
     }
@@ -761,6 +766,8 @@ private fun RenderedView(
     query: String?,
     currentMatch: Int,
     onMatchCount: (Int) -> Unit,
+    /** Zeile [from] vor/hinter Zeile [to] verschieben (absolute Quellzeilen); null = kein Drag. */
+    onMoveLine: ((from: Int, to: Int) -> Unit)? = null,
 ) {
     val descExpanded = remember { mutableStateMapOf<Int, Boolean>() }
     val listState = rememberLazyListState()
@@ -794,6 +801,37 @@ private fun RenderedView(
     fun curRangeFor(itemIndex: Int): IntRange? =
         if (cur != null && cur.first == itemIndex && cur.second < 0) cur.third else null
 
+    // ---- Zeilen-Drag in der gerenderten Ansicht (ersetzt die ↑/↓-Toolbar-Pfeile) ----
+    // Nur Listen-Zeilen (Task/Bullet/Nummer) sind greifbar; der Drop ist auf den
+    // zusammenhängenden Listen-Lauf um die gegriffene Zeile begrenzt.
+    fun dragLine(b: MdBlock): Int = when (b) {
+        is MdBlock.Task -> b.sourceLine
+        is MdBlock.Bullet -> b.sourceLine
+        is MdBlock.Numbered -> b.sourceLine
+        else -> -1
+    }
+    var mdDragIndex by remember { mutableStateOf(-1) }
+    var mdDragOffset by remember { mutableStateOf(0f) }
+    fun endLineDrag(idx: Int) {
+        if (onMoveLine != null) {
+            val itemIdx = titleItems + idx
+            val items = listState.layoutInfo.visibleItemsInfo
+            val dragged = items.firstOrNull { it.index == itemIdx }
+            if (dragged != null) {
+                val center = dragged.offset + mdDragOffset + dragged.size / 2f
+                val over = items.firstOrNull { center >= it.offset && center < it.offset + it.size }
+                var lo = idx
+                while (lo - 1 >= 0 && dragLine(blocks[lo - 1]) > 0) lo--
+                var hi = idx
+                while (hi + 1 < blocks.size && dragLine(blocks[hi + 1]) > 0) hi++
+                val target = ((over?.index ?: itemIdx) - titleItems).coerceIn(lo, hi)
+                if (target != idx) onMoveLine(dragLine(blocks[idx]), dragLine(blocks[target]))
+            }
+        }
+        mdDragIndex = -1
+        mdDragOffset = 0f
+    }
+
     LazyColumn(Modifier.fillMaxSize().padding(12.dp), state = listState) {
         if (title.isNotBlank()) {
             item("title") {
@@ -805,7 +843,33 @@ private fun RenderedView(
             }
         }
         itemsIndexed(blocks) { idx, b ->
-            MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
+            val line = dragLine(b)
+            if (onMoveLine != null && line > 0) {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(if (idx == mdDragIndex) Modifier.zIndex(1f).graphicsLayer { translationY = mdDragOffset } else Modifier),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
+                    }
+                    Icon(
+                        Icons.Filled.DragIndicator,
+                        contentDescription = "Zeile verschieben",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.tag("drag:line:$line").pointerInput(idx, blocks) {
+                            detectDragGestures(
+                                onDragStart = { mdDragIndex = idx; mdDragOffset = 0f },
+                                onDrag = { change, amount -> change.consume(); mdDragOffset += amount.y },
+                                onDragEnd = { endLineDrag(idx) },
+                                onDragCancel = { mdDragIndex = -1; mdDragOffset = 0f },
+                            )
+                        },
+                    )
+                }
+            } else {
+                MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
+            }
         }
         itemsIndexed(images) { i, sha ->
             Column(Modifier.fillMaxWidth()) {
