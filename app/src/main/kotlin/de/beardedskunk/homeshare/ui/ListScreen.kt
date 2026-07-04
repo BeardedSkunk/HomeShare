@@ -827,8 +827,8 @@ private fun RowImageStrip(
 ) {
     if (imageHashes.isEmpty()) return
     val config = LocalConfiguration.current
-    // Nie in die linke Bildschirmhälfte ragen: max. halbe Bildschirmbreite.
-    val maxStripWidth = (config.screenWidthDp / 2).dp
+    // Nie über die Bildschirmmitte hinaus (max. halbe Breite) und nochmal 10 % schlanker.
+    val maxStripWidth = (config.screenWidthDp * 0.45f).dp
     val listState = rememberLazyListState()
     val fadeLeft by remember { derivedStateOf { listState.canScrollBackward } }
     val fadeRight by remember { derivedStateOf { listState.canScrollForward } }
