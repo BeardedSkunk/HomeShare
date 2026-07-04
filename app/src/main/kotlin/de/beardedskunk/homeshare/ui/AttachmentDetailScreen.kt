@@ -250,12 +250,23 @@ fun AttachmentDetailScreen(
                 val bmp = rememberBlobBitmap(blobStore, att.blobHash!!, preferFull = true)
                 var scale by remember { mutableStateOf(1f) }
                 var offset by remember { mutableStateOf(Offset.Zero) }
+                // Anzahl aufliegender Finger: Long-Press (Menü) nur bei höchstens einem Finger zulassen,
+                // sonst feuert er beim Still-Halten am Maximal-Zoom und blockiert das Rauszoomen.
+                var pointerCount by remember { mutableStateOf(0) }
                 Box(
                     Modifier.fillMaxWidth().weight(1f)
                         .pointerInput(att.blobHash) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    pointerCount = ev.changes.count { it.pressed }
+                                }
+                            }
+                        }
+                        .pointerInput(att.blobHash) {
                             detectTapGestures(
                                 onDoubleTap = { scale = 1f; offset = Offset.Zero },
-                                onLongPress = { menuOpen = true },
+                                onLongPress = { if (pointerCount <= 1) menuOpen = true },
                             )
                         }
                         .pointerInput(att.blobHash) {
