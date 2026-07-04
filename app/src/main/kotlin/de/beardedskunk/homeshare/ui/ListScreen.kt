@@ -64,6 +64,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,9 +72,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,6 +107,9 @@ private data class ListScreenData(
     val badges: Map<String, Pair<Int, Int>>,
     val captions: Map<String, String>,
 )
+
+/** Einheitliche Höhe aller Item-Zeilen (Notiz/Liste/Bild/Datei/Aufgabe) — Referenz war das Notiz-Item. */
+private val ROW_HEIGHT = 56.dp
 
 /** Standard-Icon je Nutzer-Typ (echte Material-Icons, via material-icons-extended). */
 fun NodeKind.uiIcon(): ImageVector = when (this) {
@@ -635,9 +645,10 @@ private fun NodeRow(
     ) {
         // combinedClickable liegt NUR auf dem Inhalts-Wrapper (weight 1f), nicht auf der ganzen Card
         // -> Long-Press auf dem Ziehgriff (trailing, außerhalb) löst den Aktionsdialog nicht mehr aus.
-        Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Feste Zeilenhöhe (ROW_HEIGHT) für einheitliche Höhe mit dem Notiz-Item.
+        Row(Modifier.fillMaxWidth().height(ROW_HEIGHT).padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(
-                Modifier.weight(1f).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+                Modifier.weight(1f).fillMaxHeight().combinedClickable(onClick = onClick, onLongClick = onLongClick),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (leading != null) {
@@ -647,13 +658,13 @@ private fun NodeRow(
                 val displayTitle = titleOverride ?: node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" }
                 Text(
                     extra + displayTitle,
-                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).padding(start = if (leading != null) 12.dp else 0.dp),
                 )
                 if (badge != null) TaskBadge(badge.first, badge.second)
             }
             if (imageHashes.isNotEmpty() && blobStore != null && onOpenImage != null) {
-                RowImageStrip(imageHashes, blobStore, 40.dp, onOpenImage)
+                RowImageStrip(imageHashes, blobStore, ROW_HEIGHT, onOpenImage)
             }
             trailing?.invoke()
         }
@@ -680,16 +691,16 @@ private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = 
             .tag(rowTag(node.title)),
         colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(ROW_HEIGHT).padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             // Haken bleibt außerhalb des klickbaren Wrappers (direkt abhakbar, kein Öffnen).
             Checkbox(checked = node.done, onCheckedChange = onDone, enabled = enabled)
             Row(
-                Modifier.weight(1f).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+                Modifier.weight(1f).fillMaxHeight().combinedClickable(onClick = onClick, onLongClick = onLongClick),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     node.title.ifBlank { "(ohne Titel)" },
-                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
                     textDecoration = if (node.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
                     modifier = Modifier.weight(1f),
                 )
@@ -721,7 +732,7 @@ private fun CreateTodoDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit)
     }
 }
 
-/** Einzeiliger Notiz-Eintrag: erste Textzeile, rechts bis zu drei Mini-Thumbnails der Bild-Kindknoten. */
+/** Einzeiliger Notiz-Eintrag: erste Textzeile, rechts der responsive Bild-Streifen der Bild-Kindknoten. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PostRow(
@@ -733,13 +744,12 @@ private fun PostRow(
     onOpenImage: (String) -> Unit,
     trailing: (@Composable () -> Unit)? = null,
 ) {
-    val rowHeight = 56.dp
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .tag(rowTag(if (post.deleted) "(gelöscht)" else post.text)),
         colors = if (post.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
-        Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(ROW_HEIGHT), verticalAlignment = Alignment.CenterVertically) {
             // Einzel-Einträge (Notizen) tragen bewusst KEIN Typ-Icon (konsistent zu Terminen).
             val raw = if (post.deleted) "(gelöscht)" else post.text
             val firstLine = raw.lineSequence().firstOrNull().orEmpty().ifBlank { if (imageHashes.isNotEmpty()) "🖼 Bild" else "" }
@@ -755,17 +765,39 @@ private fun PostRow(
             }
             // Notizen tragen bewusst KEINEN Markdown-Aufgaben-Zähler mehr (der Badge lebt jetzt an
             // Aufgaben/Aufgaben-Listen und zählt Unterpunkte statt Markdown-Checkboxen).
-            RowImageStrip(imageHashes, blobStore, rowHeight, onOpenImage)
+            RowImageStrip(imageHashes, blobStore, ROW_HEIGHT, onOpenImage)
             trailing?.invoke()
         }
     }
 }
 
-/** Horizontal scrollbarer Bildstreifen: quadratische Thumbnails à [cellSize], max. 3 sichtbar. */
+/**
+ * Horizontaler Bildstreifen für Item-Zeilen: quadratische Thumbnails auf voller Zeilenhöhe
+ * ([cellSize]). Breite ist auf die RECHTE Bildschirmhälfte begrenzt (nie in die linke Hälfte).
+ * Ränder blenden weich aus, solange in die jeweilige Richtung weitergescrollt werden kann;
+ * am ersten Bild ist der linke Rand scharf, am letzten der rechte.
+ */
 @Composable
-private fun RowImageStrip(imageHashes: List<String>, blobStore: BlobStore, cellSize: androidx.compose.ui.unit.Dp, onOpenImage: (String) -> Unit) {
+private fun RowImageStrip(
+    imageHashes: List<String>,
+    blobStore: BlobStore,
+    cellSize: androidx.compose.ui.unit.Dp,
+    onOpenImage: (String) -> Unit,
+) {
     if (imageHashes.isEmpty()) return
-    LazyRow(Modifier.widthIn(max = cellSize * 3).height(cellSize)) {
+    val config = LocalConfiguration.current
+    // Nie in die linke Bildschirmhälfte ragen: max. halbe Bildschirmbreite.
+    val maxStripWidth = (config.screenWidthDp / 2).dp
+    val listState = rememberLazyListState()
+    val fadeLeft by remember { derivedStateOf { listState.canScrollBackward } }
+    val fadeRight by remember { derivedStateOf { listState.canScrollForward } }
+    LazyRow(
+        state = listState,
+        modifier = Modifier
+            .widthIn(max = maxStripWidth)
+            .height(cellSize)
+            .horizontalFadingEdges(fadeLeft, fadeRight),
+    ) {
         items(imageHashes) { sha ->
             val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
             Box(Modifier.size(cellSize).clickable { onOpenImage(sha) }, contentAlignment = Alignment.Center) {
@@ -775,6 +807,27 @@ private fun RowImageStrip(imageHashes: List<String>, blobStore: BlobStore, cellS
         }
     }
 }
+
+/** Weicher Rand-Ausblend links/rechts (nur wenn in die Richtung weiter gescrollt werden kann). */
+private fun Modifier.horizontalFadingEdges(fadeLeft: Boolean, fadeRight: Boolean, fadeWidth: androidx.compose.ui.unit.Dp = 20.dp): Modifier =
+    this
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val fw = fadeWidth.toPx()
+            if (fadeLeft) {
+                drawRect(
+                    brush = Brush.horizontalGradient(listOf(Color.Transparent, Color.Black), startX = 0f, endX = fw),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            if (fadeRight) {
+                drawRect(
+                    brush = Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), startX = size.width - fw, endX = size.width),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+        }
 
 /**
  * Eingebetteter Kopf der aktuellen Liste: Titel + ✎/✓-Toggle, Body per Chevron ein-/ausklappbar.
