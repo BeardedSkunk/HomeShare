@@ -88,7 +88,15 @@ class FeedRepository(
 
     fun createNode(content: NodeContent): NodeState {
         val id = UUID.randomUUID().toString()
-        author(id, emptySet(), content)
+        // Neue Knoten ans ENDE ihrer Geschwister einsortieren. Ohne das sortiert der leere orderKey
+        // über den HLC-Seed (führende Nullen) lexikografisch VOR bereits umsortierte Geschwister mit
+        // echten Schlüsseln – neue Items poppten dann oben auf.
+        val withKey = if (content.orderKey.isEmpty()) {
+            val last = children(content.parentId).lastOrNull()
+            val loKey = last?.let { OrderKeys.effective(it.orderKey, it.created) }
+            content.copy(orderKey = OrderKeys.between(loKey, null))
+        } else content
+        author(id, emptySet(), withKey)
         return getNode(id)!!
     }
 

@@ -77,6 +77,25 @@ class OrderKeysTest {
         assertEquals(OrderKeys.seed(Hlc(99, 0)), OrderKeys.effective("", Hlc(99, 0)))
     }
 
+    /**
+     * Regression zu „neue Items landen oben": Ein frisch angelegter Knoten (leerer orderKey =
+     * Seed mit führenden Nullen) sortiert lexikografisch VOR ein bereits umsortiertes Geschwister
+     * mit echtem Key (beginnt mit 1–f). createNode gibt neuen Knoten daher einen Endschlüssel via
+     * between(letzterKey, null) – der muss hinter dem Seed UND hinter einem echten Key liegen.
+     */
+    @Test
+    fun between_afterKey_placesNewItemLast() {
+        val seed = OrderKeys.seed(Hlc(1000, 0))
+        // Bug-Beleg: der Seed sortiert vor einem echten Drag-Key.
+        assertTrue(seed < "8")
+        // Fix-Beleg: ein Endschlüssel hinter dem Seed liegt hinter dem Seed …
+        val afterSeed = OrderKeys.between(seed, null)
+        assertTrue(afterSeed > seed)
+        // … und hinter einem echten kurzen Key sortiert der Endschlüssel ebenfalls dahinter.
+        val afterReal = OrderKeys.between("8", null)
+        assertTrue(afterReal > "8")
+    }
+
     // ---- Merge-Verhalten: Umsortieren darf nie einen manuellen Konflikt erzeugen ----
 
     private fun v(parents: Set<String>, device: String, wall: Long, text: String, order: String = "") =
