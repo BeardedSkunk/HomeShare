@@ -5,7 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -614,9 +614,9 @@ private fun RenderedView(
                             contentDescription = "Zeile verschieben",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                             modifier = Modifier.tag("drag:line:$line").pointerInput(idx, blocks) {
-                                detectDragGestures(
+                                detectVerticalDragGestures(
                                     onDragStart = { onOpenTrash?.invoke(null); mdDragIndex = idx; mdDragOffset = 0f },
-                                    onDrag = { change, amount -> change.consume(); mdDragOffset += amount.y },
+                                    onVerticalDrag = { change, amount -> change.consume(); mdDragOffset += amount },
                                     onDragEnd = { endLineDrag(idx) },
                                     onDragCancel = { mdDragIndex = -1; mdDragOffset = 0f },
                                 )
