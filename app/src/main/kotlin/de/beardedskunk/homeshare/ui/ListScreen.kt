@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
@@ -57,6 +58,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -169,9 +171,9 @@ fun ListScreen(
     var taskBadges by remember { mutableStateOf<Map<String, Pair<Int, Int>>>(emptyMap()) }
     // Caption-Titel für IMAGE/FILE-Direktkinder (aus Beschreibungs-Notiz des Anhangs).
     var captionTitles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    // Überlauf-Menü (Kalender-Sync) + Bestätigungs-Dialog.
+    // Hamburger-Überlaufmenü (Liste löschen + Kalender-Sync-Toggle).
     var overflowOpen by remember { mutableStateOf(false) }
-    var calSyncConfirm by remember { mutableStateOf(false) }
+    var deleteListConfirm by remember { mutableStateOf(false) }
     var matchedIds by remember { mutableStateOf<Set<String>?>(null) }
     val searching = searchQuery != null
     val query = searchQuery ?: ""
@@ -194,6 +196,11 @@ fun ListScreen(
     var showAddShared by remember { mutableStateOf(false) }
     var fabMenu by remember { mutableStateOf(false) }
     var calEnabled by remember(parentId) { mutableStateOf(if (isCalendar) settings.isCalendarFeedEnabled(parentId) else false) }
+
+    // Render-Kopf der Liste (wie Notiz): Edit-/Ausklapp-Zustand hier gehalten, Toggle sitzt in der Top-Bar.
+    var headerSource by remember(container?.nodeId) { mutableStateOf(false) }   // false = gerendert, true = Quelltext
+    var headerExpanded by remember(container?.nodeId) { mutableStateOf(false) } // Body eingeklappt starten
+    var headerText by remember(container?.nodeId, container?.text) { mutableStateOf(container?.text ?: "") }
 
     val revision by repo.revision.collectAsState()
 
@@ -325,6 +332,15 @@ fun ListScreen(
         }
     }
 
+    // Speichert den bearbeiteten Kopf-Text (Typ bleibt unangetastet) und kehrt in die Render-Ansicht zurück.
+    fun saveHeader() {
+        val t = headerText
+        val id = container?.nodeId ?: return
+        scope.launch { withContext(Dispatchers.IO) { repo.headContent(id)?.let { repo.editNode(id, it.copy(text = t)) } } }
+        headerSource = false
+        headerExpanded = false
+    }
+
     // ---- Vollbild-Unteransichten (Editor/Konflikt/Bild) ----
     val img = viewingImage
     if (img != null) {
@@ -391,41 +407,67 @@ fun ListScreen(
                         )
                     } else if (isRoot) {
                         Text("Feeds")
-                    } else {
-                        Text(container.title.ifBlank { "(ohne Namen)" })
                     }
+                    // Nicht-Root: kein Titeltext mehr — der Titel steht jetzt im Render-Kopf darunter.
                 },
                 navigationIcon = {
                     if (!isRoot) BackIconButton(onClick = onBack)
                 },
                 actions = {
+                    // Lupe (Suche) — immer.
                     IconButton(onClick = { onSearchQueryChange(if (searching) null else "") }, modifier = Modifier.tag("topbar:search")) {
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
                     }
-                    if (!searching && container != null) {
-                        // Überlauf-Menü: aktuell nur Kalender-Sync (früher inline-Switch).
-                        Box {
-                            IconButton(onClick = { overflowOpen = true }, modifier = Modifier.tag("topbar:overflow")) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "Weitere Aktionen")
-                            }
-                            DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
-                                if (isCalendar) {
-                                    DropdownMenuItem(
-                                        text = { Text(if (calEnabled) "Aus Kalender entfernen" else "In Android-Kalender übernehmen") },
-                                        onClick = { overflowOpen = false; calSyncConfirm = true },
-                                        modifier = Modifier.tag("menu:calendar-sync"),
-                                    )
-                                }
-                            }
-                        }
-                    }
                     if (!searching) {
-                        // QR-Icon auf JEDER Listen-Ansicht: in einer Liste -> diese teilen; in der Wurzel -> einer geteilten Liste beitreten.
+                        // QR: in einer Liste diese teilen; in der Wurzel einer geteilten Liste beitreten.
                         IconButton(onClick = { if (container != null) onOpenShare(container) else showAddShared = true }, modifier = Modifier.tag("topbar:share")) {
                             Icon(Icons.Filled.QrCode2, contentDescription = if (container != null) "Diese Liste teilen" else "Geteilte Liste beitreten")
                         }
-                        // Allgemeine Einstellungen nur auf der Wurzelebene anbieten.
-                        if (isRoot) IconButton(onClick = onOpenSettings, modifier = Modifier.tag("topbar:settings")) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
+                        if (container != null) {
+                            // Hamburger-Menü: „Liste löschen“ (+ bei Kalender-Listen der Sync-Toggle).
+                            Box {
+                                IconButton(onClick = { overflowOpen = true }, modifier = Modifier.tag("topbar:overflow")) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "Weitere Aktionen")
+                                }
+                                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                                    if (canWrite) {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                                            text = { Text("Liste löschen") },
+                                            onClick = { overflowOpen = false; deleteListConfirm = true },
+                                            modifier = Modifier.tag("menu:delete-list"),
+                                        )
+                                    }
+                                    if (isCalendar) {
+                                        DropdownMenuItem(
+                                            text = { Text("Mit Android-Kalender synchronisieren") },
+                                            trailingIcon = { Switch(checked = calEnabled, onCheckedChange = null) },
+                                            onClick = {
+                                                val newState = !calEnabled
+                                                calEnabled = newState
+                                                settings.setCalendarFeedEnabled(parentId, newState)
+                                                onRequestCalendarSync()
+                                                overflowOpen = false
+                                            },
+                                            modifier = Modifier.tag("menu:calendar-sync"),
+                                        )
+                                    }
+                                }
+                            }
+                            // ✓/✎ — Kopf-Edit-Toggle (nur mit Schreibrecht): grüner Haken = bearbeiten, Stift = speichern.
+                            if (canWrite) {
+                                IconButton(
+                                    onClick = { if (headerSource) saveHeader() else headerSource = true },
+                                    modifier = Modifier.tag(if (headerSource) "topbar:save" else "topbar:edit"),
+                                ) {
+                                    if (headerSource) Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
+                                    else Icon(Icons.Filled.Check, contentDescription = "Bearbeiten", tint = Color(0xFF2E7D32), modifier = Modifier.size(30.dp))
+                                }
+                            }
+                        } else {
+                            // Wurzel: allgemeine Einstellungen.
+                            IconButton(onClick = onOpenSettings, modifier = Modifier.tag("topbar:settings")) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
+                        }
                     }
                 },
             )
@@ -474,10 +516,11 @@ fun ListScreen(
             if (container != null) {
                 ListHeader(
                     container = container,
-                    readOnly = !canWrite,
-                    onSave = { newText ->
-                        scope.launch { withContext(Dispatchers.IO) { repo.headContent(container.nodeId)?.let { repo.editNode(container.nodeId, it.copy(text = newText)) } } }
-                    },
+                    sourceMode = headerSource,
+                    expanded = headerExpanded,
+                    onExpandedChange = { headerExpanded = it },
+                    editText = headerText,
+                    onEditTextChange = { headerText = it },
                 )
             }
             if (shown.isEmpty()) {
@@ -595,21 +638,19 @@ fun ListScreen(
         )
     }
 
-    if (calSyncConfirm) {
+    if (deleteListConfirm) {
         AlertDialog(
-            onDismissRequest = { calSyncConfirm = false },
-            title = { Text(if (calEnabled) "Aus Kalender entfernen?" else "In Kalender übernehmen?") },
-            text = { Text(if (calEnabled) "Diese Liste wird nicht mehr mit dem Android-Kalender synchronisiert." else "Einträge dieser Liste werden in den Android-Kalender übernommen.") },
+            onDismissRequest = { deleteListConfirm = false },
+            title = { Text("Liste löschen?") },
+            text = { Text("Die Liste und ihr Inhalt werden entfernt.") },
             confirmButton = {
                 TextButton(onClick = {
-                    val newState = !calEnabled
-                    calSyncConfirm = false
-                    calEnabled = newState
-                    settings.setCalendarFeedEnabled(parentId, newState)
-                    onRequestCalendarSync()
-                }) { Text("Bestätigen") }
+                    deleteListConfirm = false
+                    val id = container?.nodeId
+                    if (id != null) scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) }; onBack() }
+                }) { Text("Löschen") }
             },
-            dismissButton = { TextButton(onClick = { calSyncConfirm = false }) { Text("Abbrechen") } },
+            dismissButton = { TextButton(onClick = { deleteListConfirm = false }) { Text("Abbrechen") } },
         )
     }
 }
@@ -830,56 +871,49 @@ private fun Modifier.horizontalFadingEdges(fadeLeft: Boolean, fadeRight: Boolean
         }
 
 /**
- * Eingebetteter Kopf der aktuellen Liste: Titel + ✎/✓-Toggle, Body per Chevron ein-/ausklappbar.
- * Im Edit-Modus eine gemeinsame Editbox (Titel + Body). Speichern kehrt in den Render-Modus zurück.
+ * Render-Kopf der aktuellen Liste — sieht aus wie die Render-Ansicht einer Notiz (kein grauer Kasten):
+ * Titel (headlineSmall) + optionales Ausklapp-Chevron; ausgeklappt der gerenderte Markdown-Body.
+ * Im Quelltext-Modus (vom Top-Bar-Toggle gesteuert) eine gemeinsame Editbox (Titel + Body).
  */
 @Composable
-private fun ListHeader(container: NodeState, readOnly: Boolean, onSave: (String) -> Unit) {
-    var sourceMode by remember(container.nodeId) { mutableStateOf(false) }
-    var expanded by remember(container.nodeId) { mutableStateOf(false) }
-    var editText by remember(container.nodeId, container.text) { mutableStateOf(container.text) }
-    val bodyStyle = MaterialTheme.typography.bodyLarge
-    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+private fun ListHeader(
+    container: NodeState,
+    sourceMode: Boolean,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    editText: String,
+    onEditTextChange: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        if (sourceMode) {
+            OutlinedTextField(
+                value = editText,
+                onValueChange = onEditTextChange,
+                placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth().tag("field:listbody"),
+            )
+        } else {
+            val title = postTitle(container.text)
+            val hasBody = postBody(container.text).isNotBlank()
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    postTitle(container.text),
-                    style = MaterialTheme.typography.titleMedium,
+                    title.ifBlank { "(ohne Namen)" },
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f).tag("header:title"),
                 )
-                if (!readOnly) {
-                    IconButton(
-                        onClick = { if (sourceMode) { onSave(editText); sourceMode = false; expanded = false } else sourceMode = true },
-                        modifier = Modifier.tag("header:toggle"),
-                    ) {
-                        if (sourceMode) Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
-                        else Icon(Icons.Filled.Check, contentDescription = "Bearbeiten", tint = Color(0xFF2E7D32), modifier = Modifier.size(30.dp))
-                    }
-                }
-                if (!sourceMode && postBody(container.text).isNotBlank()) {
-                    IconButton(
-                        onClick = { expanded = !expanded },
-                        modifier = Modifier.tag("header:expand"),
-                    ) {
-                        Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = if (expanded) "Einklappen" else "Ausklappen")
+                if (hasBody) {
+                    IconButton(onClick = { onExpandedChange(!expanded) }, modifier = Modifier.tag("header:expand")) {
+                        Icon(
+                            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = if (expanded) "Einklappen" else "Ausklappen",
+                        )
                     }
                 }
             }
-            if (!sourceMode && expanded) {
-                val blocks = remember(container.text) { parseMarkdownBody(container.text) }
-                Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                    for (b in blocks) MdBlockView(b, bodyStyle, null, null)
-                }
-            }
-            if (sourceMode) {
-                OutlinedTextField(
-                    value = editText,
-                    onValueChange = { editText = it },
-                    placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
-                    minLines = 3,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).tag("field:listbody"),
-                )
+            if (expanded && hasBody) {
+                MarkdownBody(text = container.text, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
             }
         }
     }
