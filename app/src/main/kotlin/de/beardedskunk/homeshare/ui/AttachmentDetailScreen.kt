@@ -46,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -255,6 +256,10 @@ fun AttachmentDetailScreen(
                 var pointerCount by remember { mutableStateOf(0) }
                 Box(
                     Modifier.fillMaxWidth().weight(1f)
+                        // Gezoomtes Bild in der Box halten: sonst läuft es über die obere Kante in den
+                        // scrollbaren Beschreibungs-Bereich – dort landen dann die Finger statt beim Bild
+                        // und das Rauszoomen wird unmöglich (Hit-Testing folgt den Layout-Grenzen).
+                        .clipToBounds()
                         .pointerInput(att.blobHash) {
                             awaitPointerEventScope {
                                 while (true) {
