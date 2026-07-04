@@ -12,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -528,7 +529,12 @@ fun ListScreen(
                     Text(if (searching && query.isNotBlank()) "Keine Treffer." else if (isRoot) "Noch keine Feeds. Mit + einen anlegen." else "Noch keine Einträge.")
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    state = listState,
+                    // Puffer unten, damit sich der letzte Eintrag über den FAB (56dp) schieben lässt.
+                    contentPadding = PaddingValues(bottom = 88.dp),
+                ) {
                     itemsIndexed(displayed, key = { _, n -> n.nodeId }) { index, node ->
                         val handle: (@Composable () -> Unit)? =
                             if (canDrag) ({ DragHandle(dragState, index, node.title) }) else null
