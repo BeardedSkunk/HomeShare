@@ -79,6 +79,7 @@ import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.FeedShareCodec
 import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.data.Settings
+import de.beardedskunk.homeshare.data.childTaskCounts
 import de.beardedskunk.homeshare.sync.SyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -138,6 +139,8 @@ fun ListScreen(
 
     var children by remember { mutableStateOf<List<NodeState>>(emptyList()) }
     var postImages by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    // Fortschritts-Badge (erledigt/gesamt) je Aufgabe bzw. Aufgaben-Liste (childDefault==TODO).
+    var taskBadges by remember { mutableStateOf<Map<String, Pair<Int, Int>>>(emptyMap()) }
     var matchedIds by remember { mutableStateOf<Set<String>?>(null) }
     val searching = searchQuery != null
     val query = searchQuery ?: ""
@@ -170,10 +173,16 @@ fun ListScreen(
                 val imgs = list.filter { it.kind == NodeKind.NOTE }.associate { p ->
                     p.nodeId to repo.children(p.nodeId).mapNotNull { c -> if (c.type == NodeType.IMAGE) c.blobHash else null }
                 }
-                list to imgs
+                // Badge nur für Aufgaben und Aufgaben-Listen; gezählt werden TODO/NOTE-Unterpunkte.
+                val badges = list
+                    .filter { it.kind == NodeKind.TODO || (it.kind == NodeKind.LIST && it.childDefault == NodeKind.TODO) }
+                    .mapNotNull { p -> childTaskCounts(repo.children(p.nodeId))?.let { p.nodeId to it } }
+                    .toMap()
+                Triple(list, imgs, badges)
             }
             children = result.first
             postImages = result.second
+            taskBadges = result.third
         }
     }
     LaunchedEffect(parentId, revision) { reload() }
@@ -439,12 +448,12 @@ fun ListScreen(
                                     )
                                     NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
                                     NodeKind.TODO -> TodoRow(
-                                        node = node, enabled = canWrite,
+                                        node = node, enabled = canWrite, badge = taskBadges[node.nodeId],
                                         onClick = { openChild(node) }, onLongClick = { actionNode = node },
                                         onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
                                         trailing = handle,
                                     )
-                                    else -> NodeRow(node = node, blobStore = blobStore, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                                    else -> NodeRow(node = node, blobStore = blobStore, badge = taskBadges[node.nodeId], onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
                                 }
                             }
                             if (canDrag) {
@@ -534,7 +543,7 @@ fun ListScreen(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -> Unit, onLongClick: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
+private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, badge: Pair<Int, Int>? = null, onClick: () -> Unit, onLongClick: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
     val leading = when (node.kind) {
         NodeKind.LIST -> (node.childDefault ?: NodeKind.LIST).uiIcon()
         NodeKind.FILE -> NodeKind.FILE.uiIcon()
@@ -542,26 +551,44 @@ private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -
     }
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-            .tag(rowTag(node.title))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .tag(rowTag(node.title)),
         colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (node.kind == NodeKind.IMAGE && node.blobHash != null && blobStore != null) {
-                val bmp = rememberBlobBitmap(blobStore, node.blobHash, preferFull = false)
-                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                    if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
+        // combinedClickable liegt NUR auf dem Inhalts-Wrapper (weight 1f), nicht auf der ganzen Card
+        // -> Long-Press auf dem Ziehgriff (trailing, außerhalb) löst den Aktionsdialog nicht mehr aus.
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (node.kind == NodeKind.IMAGE && node.blobHash != null && blobStore != null) {
+                    val bmp = rememberBlobBitmap(blobStore, node.blobHash, preferFull = false)
+                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
+                    }
+                } else if (leading != null) {
+                    Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
                 }
-            } else if (leading != null) {
-                Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                val extra = if (node.kind == NodeKind.LIST && FeedShareCodec.isShared(node.text)) "📤 " else ""
+                Text(
+                    extra + node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" },
+                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = if (leading != null || node.kind == NodeKind.IMAGE) 12.dp else 0.dp),
+                )
+                if (badge != null) TaskBadge(badge.first, badge.second)
             }
-            val extra = if (node.kind == NodeKind.LIST && FeedShareCodec.isShared(node.text)) "📤 " else ""
-            Text(
-                extra + node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" },
-                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = if (leading != null || node.kind == NodeKind.IMAGE) 12.dp else 0.dp),
-            )
             trailing?.invoke()
+        }
+    }
+}
+
+/** Fortschritts-Badge „✓ x/y" für Aufgaben und Aufgaben-Listen (gezählt: TODO/NOTE-Unterpunkte). */
+@Composable
+private fun TaskBadge(done: Int, total: Int) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(end = 8.dp)) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text(" $done/$total", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
 }
@@ -569,21 +596,27 @@ private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, onClick: () -
 /** Aufgaben-Zeile: Haken direkt abhakbar (ohne Öffnen), Tap öffnet die Aufgaben-Ansicht. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TodoRow(node: NodeState, enabled: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
+private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = null, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-            .tag(rowTag(node.title))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .tag(rowTag(node.title)),
         colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Haken bleibt außerhalb des klickbaren Wrappers (direkt abhakbar, kein Öffnen).
             Checkbox(checked = node.done, onCheckedChange = onDone, enabled = enabled)
-            Text(
-                node.title.ifBlank { "(ohne Titel)" },
-                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                textDecoration = if (node.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
-                modifier = Modifier.weight(1f),
-            )
+            Row(
+                Modifier.weight(1f).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    node.title.ifBlank { "(ohne Titel)" },
+                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    textDecoration = if (node.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                    modifier = Modifier.weight(1f),
+                )
+                if (badge != null) TaskBadge(badge.first, badge.second)
+            }
             trailing?.invoke()
         }
     }
@@ -625,29 +658,26 @@ private fun PostRow(
     val rowHeight = 56.dp
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-            .tag(rowTag(if (post.deleted) "(gelöscht)" else post.text))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .tag(rowTag(if (post.deleted) "(gelöscht)" else post.text)),
         colors = if (post.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
     ) {
         Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
             // Einzel-Einträge (Notizen) tragen bewusst KEIN Typ-Icon (konsistent zu Terminen).
             val raw = if (post.deleted) "(gelöscht)" else post.text
             val firstLine = raw.lineSequence().firstOrNull().orEmpty().ifBlank { if (imageHashes.isNotEmpty()) "🖼 Bild" else "" }
-            Text(
-                text = (if (post.conflicted) "⚠ " else "") + firstLine, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = 14.dp, end = 10.dp),
-            )
-            val tasks = if (post.deleted) null else taskCounts(post.text)
-            if (tasks != null) {
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(end = 8.dp)) {
-                    Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                        Text(" ${tasks.first}/${tasks.second}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                    }
-                }
+            // combinedClickable nur auf dem Text-Wrapper -> Ziehgriff/Thumbnails bleiben außerhalb.
+            Row(
+                Modifier.weight(1f).fillMaxHeight().combinedClickable(onClick = onClick, onLongClick = onLongClick),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = (if (post.conflicted) "⚠ " else "") + firstLine, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = 14.dp, end = 10.dp),
+                )
             }
-            val thumbCount = if (tasks != null) 1 else 3
-            for (sha in imageHashes.take(thumbCount)) {
+            // Notizen tragen bewusst KEINEN Markdown-Aufgaben-Zähler mehr (der Badge lebt jetzt an
+            // Aufgaben/Aufgaben-Listen und zählt Unterpunkte statt Markdown-Checkboxen).
+            for (sha in imageHashes.take(3)) {
                 val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
                 Box(Modifier.fillMaxHeight().aspectRatio(1f).clickable { onOpenImage(sha) }, contentAlignment = Alignment.Center) {
                     if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")

@@ -313,16 +313,16 @@ fun CalendarRow(post: NodeState, onClick: () -> Unit, onLongClick: () -> Unit = 
     val ev = remember(post.headVersionId) { EventCodec.parse(post.text) }
     androidx.compose.material3.Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-            .tag(rowTag(ev?.title ?: post.text))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .tag(rowTag(ev?.title ?: post.text)),
         colors = if (post.conflicted) {
             androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
         } else {
             androidx.compose.material3.CardDefaults.cardColors()
         },
     ) {
-        Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(14.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        // combinedClickable nur auf dem Inhalt (weight 1f) -> Long-Press auf dem Ziehgriff öffnet nicht.
+        Column(Modifier.weight(1f).combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(14.dp)) {
             Text(
                 (if (post.conflicted) "⚠ " else "") +
                     (ev?.title?.ifBlank { "(ohne Titel)" } ?: post.text.lineSequence().firstOrNull().orEmpty()),

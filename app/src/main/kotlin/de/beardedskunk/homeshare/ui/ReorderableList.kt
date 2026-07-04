@@ -1,8 +1,8 @@
 package de.beardedskunk.homeshare.ui
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -70,12 +70,22 @@ class DragDropState internal constructor(
         val items = listState.layoutInfo.visibleItemsInfo
         val dragged = items.firstOrNull { it.index == draggingIndex } ?: return
         val center = dragged.offset + draggingOffset + dragged.size / 2f
-        val target = items.firstOrNull { it.index != draggingIndex && center >= it.offset && center < it.offset + it.size }
+
+        // Mittellinien-Regel: erst tauschen, wenn die MITTE des gezogenen Items die MITTE des
+        // direkten Nachbarn überschreitet – und den Offset um die NACHBAR-Höhe korrigieren. Das
+        // hält das Item auch bei ungleich hohen Zeilen (Termin, Bild) stabil unter dem Finger.
+        // (Der alte Code tauschte schon an der Oberkante der Zielzeile und korrigierte um die
+        //  eigene Höhe -> bei hohen Zielzeilen Oszillation beim langsamen Ziehen.)
+        val below = items.firstOrNull { it.index == draggingIndex + 1 }
+        val above = items.firstOrNull { it.index == draggingIndex - 1 }
+        val target = when {
+            below != null && center > below.offset + below.size / 2f -> below
+            above != null && center < above.offset + above.size / 2f -> above
+            else -> null
+        }
         if (target != null) {
-            // Vorschau-Verschiebung: Item rückt in den Ziel-Slot; Offset korrigieren, damit es
-            // optisch unter dem Finger bleibt.
             onMove(draggingIndex, target.index)
-            draggingOffset += dragged.offset - target.offset
+            draggingOffset += if (target.index > draggingIndex) -target.size.toFloat() else target.size.toFloat()
             draggingIndex = target.index
         }
         // Am Rand nachscrollen, damit man über den Sichtbereich hinaus ziehen kann.
@@ -136,11 +146,14 @@ fun DragHandle(state: DragDropState, index: Int, title: String) {
         contentDescription = "Verschieben",
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier
+            .padding(end = 12.dp)   // einheitlicher Abstand zum rechten Rand über alle Zeilenarten
             .tag(dragTag(title))
+            // Nur VERTIKALE Gesten greifen den Drag; horizontale Wische laufen durch zur
+            // SwipeRevealRow -> die Löschtonne erscheint auch, wenn man auf dem Ziehgriff wischt.
             .pointerInput(state) {
-                detectDragGestures(
+                detectVerticalDragGestures(
                     onDragStart = { state.onDragStart(curIndex) },
-                    onDrag = { change, amount -> change.consume(); state.onDrag(amount.y) },
+                    onVerticalDrag = { change, amount -> change.consume(); state.onDrag(amount) },
                     onDragEnd = { state.onDragEnd() },
                     onDragCancel = { state.onDragCancel() },
                 )
@@ -186,10 +199,11 @@ fun ColumnDragHandle(
         Icons.Filled.DragIndicator,
         contentDescription = "Verschieben",
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.tag(dragTag(title)).pointerInput(state) {
-            detectDragGestures(
+        modifier = Modifier.padding(end = 12.dp).tag(dragTag(title)).pointerInput(state) {
+            // Nur vertikal ziehen; horizontale Wische -> SwipeRevealRow (Tonne auch auf dem Griff).
+            detectVerticalDragGestures(
                 onDragStart = { startCb(); state.index = curIndex; state.offset = 0f },
-                onDrag = { change, amount -> change.consume(); state.offset += amount.y },
+                onVerticalDrag = { change, amount -> change.consume(); state.offset += amount },
                 onDragEnd = {
                     val h = state.rowHeight.takeIf { it > 0 } ?: 1
                     // Mittellinien-Regel: erst eine volle Zeilenhöhe = Nachbar-Mitte passiert -> umsortieren.

@@ -271,17 +271,17 @@ fun TodoDetailScreen(
                                     Modifier.fillMaxWidth()
                                         .tag(rowTag(s.title))
                                         .columnDragItem(subDrag, i)
-                                        .clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s }
-                                        .padding(horizontal = 8.dp),
+                                        .padding(start = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     // Auch Text-/Notiz-Unterpunkte tragen einen Haken (done gibt es auf jedem Knoten).
                                     Checkbox(checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly)
+                                    // clickable nur auf dem Text -> Tap/Long-Press auf dem Ziehgriff navigiert nicht.
                                     Text(
                                         s.title.ifBlank { "(ohne Titel)" },
                                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         textDecoration = if (s.done) TextDecoration.LineThrough else null,
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier.weight(1f).clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s },
                                     )
                                     if (!readOnly) {
                                         ColumnDragHandle(

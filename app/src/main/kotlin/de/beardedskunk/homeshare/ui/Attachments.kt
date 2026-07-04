@@ -115,23 +115,25 @@ fun AttachmentRowView(
     Row(
         modifier.fillMaxWidth()
             .tag(rowTag(a.label()))
-            .clickable(onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (a.node.kind == NodeKind.IMAGE && a.node.blobHash != null) {
-            val bmp = rememberBlobBitmap(blobStore, a.node.blobHash, preferFull = false)
-            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
+        // clickable nur auf dem Inhalt (weight 1f) -> Tap auf dem Ziehgriff öffnet den Anhang nicht.
+        Row(Modifier.weight(1f).clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
+            if (a.node.kind == NodeKind.IMAGE && a.node.blobHash != null) {
+                val bmp = rememberBlobBitmap(blobStore, a.node.blobHash, preferFull = false)
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
+                }
+            } else {
+                Icon(NodeKind.FILE.uiIcon(), contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
             }
-        } else {
-            Icon(NodeKind.FILE.uiIcon(), contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+            Text(
+                a.label(),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
+            )
         }
-        Text(
-            a.label(),
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(start = 12.dp),
-        )
         trailing?.invoke()
     }
 }

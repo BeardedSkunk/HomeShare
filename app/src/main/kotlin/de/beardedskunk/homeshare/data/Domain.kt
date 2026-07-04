@@ -13,6 +13,17 @@ val siblingOrder: Comparator<NodeState> =
     compareBy({ OrderKeys.effective(it.orderKey, it.created) }, { it.created }, { it.nodeId })
 
 /**
+ * Fortschritt (erledigt, gesamt) über die **Unterpunkte** eines Knotens (TODO/NOTE-Kinder), sonst
+ * null. Deckt sich mit dem `subItems`-Filter der Aufgaben-Ansicht (TodoDetailScreen): Bild/Datei-
+ * Anhänge und Markdown-Checkboxen im Body zählen NICHT. Basis für den „x/y"-Badge auf Aufgaben und
+ * Aufgaben-Listen in der Listen-Ansicht.
+ */
+fun childTaskCounts(children: List<NodeState>): Pair<Int, Int>? {
+    val subs = children.filter { it.kind == NodeKind.TODO || it.kind == NodeKind.NOTE }
+    return if (subs.isEmpty()) null else subs.count { it.done } to subs.size
+}
+
+/**
  * Materialisierter aktueller Stand EINES Knotens (aus dem Op-Log abgeleitet, Lese-Modell für die UI).
  * Eine „Liste" ist ein TEXT-Knoten **mit** [childDefault] (navigierbar), eine „Notiz" ein TEXT-Knoten
  * **ohne** childDefault (Text-Editor). [conflicted] = mehrere inhaltlich verschiedene Heads.
