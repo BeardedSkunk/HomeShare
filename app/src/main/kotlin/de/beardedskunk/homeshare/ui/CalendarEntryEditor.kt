@@ -1,5 +1,9 @@
 package de.beardedskunk.homeshare.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +39,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.data.EventCodec
 import de.beardedskunk.homeshare.data.EventData
 import de.beardedskunk.homeshare.data.FeedRepository
@@ -86,12 +93,37 @@ private val reminderOptions: List<Pair<String, Int?>> = listOf(
 @Composable
 fun CalendarEntryEditor(
     repo: FeedRepository,
+    blobStore: BlobStore,
     parentId: String,
     post: NodeState?,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val revision by repo.revision.collectAsState()
+
+    // Anhänge (Bilder/Dateien) als separate Kindknoten des CALENDAR-Knotens – nur für bereits
+    // gespeicherte Termine (ein neuer Termin hat noch keine nodeId als Eltern). Werden bewusst
+    // NICHT in den Android-Kalender gesynct, existieren aber in unserer App und syncen mit.
+    var attachments by remember { mutableStateOf<List<AttachmentRow>>(emptyList()) }
+    var attOpen by remember { mutableStateOf<NodeState?>(null) }
+    var openTrash by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(post?.nodeId, revision) {
+        val id = post?.nodeId
+        attachments = if (id != null) withContext(Dispatchers.IO) { loadAttachmentRows(repo, id) } else emptyList()
+    }
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        val id = post?.nodeId
+        if (id != null && uris.isNotEmpty()) scope.launch {
+            withContext(Dispatchers.IO) { uris.forEach { AttachmentPicker.addImage(context, repo, blobStore, id, it) } }
+        }
+    }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = post?.nodeId
+        if (id != null && uri != null) scope.launch {
+            withContext(Dispatchers.IO) { AttachmentPicker.addFile(context, repo, blobStore, id, uri) }
+        }
+    }
 
     val existing = remember(post?.headVersionId) { post?.text?.let { EventCodec.parse(it) } }
     val now = remember { LocalDateTime.now() }
@@ -154,6 +186,12 @@ fun CalendarEntryEditor(
             withContext(Dispatchers.IO) { repo.deleteNode(p.nodeId) }
             onClose()
         }
+    }
+
+    attOpen?.let { a ->
+        BackHandler { attOpen = null }
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, onClose = { attOpen = null })
+        return
     }
 
     Scaffold(
@@ -240,6 +278,25 @@ fun CalendarEntryEditor(
             )
 
             Button(onClick = { save() }, modifier = Modifier.fillMaxWidth()) { Text("Speichern") }
+
+            // Anhänge nur für bereits gespeicherte Termine (brauchen eine Eltern-nodeId).
+            if (post != null) {
+                Text("Anhänge", style = MaterialTheme.typography.titleSmall)
+                AttachmentBox(
+                    attachments, blobStore,
+                    openTrashKey = openTrash,
+                    onOpenTrash = { openTrash = it },
+                    onDelete = { a -> openTrash = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(a.node.nodeId) } } },
+                    onReorder = { moved, prev, next -> scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } } },
+                    onOpen = { attOpen = it.node },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Bild anhängen") }
+                    TextButton(onClick = { pickFile.launch(arrayOf("*/*")) }) { Text("Datei anhängen") }
+                }
+            } else {
+                Text("Anhänge können nach dem Speichern hinzugefügt werden.", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

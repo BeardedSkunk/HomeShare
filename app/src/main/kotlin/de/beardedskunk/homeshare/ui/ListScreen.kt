@@ -390,7 +390,7 @@ fun ListScreen(
     }
     if (calEdit != null || creatingCal) {
         BackHandler { calEdit = null; creatingCal = false; reload() }
-        CalendarEntryEditor(repo = repo, parentId = parentId, post = calEdit, onClose = { calEdit = null; creatingCal = false; reload() })
+        CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = parentId, post = calEdit, onClose = { calEdit = null; creatingCal = false; reload() })
         return
     }
 

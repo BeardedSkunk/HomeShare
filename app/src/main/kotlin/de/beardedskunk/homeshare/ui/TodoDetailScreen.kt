@@ -141,7 +141,7 @@ fun TodoDetailScreen(
     }
     calEdit?.let { c ->
         BackHandler { calEdit = null }
-        CalendarEntryEditor(repo = repo, parentId = node.nodeId, post = c, onClose = { calEdit = null })
+        CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = node.nodeId, post = c, onClose = { calEdit = null })
         return
     }
     BackHandler { onClose() }
