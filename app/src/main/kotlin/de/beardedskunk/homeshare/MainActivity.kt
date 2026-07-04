@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.ui.ListScreen
 import de.beardedskunk.homeshare.ui.FeedShareScreen
@@ -97,8 +98,11 @@ fun ClipTheme(content: @Composable () -> Unit) {
 /** Einfache zustandsbasierte Navigation ohne zusaetzliche Navigationsbibliothek. */
 @Composable
 fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
-    // Navigations-Stack der geöffneten Listen (leer = Wurzel „Feeds"). Erlaubt Listen in Listen.
-    val navStack = remember { mutableStateListOf<NodeState>() }
+    // Navigations-Stack der geöffneten Listen als nodeIds (leer = Wurzel „Feeds"). Erlaubt Listen in
+    // Listen. Nur IDs, damit der Stack per rememberSaveable einen Config-Change (z. B. Drehen) überlebt –
+    // sonst wirft die neu erstellte Activity zurück zur Wurzel. Die NodeState-Objekte rekonstruieren wir
+    // aus dem Graph.
+    val navIds = rememberSaveable { mutableStateListOf<String>() }
     // EINE geteilte Suche über alle Ebenen: null = zu, sonst offen. Beim Zurückgehen bleibt sie erhalten.
     var searchQuery by remember { mutableStateOf<String?>(null) }
     var pendingShare by remember { mutableStateOf(initialShare) }
@@ -111,7 +115,8 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     val calPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result -> if (result.values.any { it }) graph.calendarSync.requestSync() }
-    val current = navStack.lastOrNull()
+    // Aktuellen Knoten aus dem Graph rekonstruieren; gelöschter/unbekannter Knoten ⇒ null (= Wurzel).
+    val current: NodeState? = navIds.lastOrNull()?.let { graph.repo.getNode(it) }
     LaunchedEffect(current?.nodeId) {
         if (current != null && current.isCalendarFeed && !graph.calendarSync.hasPermission()) {
             calPermLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
@@ -125,7 +130,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
             repo = graph.repo,
             blobStore = graph.blobStore,
             shared = share,
-            onShared = { feed -> pendingShare = null; navStack.clear(); navStack.add(feed) },
+            onShared = { feed -> pendingShare = null; navIds.clear(); navIds.add(feed.nodeId) },
             onCancel = { pendingShare = null },
         )
         return
@@ -162,10 +167,10 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
         container = current,
         onOpenSettings = { showSettings = true },
         onOpenShare = { sharingFeed = it },
-        onOpenList = { navStack.add(it) },
+        onOpenList = { navIds.add(it.nodeId) },
         onRequestCalendarSync = { graph.calendarSync.requestSync() },
         searchQuery = searchQuery,
         onSearchQueryChange = { searchQuery = it },
-        onBack = { navStack.removeAt(navStack.lastIndex) },
+        onBack = { if (navIds.isNotEmpty()) navIds.removeAt(navIds.lastIndex) },
     )
 }
