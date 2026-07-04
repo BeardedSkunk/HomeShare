@@ -18,9 +18,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,12 +35,17 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TaskAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -49,7 +58,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,6 +71,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -84,6 +93,13 @@ import de.beardedskunk.homeshare.sync.SyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private data class ListScreenData(
+    val list: List<NodeState>,
+    val imgs: Map<String, List<String>>,
+    val badges: Map<String, Pair<Int, Int>>,
+    val captions: Map<String, String>,
+)
 
 /** Standard-Icon je Nutzer-Typ (echte Material-Icons, via material-icons-extended). */
 fun NodeKind.uiIcon(): ImageVector = when (this) {
@@ -141,6 +157,11 @@ fun ListScreen(
     var postImages by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     // Fortschritts-Badge (erledigt/gesamt) je Aufgabe bzw. Aufgaben-Liste (childDefault==TODO).
     var taskBadges by remember { mutableStateOf<Map<String, Pair<Int, Int>>>(emptyMap()) }
+    // Caption-Titel für IMAGE/FILE-Direktkinder (aus Beschreibungs-Notiz des Anhangs).
+    var captionTitles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    // Überlauf-Menü (Kalender-Sync) + Bestätigungs-Dialog.
+    var overflowOpen by remember { mutableStateOf(false) }
+    var calSyncConfirm by remember { mutableStateOf(false) }
     var matchedIds by remember { mutableStateOf<Set<String>?>(null) }
     val searching = searchQuery != null
     val query = searchQuery ?: ""
@@ -170,19 +191,28 @@ fun ListScreen(
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 val list = repo.children(parentId)
-                val imgs = list.filter { it.kind == NodeKind.NOTE }.associate { p ->
-                    p.nodeId to repo.children(p.nodeId).mapNotNull { c -> if (c.type == NodeType.IMAGE) c.blobHash else null }
-                }
+                // Bilder-Map: NOTE -> Bild-Kinder; IMAGE -> eigener Blob; Bilder-Liste -> Bild-Kinder.
+                val imgs = list.associate { p ->
+                    p.nodeId to when {
+                        p.kind == NodeKind.NOTE -> repo.children(p.nodeId).mapNotNull { c -> if (c.type == NodeType.IMAGE) c.blobHash else null }
+                        p.kind == NodeKind.IMAGE && p.blobHash != null -> listOf(p.blobHash)
+                        p.kind == NodeKind.LIST && p.childDefault == NodeKind.IMAGE -> repo.children(p.nodeId).mapNotNull { c -> if (c.type == NodeType.IMAGE) c.blobHash else null }
+                        else -> emptyList()
+                    }
+                }.filterValues { it.isNotEmpty() }
                 // Badge nur für Aufgaben und Aufgaben-Listen; gezählt werden TODO/NOTE-Unterpunkte.
                 val badges = list
                     .filter { it.kind == NodeKind.TODO || (it.kind == NodeKind.LIST && it.childDefault == NodeKind.TODO) }
                     .mapNotNull { p -> childTaskCounts(repo.children(p.nodeId))?.let { p.nodeId to it } }
                     .toMap()
-                Triple(list, imgs, badges)
+                // Caption-Titel für IMAGE/FILE-Direktkinder (Beschreibungs-Notiz des Anhangs).
+                val captions = loadAttachmentRows(repo, parentId).associate { it.node.nodeId to it.label() }
+                ListScreenData(list, imgs, badges, captions)
             }
-            children = result.first
-            postImages = result.second
-            taskBadges = result.third
+            children = result.list
+            postImages = result.imgs
+            taskBadges = result.badges
+            captionTitles = result.captions
         }
     }
     LaunchedEffect(parentId, revision) { reload() }
@@ -363,9 +393,20 @@ fun ListScreen(
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
                     }
                     if (!searching && container != null) {
-                        // Beschreibung der aktuellen Liste (Titel + Markdown-Body) lesen/bearbeiten.
-                        IconButton(onClick = { descEdit = container }, modifier = Modifier.tag("topbar:listinfo")) {
-                            Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = "Listen-Beschreibung")
+                        // Überlauf-Menü: aktuell nur Kalender-Sync (früher inline-Switch).
+                        Box {
+                            IconButton(onClick = { overflowOpen = true }, modifier = Modifier.tag("topbar:overflow")) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "Weitere Aktionen")
+                            }
+                            DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                                if (isCalendar) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (calEnabled) "Aus Kalender entfernen" else "In Android-Kalender übernehmen") },
+                                        onClick = { overflowOpen = false; calSyncConfirm = true },
+                                        modifier = Modifier.tag("menu:calendar-sync"),
+                                    )
+                                }
+                            }
                         }
                     }
                     if (!searching) {
@@ -412,19 +453,22 @@ fun ListScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (isCalendar) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("In Android-Kalender übernehmen", Modifier.weight(1f))
-                    Switch(checked = calEnabled, onCheckedChange = { calEnabled = it; settings.setCalendarFeedEnabled(parentId, it); onRequestCalendarSync() })
-                }
-            }
             container?.takeIf { it.isForeign }?.let { f ->
                 val rightLabel = when (f.foreignRight) {
                     de.beardedskunk.homeshare.data.FeedRight.READ -> "nur lesen"
                     de.beardedskunk.homeshare.data.FeedRight.WRITE -> "lesen & schreiben"
                     de.beardedskunk.homeshare.data.FeedRight.MERGE -> "lesen, schreiben, mergen"
                 }
-                Text("🔗 Geteilt von „${f.foreignOrigin}“ · $rightLabel", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("🔗 Geteilt von „${f.foreignOrigin}” · $rightLabel", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            if (container != null) {
+                ListHeader(
+                    container = container,
+                    readOnly = !canWrite,
+                    onSave = { newText ->
+                        scope.launch { withContext(Dispatchers.IO) { repo.headContent(container.nodeId)?.let { repo.editNode(container.nodeId, it.copy(text = newText)) } } }
+                    },
+                )
             }
             if (shown.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -453,7 +497,13 @@ fun ListScreen(
                                         onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
                                         trailing = handle,
                                     )
-                                    else -> NodeRow(node = node, blobStore = blobStore, badge = taskBadges[node.nodeId], onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
+                                    else -> NodeRow(
+                                        node = node, blobStore = blobStore, badge = taskBadges[node.nodeId],
+                                        imageHashes = postImages[node.nodeId] ?: emptyList(),
+                                        titleOverride = captionTitles[node.nodeId],
+                                        onOpenImage = { viewingImage = it },
+                                        onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle,
+                                    )
                                 }
                             }
                             if (canDrag) {
@@ -534,6 +584,24 @@ fun ListScreen(
             dismissButton = { TextButton(onClick = { actionNode = null }, modifier = Modifier.tag("action:cancel")) { Text("Abbrechen") } },
         )
     }
+
+    if (calSyncConfirm) {
+        AlertDialog(
+            onDismissRequest = { calSyncConfirm = false },
+            title = { Text(if (calEnabled) "Aus Kalender entfernen?" else "In Kalender übernehmen?") },
+            text = { Text(if (calEnabled) "Diese Liste wird nicht mehr mit dem Android-Kalender synchronisiert." else "Einträge dieser Liste werden in den Android-Kalender übernommen.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val newState = !calEnabled
+                    calSyncConfirm = false
+                    calEnabled = newState
+                    settings.setCalendarFeedEnabled(parentId, newState)
+                    onRequestCalendarSync()
+                }) { Text("Bestätigen") }
+            },
+            dismissButton = { TextButton(onClick = { calSyncConfirm = false }) { Text("Abbrechen") } },
+        )
+    }
 }
 
 /**
@@ -543,7 +611,18 @@ fun ListScreen(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, badge: Pair<Int, Int>? = null, onClick: () -> Unit, onLongClick: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
+private fun NodeRow(
+    node: NodeState,
+    blobStore: BlobStore? = null,
+    badge: Pair<Int, Int>? = null,
+    imageHashes: List<String> = emptyList(),
+    titleOverride: String? = null,
+    onOpenImage: ((String) -> Unit)? = null,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    // IMAGE-Knoten haben kein Leading-Icon (Bild erscheint als Strip rechts).
     val leading = when (node.kind) {
         NodeKind.LIST -> (node.childDefault ?: NodeKind.LIST).uiIcon()
         NodeKind.FILE -> NodeKind.FILE.uiIcon()
@@ -561,21 +640,20 @@ private fun NodeRow(node: NodeState, blobStore: BlobStore? = null, badge: Pair<I
                 Modifier.weight(1f).combinedClickable(onClick = onClick, onLongClick = onLongClick),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (node.kind == NodeKind.IMAGE && node.blobHash != null && blobStore != null) {
-                    val bmp = rememberBlobBitmap(blobStore, node.blobHash, preferFull = false)
-                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                        if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
-                    }
-                } else if (leading != null) {
+                if (leading != null) {
                     Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
                 }
                 val extra = if (node.kind == NodeKind.LIST && FeedShareCodec.isShared(node.text)) "📤 " else ""
+                val displayTitle = titleOverride ?: node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" }
                 Text(
-                    extra + node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" },
+                    extra + displayTitle,
                     fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(start = if (leading != null || node.kind == NodeKind.IMAGE) 12.dp else 0.dp),
+                    modifier = Modifier.weight(1f).padding(start = if (leading != null) 12.dp else 0.dp),
                 )
                 if (badge != null) TaskBadge(badge.first, badge.second)
+            }
+            if (imageHashes.isNotEmpty() && blobStore != null && onOpenImage != null) {
+                RowImageStrip(imageHashes, blobStore, 40.dp, onOpenImage)
             }
             trailing?.invoke()
         }
@@ -677,13 +755,79 @@ private fun PostRow(
             }
             // Notizen tragen bewusst KEINEN Markdown-Aufgaben-Zähler mehr (der Badge lebt jetzt an
             // Aufgaben/Aufgaben-Listen und zählt Unterpunkte statt Markdown-Checkboxen).
-            for (sha in imageHashes.take(3)) {
-                val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
-                Box(Modifier.fillMaxHeight().aspectRatio(1f).clickable { onOpenImage(sha) }, contentAlignment = Alignment.Center) {
-                    if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("🖼")
+            RowImageStrip(imageHashes, blobStore, rowHeight, onOpenImage)
+            trailing?.invoke()
+        }
+    }
+}
+
+/** Horizontal scrollbarer Bildstreifen: quadratische Thumbnails à [cellSize], max. 3 sichtbar. */
+@Composable
+private fun RowImageStrip(imageHashes: List<String>, blobStore: BlobStore, cellSize: androidx.compose.ui.unit.Dp, onOpenImage: (String) -> Unit) {
+    if (imageHashes.isEmpty()) return
+    LazyRow(Modifier.widthIn(max = cellSize * 3).height(cellSize)) {
+        items(imageHashes) { sha ->
+            val bmp = rememberBlobBitmap(blobStore, sha, preferFull = false)
+            Box(Modifier.size(cellSize).clickable { onOpenImage(sha) }, contentAlignment = Alignment.Center) {
+                if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else Text("🖼")
+            }
+        }
+    }
+}
+
+/**
+ * Eingebetteter Kopf der aktuellen Liste: Titel + ✎/✓-Toggle, Body per Chevron ein-/ausklappbar.
+ * Im Edit-Modus eine gemeinsame Editbox (Titel + Body). Speichern kehrt in den Render-Modus zurück.
+ */
+@Composable
+private fun ListHeader(container: NodeState, readOnly: Boolean, onSave: (String) -> Unit) {
+    var sourceMode by remember(container.nodeId) { mutableStateOf(false) }
+    var expanded by remember(container.nodeId) { mutableStateOf(false) }
+    var editText by remember(container.nodeId, container.text) { mutableStateOf(container.text) }
+    val bodyStyle = MaterialTheme.typography.bodyLarge
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    postTitle(container.text),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f).tag("header:title"),
+                )
+                if (!readOnly) {
+                    IconButton(
+                        onClick = { if (sourceMode) { onSave(editText); sourceMode = false; expanded = false } else sourceMode = true },
+                        modifier = Modifier.tag("header:toggle"),
+                    ) {
+                        if (sourceMode) Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
+                        else Icon(Icons.Filled.Check, contentDescription = "Bearbeiten", tint = Color(0xFF2E7D32), modifier = Modifier.size(30.dp))
+                    }
+                }
+                if (!sourceMode && postBody(container.text).isNotBlank()) {
+                    IconButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.tag("header:expand"),
+                    ) {
+                        Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = if (expanded) "Einklappen" else "Ausklappen")
+                    }
                 }
             }
-            trailing?.invoke()
+            if (!sourceMode && expanded) {
+                val blocks = remember(container.text) { parseMarkdownBody(container.text) }
+                Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    for (b in blocks) MdBlockView(b, bodyStyle, null, null)
+                }
+            }
+            if (sourceMode) {
+                OutlinedTextField(
+                    value = editText,
+                    onValueChange = { editText = it },
+                    placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).tag("field:listbody"),
+                )
+            }
         }
     }
 }
