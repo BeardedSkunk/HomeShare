@@ -12,10 +12,11 @@ import androidx.compose.ui.platform.testTag
 //   drag:<titel>           Drag-Handle einer Zeile
 //   fab:add                Haupt-FAB
 //   menu:create:<kind>     FAB-Typ-Menue (list|note|calendar|todo|image|file)
-//   topbar:<aktion>        back|search|share|settings|delete|edit|save|add|listinfo
+//   topbar:<aktion>        back|search|share|settings|delete|edit|save|add|listinfo|overflow
 //   action:<aktion>        Eintraege des Langdruck-Aktionsdialogs
+//   menu:<aktion>          Ueberlaufmenue (delete-list|calendar-sync|delete-entry|calendar-entry-sync)
 //   toolbar:<aktion>       Markdown-Toolbar
-//   field:<name>           Eingabefelder (body|caption:<i>|search|subitem-add)
+//   field:<name>           Eingabefelder (body|listbody|calbody|caption:<i>|search|subitem-add|find)
 //   todo:done, box:subitems, box:attachments
 
 fun Modifier.tag(name: String): Modifier = testTag(name)

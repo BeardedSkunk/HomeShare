@@ -59,6 +59,7 @@ import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.NodeState
+import de.beardedskunk.homeshare.data.Settings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,6 +77,8 @@ fun TodoDetailScreen(
     repo: FeedRepository,
     blobStore: BlobStore,
     todo: NodeState,
+    settings: Settings,
+    onRequestCalendarSync: () -> Unit = {},
     readOnly: Boolean = false,
     onClose: () -> Unit,
 ) {
@@ -127,7 +130,7 @@ fun TodoDetailScreen(
     }
     subTodo?.let { t ->
         BackHandler { subTodo = null }
-        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, readOnly = readOnly, onClose = { subTodo = null })
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onRequestCalendarSync = onRequestCalendarSync, readOnly = readOnly, onClose = { subTodo = null })
         return
     }
     subNote?.let { n ->
@@ -140,7 +143,7 @@ fun TodoDetailScreen(
     }
     calEdit?.let { c ->
         BackHandler { calEdit = null }
-        CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = node.nodeId, post = c, onClose = { calEdit = null })
+        CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = node.nodeId, post = c, settings = settings, onShare = null, onRequestCalendarSync = onRequestCalendarSync, onClose = { calEdit = null })
         return
     }
     BackHandler { onClose() }
