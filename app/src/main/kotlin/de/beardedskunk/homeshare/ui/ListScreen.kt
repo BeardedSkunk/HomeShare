@@ -85,6 +85,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -200,7 +201,7 @@ fun ListScreen(
     // Render-Kopf der Liste (wie Notiz): Edit-/Ausklapp-Zustand hier gehalten, Toggle sitzt in der Top-Bar.
     var headerSource by remember(container?.nodeId) { mutableStateOf(false) }   // false = gerendert, true = Quelltext
     var headerExpanded by remember(container?.nodeId) { mutableStateOf(false) } // Body eingeklappt starten
-    var headerText by remember(container?.nodeId, container?.text) { mutableStateOf(container?.text ?: "") }
+    var headerTfv by remember(container?.nodeId, container?.text) { mutableStateOf(TextFieldValue(container?.text ?: "")) }
 
     val revision by repo.revision.collectAsState()
 
@@ -347,7 +348,7 @@ fun ListScreen(
 
     // Speichert den bearbeiteten Kopf-Text (Typ bleibt unangetastet) und kehrt in die Render-Ansicht zurück.
     fun saveHeader() {
-        val t = headerText
+        val t = headerTfv.text
         val id = container?.nodeId ?: return
         scope.launch { withContext(Dispatchers.IO) { repo.headContent(id)?.let { repo.editNode(id, it.copy(text = t)) } } }
         headerSource = false
@@ -532,8 +533,8 @@ fun ListScreen(
                     sourceMode = headerSource,
                     expanded = headerExpanded,
                     onExpandedChange = { headerExpanded = it },
-                    editText = headerText,
-                    onEditTextChange = { headerText = it },
+                    editValue = headerTfv,
+                    onEditValueChange = { headerTfv = it },
                 )
             }
             if (shown.isEmpty()) {
@@ -900,35 +901,24 @@ private fun ListHeader(
     sourceMode: Boolean,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    editText: String,
-    onEditTextChange: (String) -> Unit,
+    editValue: TextFieldValue,
+    onEditValueChange: (TextFieldValue) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         if (sourceMode) {
-            OutlinedTextField(
-                value = editText,
-                onValueChange = onEditTextChange,
-                placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
+            MarkdownEditField(
+                value = editValue,
+                onValueChange = onEditValueChange,
+                fieldModifier = Modifier.tag("field:listbody"),
                 minLines = 3,
-                modifier = Modifier.fillMaxWidth().tag("field:listbody"),
             )
         } else {
-            val title = postTitle(container.text)
-            val hasBody = postBody(container.text).isNotBlank()
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    title.ifBlank { "(ohne Namen)" },
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f).tag("header:title"),
-                )
-                if (hasBody) {
-                    ExpandChevron(expanded = expanded, onToggle = { onExpandedChange(!expanded) })
-                }
-            }
-            if (expanded && hasBody) {
-                MarkdownBody(text = container.text, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-            }
+            MarkdownRenderHeader(
+                text = container.text,
+                expanded = expanded,
+                onExpandedChange = onExpandedChange,
+                emptyTitle = "(ohne Namen)",
+            )
         }
     }
 }
