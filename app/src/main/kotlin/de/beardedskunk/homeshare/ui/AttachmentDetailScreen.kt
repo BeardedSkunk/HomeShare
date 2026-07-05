@@ -23,19 +23,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,7 +44,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -188,35 +183,54 @@ fun AttachmentDetailScreen(
         }
     }
 
+    var findQuery by remember { mutableStateOf<String?>(null) }
+    var matchIdx by remember { mutableStateOf(0) }
+    val matches: List<Int> = remember(tfv.text, findQuery) {
+        val q = findQuery ?: return@remember emptyList()
+        if (q.isBlank()) emptyList() else findAllMatches(tfv.text, q)
+    }
+    val matchCount = matches.size
+    fun stepMatch(delta: Int) {
+        if (matchCount == 0) return
+        matchIdx = ((matchIdx + delta) % matchCount + matchCount) % matchCount
+    }
+
     BackHandler { if (sourceMode) { save(); sourceMode = false } else onClose() }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = { BackIconButton(onClick = onClose) },
-                actions = {
-                    if (!readOnly) {
-                        IconButton(
-                            onClick = { scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(att.nodeId) }; onClose() } },
-                            modifier = Modifier.tag("topbar:delete"),
-                        ) { Icon(Icons.Filled.Delete, contentDescription = "Anhang löschen") }
-                        IconButton(
-                            onClick = { if (sourceMode) { save(); sourceMode = false } else sourceMode = true },
-                            modifier = Modifier.tag(if (sourceMode) "topbar:save" else "topbar:edit"),
-                        ) {
-                            if (sourceMode) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
-                            } else {
-                                Icon(Icons.Filled.Check, contentDescription = "Bearbeiten", tint = Color(0xFF2E7D32), modifier = Modifier.size(30.dp))
-                            }
-                        }
-                    }
-                },
+            DetailTopBar(
+                onBack = onClose,
+                searchOpen = findQuery != null,
+                onToggleSearch = { findQuery = if (findQuery != null) null else "" },
+                onShare = null,
+                menuContent = if (!readOnly) { dismiss ->
+                    DropdownMenuItem(
+                        text = { Text("Anhang löschen") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                        onClick = { dismiss(); scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(att.nodeId) }; onClose() } },
+                        modifier = Modifier.tag("menu:delete-attachment"),
+                    )
+                } else null,
+                sourceMode = sourceMode,
+                onEditToggle = if (!readOnly) {
+                    { if (sourceMode) { save(); sourceMode = false } else sourceMode = true }
+                } else null,
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+            val fq = findQuery
+            if (fq != null) {
+                FindBar(
+                    query = fq,
+                    onQuery = { findQuery = it; matchIdx = 0 },
+                    label = if (matchCount == 0) "0/0" else "${matchIdx + 1}/$matchCount",
+                    hasMatches = matchCount > 0,
+                    onPrev = { stepMatch(-1) },
+                    onNext = { stepMatch(1) },
+                )
+            }
             // ---- Beschreibung (Titel + Markdown) – höhenbegrenzt + scrollbar; der Anhang darunter
             // bekommt den ganzen Rest (weight(1f)). Titel bleibt immer sichtbar, der Markdown-Body
             // ist über das Ausklapp-Chevron einklappbar (klappt beim Reinzoomen automatisch ein). ----
@@ -239,6 +253,7 @@ fun AttachmentDetailScreen(
                         onExpandedChange = { headerExpanded = it },
                         modifier = Modifier.padding(horizontal = 12.dp),
                         emptyTitle = null,
+                        highlight = findQuery?.takeIf { it.isNotBlank() },
                         onToggleTask = if (readOnly) null else ::toggleTask,
                         onEditAt = if (readOnly) null else { _ -> sourceMode = true },
                     )

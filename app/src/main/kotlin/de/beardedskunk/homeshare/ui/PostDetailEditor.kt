@@ -47,7 +47,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -272,31 +271,23 @@ fun PostDetailEditor(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = {
-                    BackIconButton(onClick = onClose, contentDescription = "Abbrechen")
-                },
-                actions = {
-                    // Suche in BEIDEN Modi (gerendert + Quelltext).
-                    IconButton(onClick = { onSearchQueryChange(if (findOpen) null else "") }, modifier = Modifier.tag("topbar:search")) {
-                        Icon(
-                            if (findOpen) Icons.Filled.Close else Icons.Filled.Search,
-                            contentDescription = if (findOpen) "Suche schließen" else "Im Text suchen",
-                        )
-                    }
-                    if (!readOnly) {
-                        if (post != null) {
-                            IconButton(onClick = { delete() }, modifier = Modifier.tag("topbar:delete")) {
-                                Icon(Icons.Filled.Delete, contentDescription = "Löschen")
-                            }
-                        }
-                        // Modus-Umschalter: gerendert zeigt ✓ (grün), Quelltext zeigt ✎.
-                        EditToggleButton(sourceMode = sourceMode, onToggle = {
-                            if (sourceMode) { save(); sourceMode = false } else { sourceMode = true }
-                        })
-                    }
-                },
+            DetailTopBar(
+                onBack = onClose,
+                searchOpen = findOpen,
+                onToggleSearch = { onSearchQueryChange(if (findOpen) null else "") },
+                onShare = null,
+                menuContent = if (!readOnly && post != null) { dismiss ->
+                    DropdownMenuItem(
+                        text = { Text("Löschen") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                        onClick = { dismiss(); delete() },
+                        modifier = Modifier.tag("menu:delete-note"),
+                    )
+                } else null,
+                sourceMode = sourceMode,
+                onEditToggle = if (!readOnly) {
+                    { if (sourceMode) { save(); sourceMode = false } else sourceMode = true }
+                } else null,
             )
         },
         floatingActionButton = {
