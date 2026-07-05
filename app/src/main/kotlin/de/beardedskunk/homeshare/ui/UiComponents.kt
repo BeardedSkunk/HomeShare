@@ -4,6 +4,8 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
@@ -35,4 +37,23 @@ internal fun findAllMatches(haystack: String, needle: String): List<Int> {
         from = idx + needle.length
     }
     return out
+}
+
+/**
+ * Ausklapp-/Einklapp-Chevron (▲/▼) für Kopfzeilen mit optionalem Markdown-Body.
+ * Gemeinsam genutzt von der Listen-Kopfzeile (ListHeader) und der Anhang-Detailansicht.
+ */
+@Composable
+fun ExpandChevron(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    tag: String = "header:expand",
+) {
+    IconButton(onClick = onToggle, modifier = modifier.tag(tag)) {
+        Icon(
+            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (expanded) "Einklappen" else "Ausklappen",
+        )
+    }
 }

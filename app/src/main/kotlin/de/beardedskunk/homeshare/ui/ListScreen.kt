@@ -910,12 +910,7 @@ private fun ListHeader(
                     modifier = Modifier.weight(1f).tag("header:title"),
                 )
                 if (hasBody) {
-                    IconButton(onClick = { onExpandedChange(!expanded) }, modifier = Modifier.tag("header:expand")) {
-                        Icon(
-                            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                            contentDescription = if (expanded) "Einklappen" else "Ausklappen",
-                        )
-                    }
+                    ExpandChevron(expanded = expanded, onToggle = { onExpandedChange(!expanded) })
                 }
             }
             if (expanded && hasBody) {
