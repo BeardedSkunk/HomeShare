@@ -467,6 +467,7 @@ private fun RenderedView(
     val blocks = remember(text) { parseMarkdownBody(text) }
     val q = query?.takeIf { it.isNotBlank() }
     val titleItems = if (title.isNotBlank()) 1 else 0
+    val drag = rememberMdLineDragState()
 
     // Treffer-Anker in LazyColumn-Item-Reihenfolge: [Titel?] + Bloecke.
     val anchors = remember(text, q) {
@@ -486,45 +487,6 @@ private fun RenderedView(
     fun curRangeFor(itemIndex: Int): IntRange? =
         if (cur != null && cur.first == itemIndex) cur.second else null
 
-    // ---- Zeilen-Drag in der gerenderten Ansicht (ersetzt die ↑/↓-Toolbar-Pfeile) ----
-    // Nur Listen-Zeilen (Task/Bullet/Nummer) sind greifbar; der Drop ist auf den
-    // zusammenhängenden Listen-Lauf um die gegriffene Zeile begrenzt.
-    fun dragLine(b: MdBlock): Int = when (b) {
-        is MdBlock.Task -> b.sourceLine
-        is MdBlock.Bullet -> b.sourceLine
-        is MdBlock.Numbered -> b.sourceLine
-        else -> -1
-    }
-    var mdDragIndex by remember { mutableStateOf(-1) }
-    var mdDragOffset by remember { mutableStateOf(0f) }
-    fun endLineDrag(idx: Int) {
-        if (onMoveLine != null) {
-            val itemIdx = titleItems + idx
-            val items = listState.layoutInfo.visibleItemsInfo
-            val dragged = items.firstOrNull { it.index == itemIdx }
-            if (dragged != null) {
-                val center = dragged.offset + mdDragOffset + dragged.size / 2f
-                // Mittellinien-Regel: umsortiert wird um so viele Positionen, wie das Zentrum
-                // des gezogenen Items Nachbar-ZENTREN überquert hat (kein "berührt reicht").
-                var target = idx
-                for (it2 in items) {
-                    if (it2.index == itemIdx) continue
-                    val c2 = it2.offset + it2.size / 2f
-                    if (it2.index > itemIdx && center > c2) target++
-                    if (it2.index < itemIdx && center < c2) target--
-                }
-                var lo = idx
-                while (lo - 1 >= 0 && dragLine(blocks[lo - 1]) > 0) lo--
-                var hi = idx
-                while (hi + 1 < blocks.size && dragLine(blocks[hi + 1]) > 0) hi++
-                target = target.coerceIn(lo, hi)
-                if (target != idx) onMoveLine(dragLine(blocks[idx]), dragLine(blocks[target]))
-            }
-        }
-        mdDragIndex = -1
-        mdDragOffset = 0f
-    }
-
     LazyColumn(Modifier.fillMaxSize().padding(12.dp), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = ATTACHMENT_FAB_CLEARANCE)) {
         if (title.isNotBlank()) {
             item("title") {
@@ -535,46 +497,21 @@ private fun RenderedView(
                 )
             }
         }
-        itemsIndexed(blocks) { idx, b ->
-            val line = dragLine(b)
-            if (onMoveLine != null && line > 0) {
-                val row: @Composable () -> Unit = {
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .then(if (idx == mdDragIndex) Modifier.zIndex(1f).graphicsLayer { translationY = mdDragOffset } else Modifier),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(Modifier.weight(1f)) {
-                            MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
-                        }
-                        Icon(
-                            Icons.Filled.DragIndicator,
-                            contentDescription = "Zeile verschieben",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier.tag("drag:line:$line").pointerInput(idx, blocks) {
-                                detectVerticalDragGestures(
-                                    onDragStart = { onOpenTrash?.invoke(null); mdDragIndex = idx; mdDragOffset = 0f },
-                                    onVerticalDrag = { change, amount -> change.consume(); mdDragOffset += amount },
-                                    onDragEnd = { endLineDrag(idx) },
-                                    onDragCancel = { mdDragIndex = -1; mdDragOffset = 0f },
-                                )
-                            },
-                        )
-                    }
-                }
-                if (onDeleteLine != null && onOpenTrash != null) {
-                    // Tonne löscht die Zeile samt ihrer eingerückten Unterpunkte.
-                    SwipeRevealRow(
-                        key = "line:$line", openKey = openTrashKey, onOpenChange = onOpenTrash,
-                        onDelete = { onDeleteLine(line) },
-                    ) { row() }
-                } else {
-                    row()
-                }
-            } else {
-                MdBlockView(b, body, onToggleTask, onEditAt, highlight = q, currentRange = curRangeFor(titleItems + idx))
-            }
-        }
+        markdownBlockItems(
+            blocks = blocks,
+            listState = listState,
+            drag = drag,
+            bodyStyle = body,
+            firstItemIndex = titleItems,
+            onToggleTask = onToggleTask,
+            onEditAt = onEditAt,
+            onMoveLine = onMoveLine,
+            onDeleteLine = onDeleteLine,
+            openTrashKey = openTrashKey,
+            onOpenTrash = onOpenTrash,
+            highlight = q,
+            currentRangeFor = ::curRangeFor,
+        )
         if (hasAttachments) {
             item("attachments") { attachmentBox(0.dp) }
         }
