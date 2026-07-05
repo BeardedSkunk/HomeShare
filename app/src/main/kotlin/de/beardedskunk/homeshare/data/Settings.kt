@@ -79,6 +79,30 @@ class Settings(context: Context) {
         calendarDisabledFeeds = s
     }
 
+    /**
+     * GERÄTE-LOKALE Sync-Overrides EINZELNER Termine (nodeId): explizit an bzw. aus.
+     * Ohne Eintrag erbt der Termin vom Feed-Schalter ([isCalendarFeedEnabled]).
+     * SharedPreferences kann keine Map ⇒ zwei StringSets.
+     */
+    private var calendarEntryOn: Set<String>
+        get() = prefs.getStringSet(K_CAL_ENTRY_ON, emptySet())?.toSet() ?: emptySet()
+        set(v) = prefs.edit().putStringSet(K_CAL_ENTRY_ON, v).apply()
+    private var calendarEntryOff: Set<String>
+        get() = prefs.getStringSet(K_CAL_ENTRY_OFF, emptySet())?.toSet() ?: emptySet()
+        set(v) = prefs.edit().putStringSet(K_CAL_ENTRY_OFF, v).apply()
+
+    /** Explizites Override für diesen Termin (an/aus) oder null (= vom Feed erben). */
+    fun calendarEntrySyncOverride(nodeId: String): Boolean? = when (nodeId) {
+        in calendarEntryOff -> false
+        in calendarEntryOn -> true
+        else -> null
+    }
+
+    fun setCalendarEntrySync(nodeId: String, enabled: Boolean) {
+        calendarEntryOn = calendarEntryOn.toMutableSet().apply { if (enabled) add(nodeId) else remove(nodeId) }
+        calendarEntryOff = calendarEntryOff.toMutableSet().apply { if (enabled) remove(nodeId) else add(nodeId) }
+    }
+
     /** Lokales Speicherbudget fuer Voll-Bilder in GB (0 = unbegrenzt). */
     var imageBudgetGb: Float
         get() = prefs.getFloat(K_BUDGET_GB, 0f)
@@ -101,5 +125,7 @@ class Settings(context: Context) {
         private const val K_BUDGET_GB = "image_budget_gb"
         private const val K_CALENDAR_ID = "calendar_id"
         private const val K_CAL_DISABLED = "calendar_disabled_feeds"
+        private const val K_CAL_ENTRY_ON = "calendar_entry_on"
+        private const val K_CAL_ENTRY_OFF = "calendar_entry_off"
     }
 }
