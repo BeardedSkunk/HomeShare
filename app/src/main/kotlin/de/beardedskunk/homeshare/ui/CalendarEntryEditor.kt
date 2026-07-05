@@ -260,63 +260,42 @@ fun CalendarEntryEditor(
     }
 
     // Hamburger-Menü: Sync-Toggle spiegelt den effektiven Zustand (Override oder Feed-Default).
-    var overflowOpen by remember { mutableStateOf(false) }
     var entrySyncOn by remember(post?.nodeId) {
         mutableStateOf(post?.let { settings.calendarEntrySyncOverride(it.nodeId) ?: settings.isCalendarFeedEnabled(it.rootId) } ?: true)
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = { BackIconButton(onClick = onClose) },
-                actions = {
-                    // Lupe: In-Text-Suche im Kopf-Text ein/aus.
-                    IconButton(
-                        onClick = { findQuery = if (findQuery == null) "" else null },
-                        modifier = Modifier.tag("topbar:search"),
-                    ) { Icon(Icons.Filled.Search, contentDescription = "Suchen") }
-                    // QR: übergeordnete Liste teilen (nur wenn ein Teilen-Callback vorliegt).
-                    if (onShare != null) {
-                        IconButton(onClick = onShare, modifier = Modifier.tag("topbar:share")) {
-                            Icon(Icons.Filled.QrCode2, contentDescription = "Diese Liste teilen")
-                        }
+            DetailTopBar(
+                onBack = onClose,
+                searchOpen = findQuery != null,
+                onToggleSearch = { findQuery = if (findQuery == null) "" else null },
+                onShare = onShare,
+                menuContent = if (post != null || currentNodeId != null) { dismiss ->
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                        text = { Text("Termin löschen") },
+                        onClick = { dismiss(); delete() },
+                        modifier = Modifier.tag("menu:delete-entry"),
+                    )
+                    if (post != null) {
+                        DropdownMenuItem(
+                            text = { Text("In Android-Kalender übernehmen") },
+                            trailingIcon = { Switch(checked = entrySyncOn, onCheckedChange = null) },
+                            onClick = {
+                                val n = !entrySyncOn
+                                entrySyncOn = n
+                                settings.setCalendarEntrySync(post.nodeId, n)
+                                onRequestCalendarSync()
+                                dismiss()
+                            },
+                            modifier = Modifier.tag("menu:calendar-entry-sync"),
+                        )
                     }
-                    // Hamburger: Löschen + Einzel-Termin-Sync (erst ab vorhandenem Knoten).
-                    if (post != null || currentNodeId != null) {
-                        Box {
-                            IconButton(onClick = { overflowOpen = true }, modifier = Modifier.tag("topbar:overflow")) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "Weitere Aktionen")
-                            }
-                            DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                                    text = { Text("Termin löschen") },
-                                    onClick = { overflowOpen = false; delete() },
-                                    modifier = Modifier.tag("menu:delete-entry"),
-                                )
-                                // Nur bei bereits gespeichertem Termin – Neuanlagen erben ohnehin den Feed-Default.
-                                if (post != null) {
-                                    DropdownMenuItem(
-                                        text = { Text("In Android-Kalender übernehmen") },
-                                        trailingIcon = { Switch(checked = entrySyncOn, onCheckedChange = null) },
-                                        onClick = {
-                                            val n = !entrySyncOn
-                                            entrySyncOn = n
-                                            settings.setCalendarEntrySync(post.nodeId, n)
-                                            onRequestCalendarSync()
-                                            overflowOpen = false
-                                        },
-                                        modifier = Modifier.tag("menu:calendar-entry-sync"),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    // ✓/✎-Toggle: im Quelltext-Modus persistieren + auf Render umschalten.
-                    EditToggleButton(sourceMode = sourceMode, onToggle = {
-                        if (sourceMode) { persist(); sourceMode = false } else sourceMode = true
-                    })
+                } else null,
+                sourceMode = sourceMode,
+                onEditToggle = {
+                    if (sourceMode) { persist(); sourceMode = false } else sourceMode = true
                 },
             )
         },
