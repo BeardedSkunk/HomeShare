@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeKind
@@ -93,6 +94,7 @@ fun AttachmentDetailScreen(
     var loaded by remember { mutableStateOf(false) }
     var sourceMode by remember { mutableStateOf(false) }
     var helpOpen by remember { mutableStateOf(false) }
+    var headerExpanded by remember { mutableStateOf(true) }   // beim Öffnen ausgeklappt; klappt beim Reinzoomen ein
 
     LaunchedEffect(revision) {
         val fresh = withContext(Dispatchers.IO) {
@@ -217,8 +219,15 @@ fun AttachmentDetailScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            // ---- Beschreibung (Titel + Markdown) – scrollt; der Anhang darunter bleibt fix. ----
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            // ---- Beschreibung (Titel + Markdown) – höhenbegrenzt + scrollbar; der Anhang darunter
+            // bekommt den ganzen Rest (weight(1f)). Titel bleibt immer sichtbar, der Markdown-Body
+            // ist über das Ausklapp-Chevron einklappbar (klappt beim Reinzoomen automatisch ein). ----
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = if (sourceMode) Dp.Unspecified else 240.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 if (sourceMode) {
                     OutlinedTextField(
                         value = tfv,
@@ -229,19 +238,30 @@ fun AttachmentDetailScreen(
                     MarkdownToolbar(value = tfv, apply = { transform -> tfv = transform(tfv) }, onHelp = { helpOpen = true })
                 } else {
                     val title = postTitle(tfv.text)
-                    if (title.isNotBlank()) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    val hasBody = postBody(tfv.text).isNotBlank()
+                    // Titel + Chevron in EINER Zeile (Titel bleibt immer sichtbar):
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (title.isNotBlank()) {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 6.dp).tag("header:title"),
+                            )
+                        } else {
+                            Spacer(Modifier.weight(1f))
+                        }
+                        if (hasBody) {
+                            ExpandChevron(expanded = headerExpanded, onToggle = { headerExpanded = !headerExpanded })
+                        }
+                    }
+                    if (headerExpanded && hasBody) {
+                        MarkdownBody(
+                            text = tfv.text,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            onToggleTask = if (readOnly) null else ::toggleTask,
+                            onEditAt = if (readOnly) null else { _ -> sourceMode = true },
                         )
                     }
-                    MarkdownBody(
-                        text = tfv.text,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                        onToggleTask = if (readOnly) null else ::toggleTask,
-                        onEditAt = if (readOnly) null else { _ -> sourceMode = true },
-                    )
                 }
             }
 
@@ -270,14 +290,17 @@ fun AttachmentDetailScreen(
                         }
                         .pointerInput(att.blobHash) {
                             detectTapGestures(
-                                onDoubleTap = { scale = 1f; offset = Offset.Zero },
+                                onDoubleTap = { scale = 1f; offset = Offset.Zero; headerExpanded = true },
                                 onLongPress = { if (pointerCount <= 1) menuOpen = true },
                             )
                         }
                         .pointerInput(att.blobHash) {
                             detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, 6f)
-                                offset = if (scale > 1f) offset + pan else Offset.Zero
+                                val newScale = (scale * zoom).coerceIn(1f, 6f)
+                                // Reinzoomen → Kopf einklappen (Platz fürs Bild); ganz rausgezoomt → wieder ausklappen.
+                                headerExpanded = newScale <= 1f
+                                scale = newScale
+                                offset = if (newScale > 1f) offset + pan else Offset.Zero
                             }
                         },
                     contentAlignment = Alignment.Center,
