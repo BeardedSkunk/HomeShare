@@ -143,8 +143,8 @@ class FeedRepository(
 
     fun renameFeed(feedId: String, name: String) {
         val hc = headContent(feedId) ?: return
-        val grants = FeedShareCodec.decode(hc.text)
-        editNode(feedId, hc.copy(text = FeedShareCodec.feedText(name.trim(), grants)))
+        val newText = (listOf(name.trim()) + hc.text.lineSequence().drop(1).toList()).joinToString("\n")
+        editNode(feedId, hc.copy(text = newText))
     }
 
     fun deleteFeed(feedId: String) { deleteNode(feedId) }
@@ -325,12 +325,14 @@ class FeedRepository(
 
     private fun feedText(rootId: String): String = headContent(rootId)?.text ?: ""
 
-    fun feedShares(rootId: String): List<ShareGrant> = FeedShareCodec.decode(feedText(rootId))
+    fun feedShares(rootId: String): List<ShareGrant> =
+        headContent(rootId)?.let { FeedShareCodec.grantsOf(it.text, it.ext) } ?: emptyList()
 
     fun setFeedShares(rootId: String, grants: List<ShareGrant>) {
         val hc = headContent(rootId) ?: return
-        val name = FeedShareCodec.nameOf(hc.text)
-        editNode(rootId, hc.copy(text = FeedShareCodec.feedText(name, grants)))
+        val newExt = if (grants.isEmpty()) hc.ext - FeedShareCodec.META_KEY
+                     else hc.ext + (FeedShareCodec.META_KEY to FeedShareCodec.encodeMeta(grants))
+        editNode(rootId, hc.copy(text = FeedShareCodec.stripShareLines(hc.text), ext = newExt))
     }
 
     fun addShare(rootId: String, grant: ShareGrant) =
@@ -541,6 +543,7 @@ class FeedRepository(
             updated = Hlc(c.getLong(IDX_N_UWALL), c.getInt(IDX_N_UCNT)),
             foreignOrigin = c.getString(IDX_N_ORIGIN) ?: "",
             foreignRight = FeedRight.from(c.getString(IDX_N_FRIGHT) ?: ""),
+            ext = meta.filterKeys { it !in MetaKey.KNOWN },
         )
     }
 

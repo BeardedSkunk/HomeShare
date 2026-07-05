@@ -69,4 +69,51 @@ class FeedShareTest {
         val wrong = GroupCrypto.deriveKey("falsch", "grp".toByteArray())
         assertNull(runCatching { GroupCrypto.decryptString(wrong, enc) }.getOrNull())
     }
+
+    // ---- Variante B: Meta-Map ----
+
+    @Test fun meta_encodeDecode_roundTrip() {
+        val grants = listOf(
+            ShareGrant("cap1", FeedRight.READ, "Familie Müller", "ENCSECRETA=="),
+            ShareGrant("cap2", FeedRight.MERGE, "WG | Berlin :: 4", "ENCSECRETB=="),
+        )
+        val encoded = FeedShareCodec.encodeMeta(grants)
+        val decoded = FeedShareCodec.decodeMeta(encoded)
+        assertEquals(grants, decoded)
+    }
+
+    @Test fun grantsOf_prefersMeta_overLegacyTextLines() {
+        val metaGrant = ShareGrant("meta-cap", FeedRight.WRITE, "Meta-Label", "META_ENC==")
+        val textGrant = ShareGrant("text-cap", FeedRight.READ, "Text-Label", "TEXT_ENC==")
+        val legacyText = FeedShareCodec.feedText("Titel", listOf(textGrant))
+        val ext = mapOf(FeedShareCodec.META_KEY to FeedShareCodec.encodeMeta(listOf(metaGrant)))
+        // Meta schlägt Text-Zeilen
+        assertEquals(listOf(metaGrant), FeedShareCodec.grantsOf(legacyText, ext))
+    }
+
+    @Test fun grantsOf_legacyFallback_whenNoMetaKey() {
+        val grant = ShareGrant("cap1", FeedRight.READ, "Gast", "ENC==")
+        val legacyText = FeedShareCodec.feedText("Feed", listOf(grant))
+        // Leere ext-Map → Legacy-Pfad
+        assertEquals(listOf(grant), FeedShareCodec.grantsOf(legacyText, emptyMap()))
+    }
+
+    @Test fun stripShareLines_removesOnlyShareLines() {
+        val body = "Titel\nNormale Zeile\n::share::cap1::read::bGFiZWw=::ENC==\nNoch eine"
+        val stripped = FeedShareCodec.stripShareLines(body)
+        assertEquals("Titel\nNormale Zeile\nNoch eine", stripped)
+    }
+
+    @Test fun meta_labelWithColonsAndSpecialChars_roundTrips() {
+        val grant = ShareGrant("c", FeedRight.MERGE, "A::B::C äöü 😀", "SEC==")
+        val decoded = FeedShareCodec.decodeMeta(FeedShareCodec.encodeMeta(listOf(grant)))
+        assertEquals(listOf(grant), decoded)
+    }
+
+    @Test fun isShared_usesMetaWhenPresent() {
+        val grant = ShareGrant("c", FeedRight.READ, "x", "y")
+        val ext = mapOf(FeedShareCodec.META_KEY to FeedShareCodec.encodeMeta(listOf(grant)))
+        assertTrue(FeedShareCodec.isShared("", ext))
+        assertFalse(FeedShareCodec.isShared("", emptyMap()))
+    }
 }

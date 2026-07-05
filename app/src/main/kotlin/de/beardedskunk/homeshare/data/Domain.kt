@@ -50,6 +50,7 @@ data class NodeState(
     /** Fremdfeed-Kontext (nur bei abonnierten Cross-Group-Wurzeln gesetzt). */
     val foreignOrigin: String = "",
     val foreignRight: FeedRight = FeedRight.READ,
+    val ext: Map<String, String> = emptyMap(),
 ) {
     /** Erste Zeile = Titel (für TEXT/CALENDAR/TODO). */
     val title: String get() = text.lineSequence().firstOrNull().orEmpty()

@@ -714,7 +714,7 @@ private fun NodeRow(
                 if (leading != null) {
                     Icon(leading, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
                 }
-                val extra = if (node.kind == NodeKind.LIST && FeedShareCodec.isShared(node.text)) "📤 " else ""
+                val extra = if (FeedShareCodec.isShared(node.text, node.ext)) "📤 " else ""
                 val displayTitle = titleOverride ?: node.title.ifBlank { if (node.kind == NodeKind.IMAGE) "Bild" else "(ohne Namen)" }
                 Text(
                     extra + displayTitle,

@@ -1,5 +1,6 @@
 package de.beardedskunk.homeshare.data
 
+import de.beardedskunk.homeshare.core.MetaListCodec
 import java.util.Base64
 
 /**
@@ -42,25 +43,54 @@ data class ShareGrant(
  *
  * Format je Zeile: `::share::<capId>::<right>::<b64(label)>::<encSecret>`
  *
- * (Aufräum-Idee für später: in eine eigene, sauber getrennte Struktur überführen – Variante B.)
+ * Variante B (aktiv): Grants liegen in NodeContent.ext["shares"] (MetaListCodec,
+ * newline-sicher). Legacy-Zeilen werden beim nächsten setFeedShares automatisch migriert.
  */
 object FeedShareCodec {
     private const val PREFIX = "::share::"
 
+    /** Meta-Key in NodeContent.ext, unter dem die Grants liegen (NICHT in MetaKey.KNOWN aufnehmen!). */
+    const val META_KEY = "shares"
+
+    // ---- Variante B: Meta-Map ----
+
+    /** Grants → Meta-Wert (MetaListCodec, newline-sicher). */
+    fun encodeMeta(grants: List<ShareGrant>): String =
+        MetaListCodec.encode(grants.map { g ->
+            val lbl = Base64.getEncoder().encodeToString(g.label.toByteArray(Charsets.UTF_8))
+            "${g.capId}::${g.right.name.lowercase()}::$lbl::${g.encSecret}"
+        })
+
+    fun decodeMeta(value: String): List<ShareGrant> =
+        MetaListCodec.decode(value).mapNotNull { parseFields(it) }
+
+    /** Einheitlicher Lesepfad: Meta zuerst, sonst Legacy-::share::-Zeilen im Text. */
+    fun grantsOf(text: String, ext: Map<String, String>): List<ShareGrant> =
+        ext[META_KEY]?.let { decodeMeta(it) } ?: decode(text)
+
+    /** Text ohne ::share::-Zeilen (Migration + Anzeige-Hygiene). */
+    fun stripShareLines(text: String): String =
+        text.lineSequence().filterNot { it.startsWith(PREFIX) }.joinToString("\n")
+
+    fun isShared(text: String, ext: Map<String, String>): Boolean = grantsOf(text, ext).isNotEmpty()
+
+    // ---- Variante A (Legacy): Text-Zeilen ----
+
     fun decode(feedText: String): List<ShareGrant> =
-        feedText.split('\n').mapNotNull { line ->
-            if (!line.startsWith(PREFIX)) return@mapNotNull null
-            val p = line.removePrefix(PREFIX).split("::")
-            if (p.size < 4) return@mapNotNull null
-            runCatching {
-                ShareGrant(
-                    capId = p[0],
-                    right = FeedRight.from(p[1]),
-                    label = String(Base64.getDecoder().decode(p[2]), Charsets.UTF_8),
-                    encSecret = p[3],
-                )
-            }.getOrNull()
-        }
+        feedText.split('\n').mapNotNull { parseFields(it.removePrefix(PREFIX).takeIf { _ -> it.startsWith(PREFIX) } ?: return@mapNotNull null) }
+
+    private fun parseFields(payload: String): ShareGrant? {
+        val p = payload.split("::")
+        if (p.size < 4) return null
+        return runCatching {
+            ShareGrant(
+                capId = p[0],
+                right = FeedRight.from(p[1]),
+                label = String(Base64.getDecoder().decode(p[2]), Charsets.UTF_8),
+                encSecret = p[3],
+            )
+        }.getOrNull()
+    }
 
     private fun line(g: ShareGrant): String {
         val lbl = Base64.getEncoder().encodeToString(g.label.toByteArray(Charsets.UTF_8))
