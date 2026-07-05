@@ -21,7 +21,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -342,91 +345,82 @@ fun CalendarEntryEditor(
             ) {
                 // Kopf: Titel + Markdown-Beschreibung (gerendert bzw. als gemeinsames Quelltext-Feld).
                 if (sourceMode) {
-                    OutlinedTextField(
+                    MarkdownEditField(
                         value = headerTfv,
                         onValueChange = { headerTfv = it },
-                        placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
+                        fieldModifier = Modifier.tag("field:calbody"),
                         minLines = 3,
-                        modifier = Modifier.fillMaxWidth().tag("field:calbody").focusRequester(findFocus),
+                        focusRequester = findFocus,
                     )
-                } else {
-                    val hTitle = postTitle(headerText)
-                    val hasBody = postBody(headerText).isNotBlank()
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            hTitle.ifBlank { "(ohne Titel)" },
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f).tag("header:title"),
-                        )
-                        if (hasBody) ExpandChevron(expanded = headerExpanded, onToggle = { headerExpanded = !headerExpanded })
-                    }
-                    if (headerExpanded && hasBody) {
-                        MarkdownBody(text = headerText, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), highlight = findQuery)
-                    }
-                }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Ganztägig", modifier = Modifier.weight(1f))
-                    Switch(checked = allDay, onCheckedChange = { allDay = it; persist() })
-                }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Ganztägig", modifier = Modifier.weight(1f))
+                        Switch(checked = allDay, onCheckedChange = { allDay = it; persist() })
+                    }
 
-                Text("Start", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Beim Verschieben des Starts die Dauer beibehalten (Ende wandert mit).
-                    DateField("Datum", startDate, Modifier.weight(1f)) { picked ->
-                        if (allDay) {
-                            val days = ChronoUnit.DAYS.between(startDate, endDate).coerceAtLeast(0)
-                            startDate = picked
-                            endDate = picked.plusDays(days)
-                        } else {
-                            val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
-                            startDate = picked
-                            val ne = LocalDateTime.of(picked, startTime).plus(if (dur.isNegative) Duration.ZERO else dur)
-                            endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                    Text("Start", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Beim Verschieben des Starts die Dauer beibehalten (Ende wandert mit).
+                        DateField("Datum", startDate, Modifier.weight(1f)) { picked ->
+                            if (allDay) {
+                                val days = ChronoUnit.DAYS.between(startDate, endDate).coerceAtLeast(0)
+                                startDate = picked
+                                endDate = picked.plusDays(days)
+                            } else {
+                                val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
+                                startDate = picked
+                                val ne = LocalDateTime.of(picked, startTime).plus(if (dur.isNegative) Duration.ZERO else dur)
+                                endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                            }
+                            persist()
                         }
-                        persist()
+                        if (!allDay) TimeField("Zeit", startTime, Modifier.weight(1f)) { picked ->
+                            val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
+                            startTime = picked
+                            val ne = LocalDateTime.of(startDate, picked).plus(if (dur.isNegative) Duration.ZERO else dur)
+                            endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                            persist()
+                        }
                     }
-                    if (!allDay) TimeField("Zeit", startTime, Modifier.weight(1f)) { picked ->
-                        val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
-                        startTime = picked
-                        val ne = LocalDateTime.of(startDate, picked).plus(if (dur.isNegative) Duration.ZERO else dur)
-                        endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
-                        persist()
+
+                    Text("Ende", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DateField("Datum", endDate, Modifier.weight(1f)) { endDate = it; persist() }
+                        if (!allDay) TimeField("Zeit", endTime, Modifier.weight(1f)) { endTime = it; persist() }
                     }
+
+                    OutlinedTextField(
+                        location, { location = it },
+                        label = { Text("Ort") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) persistIfDirty() },
+                    )
+
+                    LabeledDropdown(
+                        label = "Erinnerung",
+                        current = reminderOptions.firstOrNull { it.second == reminder }?.first ?: "Keine",
+                        options = reminderOptions.map { it.first },
+                        onSelect = { sel -> reminder = reminderOptions.first { it.first == sel }.second; persist() },
+                    )
+                    LabeledDropdown(
+                        label = "Wiederholung",
+                        current = recurrence.label,
+                        options = Recurrence.entries.map { it.label },
+                        onSelect = { sel -> recurrence = Recurrence.entries.first { it.label == sel }; persist() },
+                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (busy) "Als gebucht anzeigen" else "Als frei anzeigen", modifier = Modifier.weight(1f))
+                        Switch(checked = busy, onCheckedChange = { busy = it; persist() })
+                    }
+                } else {
+                    MarkdownRenderHeader(
+                        text = headerText,
+                        expanded = headerExpanded,
+                        onExpandedChange = { headerExpanded = it },
+                        highlight = findQuery,
+                    )
+                    EventSummary(buildEvent())
                 }
-
-                Text("Ende", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DateField("Datum", endDate, Modifier.weight(1f)) { endDate = it; persist() }
-                    if (!allDay) TimeField("Zeit", endTime, Modifier.weight(1f)) { endTime = it; persist() }
-                }
-
-                OutlinedTextField(
-                    location, { location = it },
-                    label = { Text("Ort") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) persistIfDirty() },
-                )
-
-                LabeledDropdown(
-                    label = "Erinnerung",
-                    current = reminderOptions.firstOrNull { it.second == reminder }?.first ?: "Keine",
-                    options = reminderOptions.map { it.first },
-                    onSelect = { sel -> reminder = reminderOptions.first { it.first == sel }.second; persist() },
-                )
-                LabeledDropdown(
-                    label = "Wiederholung",
-                    current = recurrence.label,
-                    options = Recurrence.entries.map { it.label },
-                    onSelect = { sel -> recurrence = Recurrence.entries.first { it.label == sel }; persist() },
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (busy) "Als gebucht anzeigen" else "Als frei anzeigen", modifier = Modifier.weight(1f))
-                    Switch(checked = busy, onCheckedChange = { busy = it; persist() })
-                }
-
-                Text("Anhänge", style = MaterialTheme.typography.titleSmall)
                 AttachmentBox(
                     attachments, blobStore,
                     openTrashKey = openTrash,
@@ -435,6 +429,7 @@ fun CalendarEntryEditor(
                     onReorder = { moved, prev, next -> scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } } },
                     onOpen = { attOpen = it.node },
                 )
+                Spacer(Modifier.height(ATTACHMENT_FAB_CLEARANCE))
             }
         }
     }
@@ -498,6 +493,28 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
                     DropdownMenuItem(text = { Text(opt) }, onClick = { open = false; onSelect(opt) })
                 }
             }
+        }
+    }
+}
+
+/** Read-only-Zusammenfassung des Termins in der Render-Ansicht — kompakt wie die
+ *  Listen-Zeile ([CalendarRow]), aber mit ALLEN Details. */
+@Composable
+private fun EventSummary(ev: EventData) {
+    Card(Modifier.fillMaxWidth().tag("box:event")) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(formatWhen(ev), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            if (ev.location.isNotBlank()) Text("📍 ${ev.location}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "🔔 " + (reminderOptions.firstOrNull { it.second == ev.reminderMinutes }?.first ?: "Keine Erinnerung"),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (ev.recurrence != Recurrence.NONE) Text("🔁 ${ev.recurrence.label}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                if (ev.busy) "Als gebucht angezeigt" else "Als frei angezeigt",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
