@@ -372,21 +372,23 @@ fun ListScreen(
         DetailMergeScreen(repo = repo, blobStore = blobStore, feed = container ?: p, post = p, onOpenImage = { viewingImage = it }, onResolved = { resolvingDetailed = null; reload() }, onCancel = { resolvingDetailed = null })
         return
     }
+    // In fremden Containern Teilen nicht anbieten (Grants verwaltet nur der Owner).
+    val shareCb: ((NodeState) -> Unit)? = if (container?.isForeign == true) null else onOpenShare
     attOpen?.let { a ->
         BackHandler { attOpen = null; reload() }
-        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = !canWrite, onClose = { attOpen = null; reload() })
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = !canWrite, onOpenShare = shareCb, onClose = { attOpen = null; reload() })
         return
     }
     todoOpen?.let { t ->
         BackHandler { todoOpen = null; reload() }
-        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onShare = container?.let { c -> { onOpenShare(c) } }, onRequestCalendarSync = onRequestCalendarSync, readOnly = !canWrite, onClose = { todoOpen = null; reload() })
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onOpenShare = shareCb, onRequestCalendarSync = onRequestCalendarSync, readOnly = !canWrite, onClose = { todoOpen = null; reload() })
         return
     }
     descEdit?.let { d ->
         BackHandler { descEdit = null; reload() }
         PostDetailEditor(
             repo = repo, blobStore = blobStore, parentId = parentId, post = d,
-            readOnly = !canWrite, showAttachments = false,
+            readOnly = !canWrite, showAttachments = false, onOpenShare = shareCb,
             onClose = { descEdit = null; reload() },
         )
         return
@@ -396,7 +398,7 @@ fun ListScreen(
         PostDetailEditor(
             repo = repo, blobStore = blobStore, parentId = parentId, post = noteEdit,
             searchQuery = if (noteEdit != null) searchQuery else null,
-            onSearchQueryChange = onSearchQueryChange, readOnly = !canWrite,
+            onSearchQueryChange = onSearchQueryChange, readOnly = !canWrite, onOpenShare = shareCb,
             onClose = { noteEdit = null; creatingNote = false; reload() },
         )
         return
@@ -406,7 +408,7 @@ fun ListScreen(
         CalendarEntryEditor(
             repo = repo, blobStore = blobStore, parentId = parentId, post = calEdit,
             settings = settings,
-            onShare = container?.let { c -> { onOpenShare(c) } },
+            onOpenShare = shareCb,
             onRequestCalendarSync = onRequestCalendarSync,
             onClose = { calEdit = null; creatingCal = false; reload() },
         )
@@ -439,9 +441,11 @@ fun ListScreen(
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
                     }
                     if (!searching) {
-                        // QR: in einer Liste diese teilen; in der Wurzel einer geteilten Liste beitreten.
-                        IconButton(onClick = { if (container != null) onOpenShare(container) else showAddShared = true }, modifier = Modifier.tag("topbar:share")) {
-                            Icon(Icons.Filled.QrCode2, contentDescription = if (container != null) "Diese Liste teilen" else "Geteilte Liste beitreten")
+                        // QR: geteilten Eintrag in die aktuelle Liste einfügen; ausblenden in fremden Listen ohne Schreibrecht.
+                        if (container?.isForeign != true || canWrite) {
+                            IconButton(onClick = { showAddShared = true }, modifier = Modifier.tag("topbar:share")) {
+                                Icon(Icons.Filled.QrCode2, contentDescription = "Geteilten Eintrag hinzufügen")
+                            }
                         }
                         if (container != null) {
                             // Hamburger-Menü: „Liste löschen“ (+ bei Kalender-Listen der Sync-Toggle).
@@ -450,6 +454,14 @@ fun ListScreen(
                                     Icon(Icons.Filled.MoreVert, contentDescription = "Weitere Aktionen")
                                 }
                                 DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                                    if (!container.isForeign) {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
+                                            text = { Text("Mit Gruppe teilen / Freigaben…") },
+                                            onClick = { overflowOpen = false; onOpenShare(container) },
+                                            modifier = Modifier.tag("menu:share"),
+                                        )
+                                    }
                                     if (canWrite) {
                                         DropdownMenuItem(
                                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
@@ -645,7 +657,7 @@ fun ListScreen(
                     if (node.isForeign) {
                         TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.leaveForeignFeed(id) }; reload() } }, modifier = Modifier.tag("action:leave")) { Text("Freigabe verlassen (lokal entfernen)") }
                     } else {
-                        if (isRoot && node.kind == NodeKind.LIST) {
+                        if (container?.isForeign != true) {
                             TextButton(onClick = { val n = node; actionNode = null; onOpenShare(n) }, modifier = Modifier.tag("action:share")) { Text("Mit Gruppe teilen / Freigaben…") }
                         }
                         TextButton(onClick = { val id = node.nodeId; actionNode = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) }; reload() } }, modifier = Modifier.tag("action:delete")) { Text("Löschen") }

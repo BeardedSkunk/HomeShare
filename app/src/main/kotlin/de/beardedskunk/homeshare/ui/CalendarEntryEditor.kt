@@ -107,7 +107,7 @@ fun CalendarEntryEditor(
     parentId: String,
     post: NodeState?,
     settings: Settings,
-    onShare: (() -> Unit)? = null,
+    onOpenShare: ((NodeState) -> Unit)? = null,
     onRequestCalendarSync: () -> Unit = {},
     onClose: () -> Unit,
 ) {
@@ -255,7 +255,7 @@ fun CalendarEntryEditor(
 
     attOpen?.let { a ->
         BackHandler { attOpen = null }
-        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, onClose = { attOpen = null })
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, onOpenShare = onOpenShare, onClose = { attOpen = null })
         return
     }
 
@@ -270,14 +270,30 @@ fun CalendarEntryEditor(
                 onBack = onClose,
                 searchOpen = findQuery != null,
                 onToggleSearch = { findQuery = if (findQuery == null) "" else null },
-                onShare = onShare,
-                menuContent = if (post != null || currentNodeId != null) { dismiss ->
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                        text = { Text("Termin löschen") },
-                        onClick = { dismiss(); delete() },
-                        modifier = Modifier.tag("menu:delete-entry"),
-                    )
+                onShare = null,
+                menuContent = if (post != null || currentNodeId != null || onOpenShare != null) { dismiss ->
+                    if (onOpenShare != null && currentNodeId != null) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
+                            text = { Text("Mit Gruppe teilen / Freigaben…") },
+                            onClick = {
+                                dismiss()
+                                scope.launch {
+                                    val n = withContext(Dispatchers.IO) { currentNodeId?.let { repo.getNode(it) } }
+                                    n?.let { onOpenShare(it) }
+                                }
+                            },
+                            modifier = Modifier.tag("menu:share"),
+                        )
+                    }
+                    if (post != null || currentNodeId != null) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            text = { Text("Termin löschen") },
+                            onClick = { dismiss(); delete() },
+                            modifier = Modifier.tag("menu:delete-entry"),
+                        )
+                    }
                     if (post != null) {
                         DropdownMenuItem(
                             text = { Text("In Android-Kalender übernehmen") },

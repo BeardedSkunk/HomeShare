@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,6 +78,7 @@ fun AttachmentDetailScreen(
     blobStore: BlobStore,
     attachment: NodeState,
     readOnly: Boolean = false,
+    onOpenShare: ((NodeState) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -204,13 +206,23 @@ fun AttachmentDetailScreen(
                 searchOpen = findQuery != null,
                 onToggleSearch = { findQuery = if (findQuery != null) null else "" },
                 onShare = null,
-                menuContent = if (!readOnly) { dismiss ->
-                    DropdownMenuItem(
-                        text = { Text("Anhang löschen") },
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                        onClick = { dismiss(); scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(att.nodeId) }; onClose() } },
-                        modifier = Modifier.tag("menu:delete-attachment"),
-                    )
+                menuContent = if (!readOnly || onOpenShare != null) { dismiss ->
+                    if (onOpenShare != null) {
+                        DropdownMenuItem(
+                            text = { Text("Mit Gruppe teilen / Freigaben…") },
+                            leadingIcon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
+                            onClick = { dismiss(); onOpenShare(att) },
+                            modifier = Modifier.tag("menu:share"),
+                        )
+                    }
+                    if (!readOnly) {
+                        DropdownMenuItem(
+                            text = { Text("Anhang löschen") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            onClick = { dismiss(); scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(att.nodeId) }; onClose() } },
+                            modifier = Modifier.tag("menu:delete-attachment"),
+                        )
+                    }
                 } else null,
                 sourceMode = sourceMode,
                 onEditToggle = if (!readOnly) {

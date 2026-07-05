@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
@@ -81,7 +82,7 @@ fun TodoDetailScreen(
     blobStore: BlobStore,
     todo: NodeState,
     settings: Settings,
-    onShare: (() -> Unit)? = null,
+    onOpenShare: ((NodeState) -> Unit)? = null,
     onRequestCalendarSync: () -> Unit = {},
     readOnly: Boolean = false,
     onClose: () -> Unit,
@@ -145,25 +146,25 @@ fun TodoDetailScreen(
 
     attOpen?.let { a ->
         BackHandler { attOpen = null }
-        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onClose = { attOpen = null })
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onOpenShare = onOpenShare, onClose = { attOpen = null })
         return
     }
     subTodo?.let { t ->
         BackHandler { subTodo = null }
-        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onShare = onShare, onRequestCalendarSync = onRequestCalendarSync, readOnly = readOnly, onClose = { subTodo = null })
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onOpenShare = onOpenShare, onRequestCalendarSync = onRequestCalendarSync, readOnly = readOnly, onClose = { subTodo = null })
         return
     }
     subNote?.let { n ->
         BackHandler { subNote = null }
         PostDetailEditor(
             repo = repo, blobStore = blobStore, parentId = node.nodeId, post = n,
-            readOnly = readOnly, onClose = { subNote = null },
+            readOnly = readOnly, onOpenShare = onOpenShare, onClose = { subNote = null },
         )
         return
     }
     calEdit?.let { c ->
         BackHandler { calEdit = null }
-        CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = node.nodeId, post = c, settings = settings, onShare = null, onRequestCalendarSync = onRequestCalendarSync, onClose = { calEdit = null })
+        CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = node.nodeId, post = c, settings = settings, onOpenShare = onOpenShare, onRequestCalendarSync = onRequestCalendarSync, onClose = { calEdit = null })
         return
     }
     BackHandler { onClose() }
@@ -224,17 +225,27 @@ fun TodoDetailScreen(
                 onBack = onClose,
                 searchOpen = findQuery != null,
                 onToggleSearch = { findQuery = if (findQuery == null) "" else null },
-                onShare = onShare,
-                menuContent = if (!readOnly) { dismiss ->
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                        text = { Text("Aufgabe löschen") },
-                        onClick = {
-                            dismiss()
-                            scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(node.nodeId) }; onClose() }
-                        },
-                        modifier = Modifier.tag("menu:delete-todo"),
-                    )
+                onShare = null,
+                menuContent = if (!readOnly || onOpenShare != null) { dismiss ->
+                    if (onOpenShare != null) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
+                            text = { Text("Mit Gruppe teilen / Freigaben…") },
+                            onClick = { dismiss(); onOpenShare(node) },
+                            modifier = Modifier.tag("menu:share"),
+                        )
+                    }
+                    if (!readOnly) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            text = { Text("Aufgabe löschen") },
+                            onClick = {
+                                dismiss()
+                                scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(node.nodeId) }; onClose() }
+                            },
+                            modifier = Modifier.tag("menu:delete-todo"),
+                        )
+                    }
                 } else null,
                 sourceMode = bodySource,
                 onEditToggle = if (!readOnly) {

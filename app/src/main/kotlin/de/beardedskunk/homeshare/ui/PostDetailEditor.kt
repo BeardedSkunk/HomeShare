@@ -32,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -123,6 +124,7 @@ fun PostDetailEditor(
      * Listeneinträge und dürfen hier nicht als Anhänge erscheinen.
      */
     showAttachments: Boolean = true,
+    onOpenShare: ((NodeState) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -246,7 +248,7 @@ fun PostDetailEditor(
     // ---- Anhang-Detailansicht (modal) ----
     attOpen?.let { a ->
         BackHandler { attOpen = null }
-        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onClose = { attOpen = null })
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onOpenShare = onOpenShare, onClose = { attOpen = null })
         return
     }
 
@@ -276,13 +278,29 @@ fun PostDetailEditor(
                 searchOpen = findOpen,
                 onToggleSearch = { onSearchQueryChange(if (findOpen) null else "") },
                 onShare = null,
-                menuContent = if (!readOnly && post != null) { dismiss ->
-                    DropdownMenuItem(
-                        text = { Text("Löschen") },
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                        onClick = { dismiss(); delete() },
-                        modifier = Modifier.tag("menu:delete-note"),
-                    )
+                menuContent = if (!readOnly && post != null || onOpenShare != null && currentNodeId != null) { dismiss ->
+                    if (onOpenShare != null && currentNodeId != null) {
+                        DropdownMenuItem(
+                            text = { Text("Mit Gruppe teilen / Freigaben…") },
+                            leadingIcon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
+                            onClick = {
+                                dismiss()
+                                scope.launch {
+                                    val n = withContext(Dispatchers.IO) { currentNodeId?.let { repo.getNode(it) } }
+                                    n?.let { onOpenShare(it) }
+                                }
+                            },
+                            modifier = Modifier.tag("menu:share"),
+                        )
+                    }
+                    if (!readOnly && post != null) {
+                        DropdownMenuItem(
+                            text = { Text("Löschen") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            onClick = { dismiss(); delete() },
+                            modifier = Modifier.tag("menu:delete-note"),
+                        )
+                    }
                 } else null,
                 sourceMode = sourceMode,
                 onEditToggle = if (!readOnly) {
