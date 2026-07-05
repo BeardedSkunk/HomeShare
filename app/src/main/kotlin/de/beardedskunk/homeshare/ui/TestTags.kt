@@ -12,11 +12,13 @@ import androidx.compose.ui.platform.testTag
 //   drag:<titel>           Drag-Handle einer Zeile
 //   fab:add                Haupt-FAB
 //   menu:create:<kind>     FAB-Typ-Menue (list|note|calendar|todo|image|file)
-//   topbar:<aktion>        back|search|share|settings|delete|edit|save|add|listinfo|overflow
-//   action:<aktion>        Eintraege des Langdruck-Aktionsdialogs
-//   menu:<aktion>          Ueberlaufmenue (share|delete-list|delete-note|delete-attachment|delete-todo|delete-entry|calendar-sync|calendar-entry-sync)
+//   topbar:<aktion>        back|search|share|settings|delete|edit|save|add|listinfo|overflow|tags|close
+//   action:<aktion>        Eintraege des Langdruck-Aktionsdialogs (tag-search|tag-remove|tag-create|…)
+//   menu:<aktion>          Ueberlaufmenue (share|delete-list|delete-note|delete-attachment|delete-todo|delete-entry|calendar-sync|calendar-entry-sync|add-tag)
 //   toolbar:<aktion>       Markdown-Toolbar
-//   field:<name>           Eingabefelder (body|listbody|calbody|caption:<i>|search|subitem-add|find)
+//   field:<name>           Eingabefelder (body|listbody|calbody|caption:<i>|search|subitem-add|find|tag)
+//   tags:add               Plus-Button der Tag-Zeile
+//   tagsel:<tag>           Gewaehltes Tag im Tag-Such-Screen (Chip mit X)
 //   todo:done, box:subitems, box:attachments, box:event
 
 fun Modifier.tag(name: String): Modifier = testTag(name)
