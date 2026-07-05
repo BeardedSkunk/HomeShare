@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.ui.ListScreen
+import de.beardedskunk.homeshare.ui.TagSearchScreen
 import de.beardedskunk.homeshare.ui.FeedShareScreen
 import de.beardedskunk.homeshare.ui.SettingsScreen
 import de.beardedskunk.homeshare.ui.SharePickerScreen
@@ -108,6 +109,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
     var pendingShare by remember { mutableStateOf(initialShare) }
     var showSettings by remember { mutableStateOf(false) }
     var sharingFeed by remember { mutableStateOf<NodeState?>(null) }
+    var tagSearchTags by remember { mutableStateOf<List<String>?>(null) }
     val status by graph.sync.status.collectAsState()
     val webUrl by graph.web.url.collectAsState()
 
@@ -159,6 +161,22 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
         return
     }
 
+    val tagTags = tagSearchTags
+    if (tagTags != null) {
+        BackHandler { tagSearchTags = null }
+        TagSearchScreen(
+            repo = graph.repo,
+            blobStore = graph.blobStore,
+            sync = graph.sync,
+            settings = graph.settings,
+            initialTags = tagTags,
+            onOpenShare = { sharingFeed = it },
+            onRequestCalendarSync = { graph.calendarSync.requestSync() },
+            onClose = { tagSearchTags = null },
+        )
+        return
+    }
+
     ListScreen(
         repo = graph.repo,
         blobStore = graph.blobStore,
@@ -171,6 +189,7 @@ fun AppRoot(graph: AppGraph, initialShare: SharedContent?) {
         onRequestCalendarSync = { graph.calendarSync.requestSync() },
         searchQuery = searchQuery,
         onSearchQueryChange = { searchQuery = it },
+        onSearchTag = { tagSearchTags = listOf(it) },
         onBack = { if (navIds.isNotEmpty()) navIds.removeAt(navIds.lastIndex) },
     )
 }
