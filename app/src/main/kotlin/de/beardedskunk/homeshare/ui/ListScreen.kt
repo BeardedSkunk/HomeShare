@@ -333,6 +333,19 @@ fun ListScreen(
         }
     }
 
+    // Tap auf ein Bild im Zeilen-Streifen -> Anhang-Detailansicht (Name + Markdown + Bild) statt
+    // reinem Vollbild-Betrachter. Bei eigenständigem IMAGE ist es der Knoten selbst, sonst das
+    // IMAGE-Kind mit passendem Blob-Hash.
+    fun openImageAttachment(rowNode: NodeState, sha: String) {
+        scope.launch {
+            val target = withContext(Dispatchers.IO) {
+                if (rowNode.type == NodeType.IMAGE) rowNode
+                else repo.children(rowNode.nodeId).firstOrNull { it.type == NodeType.IMAGE && it.blobHash == sha }
+            }
+            if (target != null) attOpen = target
+        }
+    }
+
     // Speichert den bearbeiteten Kopf-Text (Typ bleibt unangetastet) und kehrt in die Render-Ansicht zurück.
     fun saveHeader() {
         val t = headerText
@@ -546,7 +559,7 @@ fun ListScreen(
                                 when (node.kind) {
                                     NodeKind.NOTE -> PostRow(
                                         post = node, imageHashes = postImages[node.nodeId] ?: emptyList(), blobStore = blobStore,
-                                        onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { viewingImage = it },
+                                        onClick = { openChild(node) }, onLongClick = { actionNode = node }, onOpenImage = { sha -> openImageAttachment(node, sha) },
                                         trailing = handle,
                                     )
                                     NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
@@ -560,7 +573,7 @@ fun ListScreen(
                                         node = node, blobStore = blobStore, badge = taskBadges[node.nodeId],
                                         imageHashes = postImages[node.nodeId] ?: emptyList(),
                                         titleOverride = captionTitles[node.nodeId],
-                                        onOpenImage = { viewingImage = it },
+                                        onOpenImage = { sha -> openImageAttachment(node, sha) },
                                         onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle,
                                     )
                                 }
@@ -833,8 +846,9 @@ private fun RowImageStrip(
 ) {
     if (imageHashes.isEmpty()) return
     val config = LocalConfiguration.current
-    // Nie über die Bildschirmmitte hinaus (max. halbe Breite) und nochmal 10 % schlanker.
-    val maxStripWidth = (config.screenWidthDp * 0.45f).dp
+    // Nie über die Bildschirmmitte hinaus: harte Grenze = halbe Breite (0,5),
+    // davon nochmal 10 % der Bildschirmbreite abziehen -> max. 40 % der Bildschirmbreite.
+    val maxStripWidth = (config.screenWidthDp * 0.40f).dp
     val listState = rememberLazyListState()
     val fadeLeft by remember { derivedStateOf { listState.canScrollBackward } }
     val fadeRight by remember { derivedStateOf { listState.canScrollForward } }
