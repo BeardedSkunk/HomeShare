@@ -32,7 +32,7 @@ Dateien **nicht über Git** kommen und deshalb von Hand mitgebracht werden müss
 > 5. **Bauen**: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleDebug`
 > 6. **MCP-Tooling** (siehe „Von Hand mitbringen“ unten): `.mcp.json` für den mobile-MCP-Server
 >    anlegen und Serena als MCP-Server registrieren.
-> 7. **NICHT** `F101` (`F10123070010615`) flashen — behält absichtlich eine alte Referenzversion.
+> 7. `F101` (`F10123070010615`) darf geflasht werden (die frühere „nicht flashen"-Sperre wurde am 2026-07-05 aufgehoben).
 >
 > Toolchain-Eckdaten: AGP 9.0.1, Gradle 9.1, Kotlin 2.3.20, JDK 21, minSdk 29. Alle Tests sind
 > reine JVM-Unit-Tests: `JAVA_HOME=... ./gradlew :app:testDebugUnitTest`.

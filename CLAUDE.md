@@ -16,8 +16,8 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
 - Toolchain: AGP 9.0.1, Gradle 9.1, Kotlin 2.3.20, JDK 21. R8/minify auch im Debug aktiv.
 - Alle Tests sind **reine JVM-Unit-Tests** (`app/src/test/`, ~140). Kein Robolectric/androidTest —
   neue Logik deshalb nach `core/` legen oder als reine Funktion schreiben, damit sie testbar ist.
-- **Geräte**: Armor 8 (`3090RH2001013207`) = Haupttestgerät. **F101 (`F10123070010615`) NIE flashen** —
-  behält absichtlich die alte App-Version als Referenz. Cubot Max = Android 6, App läuft dort nicht.
+- **Geräte**: Armor 8 (`3090RH2001013207`) = Haupttestgerät. F101 (`F10123070010615`) darf geflasht
+  werden (frühere „nicht flashen"-Sperre am 2026-07-05 aufgehoben). Cubot Max = Android 6, App läuft dort nicht.
 - UI-Automatisierung: testTags erscheinen als resource-id im `uiautomator dump`
   (Konvention in `ui/TestTags.kt`: `row:<titel>`, `fab:add`, `topbar:*`, `menu:create:*`,
   `drag:*`, `trash:*`, `box:*`, `field:*`). In Dialog-Fenstern fehlen die IDs → per `text="…"` matchen.
