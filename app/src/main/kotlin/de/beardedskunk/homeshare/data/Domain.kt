@@ -83,3 +83,12 @@ data class ForeignFeedRef(
     val capSecret: String,
     val right: FeedRight,
 )
+
+/** Treffer der Tag-Suche mit aufgelöstem Elternpfad. */
+data class TagHit(
+    val node: NodeState,
+    /** Bis zu 3 nächste Elterntitel, wurzelnah zuerst (Opa / Papa / Kind-Reihenfolge). */
+    val parentTitles: List<String>,
+    /** true, wenn es weitere Vorfahren über den drei gibt. */
+    val more: Boolean,
+)

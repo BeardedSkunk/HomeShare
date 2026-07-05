@@ -187,6 +187,62 @@ class FeedRepository(
         )
     }
 
+    /**
+     * Alle existierenden Tags (lebende Knoten), case-insensitiv dedupliziert
+     * (erste Schreibweise gewinnt), alphabetisch sortiert.
+     */
+    fun allTags(): List<String> {
+        val seen = LinkedHashMap<String, String>() // lowercase → Anzeigeschreibweise
+        db.rawQuery("SELECT meta FROM node_current WHERE deleted = 0 AND meta != ''", null)
+            .use { c ->
+                while (c.moveToNext()) {
+                    val raw = c.getString(0)
+                    val tags = MetaCodec.decode(raw)[MetaKey.TAGS]
+                        ?.let { de.beardedskunk.homeshare.core.MetaListCodec.decode(it) }
+                        ?: continue
+                    for (t in tags) {
+                        val key = t.lowercase()
+                        if (!seen.containsKey(key)) seen[key] = t
+                    }
+                }
+            }
+        return seen.values.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+    }
+
+    /**
+     * Treffer + Breadcrumb in einem Rutsch: alle Knoten (alle Feeds, beliebige Tiefe),
+     * die ALLE [tags] tragen (case-insensitiv, UND-verknüpft), ohne solche in gelöschten
+     * Teilbäumen.
+     */
+    fun tagSearch(tags: List<String>): List<TagHit> {
+        if (tags.isEmpty()) return emptyList()
+        // Alle Knoten (inkl. gelöschter) für den Vorfahren-Check in O(1) pro Knoten.
+        val all: Map<String, NodeState> = buildMap {
+            db.rawQuery("$NODE_SELECT", emptyArray())
+                .use { c -> while (c.moveToNext()) { val n = readNodeState(c); put(n.nodeId, n) } }
+        }
+        val hits = ArrayList<TagHit>()
+        for (node in all.values) {
+            if (node.deleted) continue
+            if (!tags.all { t -> node.tags.any { it.equals(t, ignoreCase = true) } }) continue
+            // Vorfahren-Kette prüfen: liegt der Knoten unter einem gelöschten Elternteil?
+            val path = ArrayList<String>()
+            var cur = all[node.parentId]
+            var inDeletedSubtree = false
+            while (cur != null) {
+                if (cur.deleted) { inDeletedSubtree = true; break }
+                path.add(0, cur.title)
+                cur = all[cur.parentId]
+            }
+            if (inDeletedSubtree) continue
+            // Breadcrumb: bis zu 3 nächste Elterntitel, wurzelnah zuerst.
+            val more = path.size > 3
+            val parentTitles = if (more) path.takeLast(3) else path
+            hits += TagHit(node, parentTitles, more)
+        }
+        return hits
+    }
+
     fun feedsMatching(query: String): Set<String> {
         val q = query.trim()
         if (q.isBlank()) return emptySet()
