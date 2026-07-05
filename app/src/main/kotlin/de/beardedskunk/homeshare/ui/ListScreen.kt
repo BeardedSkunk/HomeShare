@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -470,13 +469,7 @@ fun ListScreen(
                             }
                             // ✓/✎ — Kopf-Edit-Toggle (nur mit Schreibrecht): grüner Haken = bearbeiten, Stift = speichern.
                             if (canWrite) {
-                                IconButton(
-                                    onClick = { if (headerSource) saveHeader() else headerSource = true },
-                                    modifier = Modifier.tag(if (headerSource) "topbar:save" else "topbar:edit"),
-                                ) {
-                                    if (headerSource) Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
-                                    else Icon(Icons.Filled.Check, contentDescription = "Bearbeiten", tint = Color(0xFF2E7D32), modifier = Modifier.size(30.dp))
-                                }
+                                EditToggleButton(sourceMode = headerSource, onToggle = { if (headerSource) saveHeader() else headerSource = true })
                             }
                         } else {
                             // Wurzel: allgemeine Einstellungen.

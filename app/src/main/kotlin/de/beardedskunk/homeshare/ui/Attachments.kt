@@ -9,11 +9,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Card
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -42,6 +49,19 @@ fun loadAttachmentRows(repo: FeedRepository, parentId: String): List<AttachmentR
             val cap = repo.children(a.nodeId).firstOrNull { it.type == NodeType.TEXT }
             AttachmentRow(a, cap?.text?.lineSequence()?.firstOrNull().orEmpty())
         }
+
+/** Gemeinsamer Anhänge-FAB (+) mit Bild/Datei-Menü — identisch in Notiz-, Aufgaben- und Termin-Ansicht. */
+@Composable
+fun AttachmentAddFab(onPickImages: () -> Unit, onPickFile: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        FloatingActionButton(onClick = { open = true }, modifier = Modifier.tag("fab:add")) {
+            Icon(Icons.Filled.Add, contentDescription = "Anhang hinzufügen")
+        }
+        AttachmentFabMenu(expanded = open, onDismiss = { open = false },
+            onPickImages = onPickImages, onPickFile = onPickFile)
+    }
+}
 
 /** Anzeigename einer Anhang-Zeile. */
 fun AttachmentRow.label(): String =

@@ -30,12 +30,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragIndicator
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
@@ -43,7 +40,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,7 +60,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -258,7 +253,6 @@ fun PostDetailEditor(
 
     if (helpOpen) MarkdownHelpDialog(onDismiss = { helpOpen = false })
 
-    var fabMenu by remember { mutableStateOf(false) }
     // Links-Swipe -> stehende Mülltonne; EIN Zustand für Anhänge und Markdown-Zeilen.
     var openTrash by remember { mutableStateOf<String?>(null) }
     val attachmentBox: @Composable () -> Unit = {
@@ -299,36 +293,19 @@ fun PostDetailEditor(
                             }
                         }
                         // Modus-Umschalter: gerendert zeigt ✓ (grün), Quelltext zeigt ✎.
-                        IconButton(onClick = {
+                        EditToggleButton(sourceMode = sourceMode, onToggle = {
                             if (sourceMode) { save(); sourceMode = false } else { sourceMode = true }
-                        }, modifier = Modifier.tag(if (sourceMode) "topbar:save" else "topbar:edit")) {
-                            if (sourceMode) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Speichern & anzeigen")
-                            } else {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = "Bearbeiten",
-                                    tint = Color(0xFF2E7D32),
-                                    modifier = Modifier.size(30.dp),
-                                )
-                            }
-                        }
+                        })
                     }
                 },
             )
         },
         floatingActionButton = {
             // Anhänge (nur Bild + Datei) über den FAB – wie in der Aufgaben-Ansicht.
-            if (!readOnly && showAttachments) Box {
-                FloatingActionButton(onClick = { fabMenu = true }, modifier = Modifier.tag("fab:add")) {
-                    Icon(Icons.Filled.Add, contentDescription = "Anhang hinzufügen")
-                }
-                AttachmentFabMenu(
-                    expanded = fabMenu, onDismiss = { fabMenu = false },
-                    onPickImages = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    onPickFile = { pickFile.launch(arrayOf("*/*")) },
-                )
-            }
+            if (!readOnly && showAttachments) AttachmentAddFab(
+                onPickImages = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onPickFile = { pickFile.launch(arrayOf("*/*")) },
+            )
         },
     ) { padding ->
         // Such-Leiste FIX oben (ausserhalb des scrollenden Inhalts) -> sie bleibt sichtbar,
@@ -420,7 +397,7 @@ fun AttachmentFabMenu(expanded: Boolean, onDismiss: () -> Unit, onPickImages: ()
 /** Fixe Such-Leiste (oben, ausserhalb des Scrolls) – Suchfeld + Treffer-Zähler + vor/zurück. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FindBar(
+internal fun FindBar(
     query: String,
     onQuery: (String) -> Unit,
     label: String,

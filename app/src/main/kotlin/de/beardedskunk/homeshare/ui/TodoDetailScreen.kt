@@ -27,7 +27,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -181,7 +180,6 @@ fun TodoDetailScreen(
         }
     }
 
-    var fabMenu by remember { mutableStateOf(false) }
     // Links-Swipe -> stehende Mülltonne; ein Zustand für Unterpunkte UND Anhänge (max. eine offen).
     var openTrash by remember { mutableStateOf<String?>(null) }
     val subDrag = rememberColumnDragState()
@@ -211,18 +209,12 @@ fun TodoDetailScreen(
             )
         },
         floatingActionButton = {
-            if (!readOnly) Box {
-                FloatingActionButton(onClick = { fabMenu = true }, modifier = Modifier.tag("fab:add")) {
-                    Icon(Icons.Filled.Add, contentDescription = "Hinzufügen")
-                }
-                // Über den FAB gibt es bewusst NUR Anhänge (Bild + Datei); Unterpunkte laufen
-                // über die Quick-Add-Zeile, Termine über die Liste selbst.
-                AttachmentFabMenu(
-                    expanded = fabMenu, onDismiss = { fabMenu = false },
-                    onPickImages = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    onPickFile = { pickFile.launch(arrayOf("*/*")) },
-                )
-            }
+            // Über den FAB gibt es bewusst NUR Anhänge (Bild + Datei); Unterpunkte laufen
+            // über die Quick-Add-Zeile, Termine über die Liste selbst.
+            if (!readOnly) AttachmentAddFab(
+                onPickImages = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onPickFile = { pickFile.launch(arrayOf("*/*")) },
+            )
         },
     ) { padding ->
         LazyColumn(
