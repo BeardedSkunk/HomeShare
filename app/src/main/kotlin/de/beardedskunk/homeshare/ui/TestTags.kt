@@ -17,7 +17,7 @@ import androidx.compose.ui.platform.testTag
 //   menu:<aktion>          Ueberlaufmenue (delete-list|calendar-sync|delete-entry|calendar-entry-sync)
 //   toolbar:<aktion>       Markdown-Toolbar
 //   field:<name>           Eingabefelder (body|listbody|calbody|caption:<i>|search|subitem-add|find)
-//   todo:done, box:subitems, box:attachments
+//   todo:done, box:subitems, box:attachments, box:event
 
 fun Modifier.tag(name: String): Modifier = testTag(name)
 

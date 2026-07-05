@@ -151,7 +151,6 @@ fun PostDetailEditor(
     val findOpen = searchQuery != null
     val findQuery = searchQuery ?: ""
     var matchIdx by remember { mutableStateOf(0) }
-    var helpOpen by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val matches: List<Int> = remember(tfv.text, findQuery) {
         if (findQuery.isBlank()) emptyList() else findAllMatches(tfv.text, findQuery)
@@ -251,8 +250,6 @@ fun PostDetailEditor(
         return
     }
 
-    if (helpOpen) MarkdownHelpDialog(onDismiss = { helpOpen = false })
-
     // Links-Swipe -> stehende Mülltonne; EIN Zustand für Anhänge und Markdown-Zeilen.
     var openTrash by remember { mutableStateOf<String?>(null) }
     val attachmentBox: @Composable () -> Unit = {
@@ -325,10 +322,8 @@ fun PostDetailEditor(
                 if (sourceMode) {
                     SourceEditor(
                         tfv = tfv,
-                        onTfvChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
+                        onTfvChange = { tfv = it },
                         focusRequester = focusRequester,
-                        onHelp = { helpOpen = true },
-                        applyToTfv = { transform -> tfv = transform(tfv); focusRequester.requestFocus() },
                         attachmentBox = attachmentBox,
                         bottomInset = imeBottom,
                     )
@@ -421,64 +416,28 @@ internal fun FindBar(
 }
 
 /** Quelltext-Editor: Haupttext-Feld + Toolbar; darunter der Anhänge-Kasten. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SourceEditor(
     tfv: TextFieldValue,
     onTfvChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester,
-    onHelp: () -> Unit,
-    applyToTfv: ((TextFieldValue) -> TextFieldValue) -> Unit,
     attachmentBox: @Composable () -> Unit,
     bottomInset: androidx.compose.ui.unit.Dp,
 ) {
-    // Editier-Flaeche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
+    // Editier-Fläche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        OutlinedTextField(
+        MarkdownEditField(
             value = tfv,
             onValueChange = onTfvChange,
-            placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).padding(8.dp).tag("field:body").focusRequester(focusRequester),
+            fieldModifier = Modifier.heightIn(min = 120.dp).padding(8.dp).tag("field:body"),
+            focusRequester = focusRequester,
         )
-        MarkdownToolbar(value = tfv, apply = applyToTfv, onHelp = onHelp)
         attachmentBox()
-        // Tastaturhoher Puffer: das letzte Feld kann so über die Tastatur gescrollt
-        // werden, damit der Cursor beim Tippen nie dahinter verschwindet.
-        Spacer(Modifier.height(bottomInset))
+        // Puffer = Tastatur ODER FAB, je nachdem was höher ist — letztes Feld bleibt scrollbar.
+        Spacer(Modifier.height(maxOf(bottomInset, ATTACHMENT_FAB_CLEARANCE)))
     }
 }
 
-/**
- * Markdown-Toolbar (Aufgabe/Fett/Kursiv/Durchgestrichen/Code/Hilfe). Auch von der
- * [AttachmentDetailScreen] genutzt – deshalb nicht private.
- * [value] dient der Aktiv/Inaktiv-Logik (Titelzeile), [apply] wendet eine
- * Transformation auf das zugehörige Feld an.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun MarkdownToolbar(
-    value: TextFieldValue,
-    apply: ((TextFieldValue) -> TextFieldValue) -> Unit,
-    onHelp: () -> Unit,
-) {
-    // Auf der Titelzeile (1. Zeile) sind die Format-Knöpfe inaktiv.
-    val firstNl = value.text.indexOf('\n').let { if (it < 0) value.text.length else it }
-    val onTitleLine = value.selection.start <= firstNl
-    // Rendert genau MARKDOWN_TOOLBAR (datengetrieben + exhaustives when => kein Knopf fällt unbemerkt weg).
-    FlowRow(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        for (item in MARKDOWN_TOOLBAR) when (item) {
-            MarkdownToolbarItem.TASK -> TbButton("☐ Aufgabe", enabled = !onTitleLine, tag = "toolbar:task") { apply(::insertTask) }
-            MarkdownToolbarItem.BOLD -> TbButton("B", enabled = !onTitleLine, bold = true, tag = "toolbar:bold") { apply { toggleWrap(it, "**") } }
-            MarkdownToolbarItem.ITALIC -> TbButton("I", enabled = !onTitleLine, italic = true, tag = "toolbar:italic") { apply { toggleWrap(it, "*") } }
-            MarkdownToolbarItem.STRIKE -> TbButton("S", enabled = !onTitleLine, strike = true, tag = "toolbar:strike") { apply { toggleWrap(it, "~~") } }
-            MarkdownToolbarItem.CODE -> TbButton("</>", enabled = !onTitleLine, tag = "toolbar:code") { apply { applyCode(it) } }
-            MarkdownToolbarItem.HELP -> TbButton("?", enabled = true, tag = "toolbar:help") { onHelp() }
-        }
-    }
-}
 
 /** Gerenderte Ansicht: Titel als Überschrift, Markdown-Körper mit antippbaren Haken und
  *  verschiebbaren Listen-Zeilen; darunter der Anhänge-Kasten. */
@@ -564,7 +523,7 @@ private fun RenderedView(
         mdDragOffset = 0f
     }
 
-    LazyColumn(Modifier.fillMaxSize().padding(12.dp), state = listState) {
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = ATTACHMENT_FAB_CLEARANCE)) {
         if (title.isNotBlank()) {
             item("title") {
                 Text(
@@ -617,64 +576,5 @@ private fun RenderedView(
         if (hasAttachments) {
             item("attachments") { attachmentBox() }
         }
-    }
-}
-
-/** Kleiner Toolbar-Knopf. defaultMinSize hebt den 58-dp-Mindestbreiten-Boden von TextButton auf,
- *  sonst passen die Knöpfe auf schmalen Geräten nicht nebeneinander. */
-@Composable
-private fun TbButton(label: String, enabled: Boolean, bold: Boolean = false, italic: Boolean = false, strike: Boolean = false, tag: String = "", onClick: () -> Unit) {
-    val color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-    TextButton(
-        onClick = onClick,
-        enabled = enabled,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-        modifier = Modifier.defaultMinSize(minWidth = 1.dp, minHeight = 36.dp).then(if (tag.isEmpty()) Modifier else Modifier.tag(tag)),
-    ) {
-        Text(
-            label,
-            color = color,
-            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-            fontStyle = if (italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
-            textDecoration = if (strike) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
-        )
-    }
-}
-
-/** Kurzhilfe zu Markdown – auch von der [AttachmentDetailScreen] genutzt. */
-@Composable
-fun MarkdownHelpDialog(onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } },
-        title = { Text("Markdown – Kurzhilfe") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                HelpRow("# Titel ist die 1. Zeile", "schmucklos, kein Markdown")
-                HelpRow("## Überschrift", "Abschnitts-Überschrift")
-                HelpRow("- Eintrag", "Aufzählung")
-                HelpRow("1. Eintrag", "nummerierte Liste")
-                HelpRow("- [ ] offen", "offene Aufgabe")
-                HelpRow("- [x] erledigt", "erledigte Aufgabe")
-                HelpRow("  - eingerückt", "Unterpunkt (2 Leerzeichen)")
-                HelpRow("> Zitat", "Zitat")
-                HelpRow("--- ", "Trennlinie")
-                HelpRow("[Text](https://…)", "Link")
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    "Enter setzt Listen automatisch fort; leerer Eintrag + Enter beendet die Liste. Fett, kursiv, durchgestrichen und Code haben eigene Knöpfe.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-    )
-}
-
-@Composable
-private fun HelpRow(syntax: String, meaning: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(syntax, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(170.dp))
-        Text(meaning, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

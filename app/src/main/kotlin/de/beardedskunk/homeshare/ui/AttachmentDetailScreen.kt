@@ -93,7 +93,6 @@ fun AttachmentDetailScreen(
     var tfv by remember { mutableStateOf(TextFieldValue("")) }
     var loaded by remember { mutableStateOf(false) }
     var sourceMode by remember { mutableStateOf(false) }
-    var helpOpen by remember { mutableStateOf(false) }
     var headerExpanded by remember { mutableStateOf(true) }   // beim Öffnen ausgeklappt; klappt beim Reinzoomen ein
 
     LaunchedEffect(revision) {
@@ -189,7 +188,6 @@ fun AttachmentDetailScreen(
         }
     }
 
-    if (helpOpen) MarkdownHelpDialog(onDismiss = { helpOpen = false })
     BackHandler { if (sourceMode) { save(); sourceMode = false } else onClose() }
 
     Scaffold(
@@ -229,39 +227,21 @@ fun AttachmentDetailScreen(
                     .verticalScroll(rememberScrollState()),
             ) {
                 if (sourceMode) {
-                    OutlinedTextField(
+                    MarkdownEditField(
                         value = tfv,
-                        onValueChange = { nv -> tfv = handleEnter(tfv, nv) ?: nv },
-                        placeholder = { Text("Titel (1. Zeile), dann Markdown…") },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp).padding(8.dp).tag("field:body"),
+                        onValueChange = { tfv = it },
+                        fieldModifier = Modifier.heightIn(min = 100.dp).padding(8.dp).tag("field:body"),
                     )
-                    MarkdownToolbar(value = tfv, apply = { transform -> tfv = transform(tfv) }, onHelp = { helpOpen = true })
                 } else {
-                    val title = postTitle(tfv.text)
-                    val hasBody = postBody(tfv.text).isNotBlank()
-                    // Titel + Chevron in EINER Zeile (Titel bleibt immer sichtbar):
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        if (title.isNotBlank()) {
-                            Text(
-                                title,
-                                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 6.dp).tag("header:title"),
-                            )
-                        } else {
-                            Spacer(Modifier.weight(1f))
-                        }
-                        if (hasBody) {
-                            ExpandChevron(expanded = headerExpanded, onToggle = { headerExpanded = !headerExpanded })
-                        }
-                    }
-                    if (headerExpanded && hasBody) {
-                        MarkdownBody(
-                            text = tfv.text,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                            onToggleTask = if (readOnly) null else ::toggleTask,
-                            onEditAt = if (readOnly) null else { _ -> sourceMode = true },
-                        )
-                    }
+                    MarkdownRenderHeader(
+                        text = tfv.text,
+                        expanded = headerExpanded,
+                        onExpandedChange = { headerExpanded = it },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        emptyTitle = null,
+                        onToggleTask = if (readOnly) null else ::toggleTask,
+                        onEditAt = if (readOnly) null else { _ -> sourceMode = true },
+                    )
                 }
             }
 

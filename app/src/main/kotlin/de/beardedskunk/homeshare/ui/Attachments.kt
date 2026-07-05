@@ -50,6 +50,10 @@ fun loadAttachmentRows(repo: FeedRepository, parentId: String): List<AttachmentR
             AttachmentRow(a, cap?.text?.lineSequence()?.firstOrNull().orEmpty())
         }
 
+/** Boden-Freiraum scrollender Inhalte, damit die letzte Zeile (samt Drag-Griff)
+ *  ÜBER den schwebenden Anhänge-FAB gescrollt werden kann. */
+val ATTACHMENT_FAB_CLEARANCE = 88.dp
+
 /** Gemeinsamer Anhänge-FAB (+) mit Bild/Datei-Menü — identisch in Notiz-, Aufgaben- und Termin-Ansicht. */
 @Composable
 fun AttachmentAddFab(onPickImages: () -> Unit, onPickFile: () -> Unit) {
