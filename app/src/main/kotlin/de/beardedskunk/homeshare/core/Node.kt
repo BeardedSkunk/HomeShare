@@ -106,12 +106,12 @@ class Node(val nodeId: String) {
             if (ok) {
                 if (v != null) merged[k] = v
             } else if (k == MetaKey.TAGS) {
-                // Tags sind eine Menge -> listenweise mergebar.
-                val t = ThreeWayMerge.list(
+                // Tags sind eine Menge → Vereinigung, parallel Hinzugefügtes bleibt beides erhalten.
+                val t = Tags.mergeSets(
                     bm[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
                     am[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
                     bbm[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
-                ) ?: return null
+                )
                 if (t.isNotEmpty()) merged[k] = MetaListCodec.encode(t)
             } else {
                 return null // unauflösbarer Meta-Konflikt -> Mensch entscheidet
