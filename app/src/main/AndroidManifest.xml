@@ -24,6 +24,7 @@
 		android:roundIcon="@mipmap/ic_launcher_round">
         <activity
             android:name=".MainActivity"
+			android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
