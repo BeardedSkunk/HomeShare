@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -51,6 +52,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import de.beardedskunk.homeshare.core.NodeContent
@@ -78,6 +81,7 @@ fun TodoDetailScreen(
     blobStore: BlobStore,
     todo: NodeState,
     settings: Settings,
+    onShare: (() -> Unit)? = null,
     onRequestCalendarSync: () -> Unit = {},
     readOnly: Boolean = false,
     onClose: () -> Unit,
@@ -108,8 +112,32 @@ fun TodoDetailScreen(
         }
     }
 
+    // ---- In-Place-Edit: Titel+Body in einem Quelltext-Feld ----
+    var bodySource by remember { mutableStateOf(false) }
+    var bodyExpanded by remember { mutableStateOf(true) }
+    var editTfv by remember { mutableStateOf(TextFieldValue("")) }
+
+    fun saveBody() {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(text = editTfv.text)) }
+            }
+            bodySource = false
+        }
+    }
+
+    // ---- Suche im Body ----
+    var findQuery by remember { mutableStateOf<String?>(null) }
+    var matchIdx by remember { mutableStateOf(0) }
+    val q = findQuery?.takeIf { it.isNotBlank() }
+    val matches = remember(node.text, q) { if (q == null) emptyList() else findAllMatches(node.text, q) }
+    LaunchedEffect(findQuery) { matchIdx = 0 }
+    fun stepMatch(delta: Int) {
+        if (matches.isEmpty()) return
+        matchIdx = ((matchIdx + delta) % matches.size + matches.size) % matches.size
+    }
+
     // ---- Modale Unteransichten ----
-    var bodyEdit by remember { mutableStateOf(false) }
     var subTodo by remember { mutableStateOf<NodeState?>(null) }
     var subNote by remember { mutableStateOf<NodeState?>(null) }
     var calEdit by remember { mutableStateOf<NodeState?>(null) }
@@ -120,17 +148,9 @@ fun TodoDetailScreen(
         AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onClose = { attOpen = null })
         return
     }
-    if (bodyEdit) {
-        BackHandler { bodyEdit = false }
-        PostDetailEditor(
-            repo = repo, blobStore = blobStore, parentId = node.parentId, post = node,
-            readOnly = readOnly, showAttachments = false, onClose = { bodyEdit = false },
-        )
-        return
-    }
     subTodo?.let { t ->
         BackHandler { subTodo = null }
-        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onRequestCalendarSync = onRequestCalendarSync, readOnly = readOnly, onClose = { subTodo = null })
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onShare = onShare, onRequestCalendarSync = onRequestCalendarSync, readOnly = readOnly, onClose = { subTodo = null })
         return
     }
     subNote?.let { n ->
@@ -183,7 +203,7 @@ fun TodoDetailScreen(
         }
     }
 
-    // Links-Swipe -> stehende Mülltonne; ein Zustand für Unterpunkte UND Anhänge (max. eine offen).
+    // Links-Swipe -> stehende Mülltonne; ein Zustand für Markdown-Zeilen, Unterpunkte und Anhänge.
     var openTrash by remember { mutableStateOf<String?>(null) }
     val subDrag = rememberColumnDragState()
 
@@ -193,22 +213,33 @@ fun TodoDetailScreen(
         scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(id) } }
     }
 
+    val listState = rememberLazyListState()
+    val mdDrag = rememberMdLineDragState()
+    val hasBody = postBody(node.text).isNotBlank()
+    val bodyStyle = MaterialTheme.typography.bodyLarge
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = { BackIconButton(onClick = onClose) },
-                actions = {
-                    if (!readOnly) {
-                        IconButton(
-                            onClick = { scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(node.nodeId) }; onClose() } },
-                            modifier = Modifier.tag("topbar:delete"),
-                        ) { Icon(Icons.Filled.Delete, contentDescription = "Löschen") }
-                        IconButton(onClick = { bodyEdit = true }, modifier = Modifier.tag("topbar:edit")) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Titel & Beschreibung bearbeiten")
-                        }
-                    }
-                },
+            DetailTopBar(
+                onBack = onClose,
+                searchOpen = findQuery != null,
+                onToggleSearch = { findQuery = if (findQuery == null) "" else null },
+                onShare = onShare,
+                menuContent = if (!readOnly) { dismiss ->
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                        text = { Text("Aufgabe löschen") },
+                        onClick = {
+                            dismiss()
+                            scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(node.nodeId) }; onClose() }
+                        },
+                        modifier = Modifier.tag("menu:delete-todo"),
+                    )
+                } else null,
+                sourceMode = bodySource,
+                onEditToggle = if (!readOnly) {
+                    { if (bodySource) saveBody() else { editTfv = TextFieldValue(node.text); bodySource = true } }
+                } else null,
             )
         },
         floatingActionButton = {
@@ -220,127 +251,186 @@ fun TodoDetailScreen(
             )
         },
     ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding).imePadding(),
-            contentPadding = PaddingValues(bottom = ATTACHMENT_FAB_CLEARANCE),
-        ) {
-            item(key = "head") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = node.done,
-                        onCheckedChange = { setDone(node.nodeId, it) },
-                        enabled = !readOnly,
-                        modifier = Modifier.tag("todo:done"),
-                    )
-                    Text(
-                        node.title.ifBlank { "(ohne Titel)" },
-                        style = MaterialTheme.typography.headlineSmall,
-                        textDecoration = if (node.done) TextDecoration.LineThrough else null,
-                    )
-                }
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            // Suchleiste fix oben (ausserhalb des Scrolls).
+            if (findQuery != null) {
+                FindBar(
+                    query = findQuery ?: "",
+                    onQuery = { findQuery = it; matchIdx = 0 },
+                    label = if (matches.isEmpty()) "0/0" else "${matchIdx + 1}/${matches.size}",
+                    hasMatches = matches.isNotEmpty(),
+                    onPrev = { stepMatch(-1) },
+                    onNext = { stepMatch(1) },
+                )
             }
-            if (postBody(node.text).isNotBlank()) {
-                item(key = "body") {
-                    // Gerenderter Markdown-Body; Haken antippbar, Tipp auf Text öffnet den Editor.
-                    MarkdownBody(
-                        text = node.text,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        onToggleTask = if (readOnly) null else ::toggleBodyTask,
-                        onEditAt = if (readOnly) null else { _ -> bodyEdit = true },
-                    )
-                }
-            }
-            item(key = "subitems") {
-                // Unterpunkte: visuell separiert vom Rest (eigener Kasten).
-                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).tag("box:subitems")) {
-                    Column(Modifier.padding(vertical = 6.dp)) {
-                        Text(
-                            "Unterpunkte",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 12.dp).imePadding(),
+                state = listState,
+                contentPadding = PaddingValues(bottom = ATTACHMENT_FAB_CLEARANCE),
+            ) {
+                if (bodySource) {
+                    // Quelltext-Modus: Titel+Body in einem gemeinsamen Editierfeld.
+                    // Unterpunkte/Anhänge/Termine darunter weiter sichtbar – das ist der Fix.
+                    item(key = "edit") {
+                        MarkdownEditField(
+                            value = editTfv,
+                            onValueChange = { editTfv = it },
+                            fieldModifier = Modifier.tag("field:todobody"),
+                            minLines = 3,
                         )
-                        for ((i, s) in subItems.withIndex()) {
-                            val row: @Composable () -> Unit = {
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .tag(rowTag(s.title))
-                                        .columnDragItem(subDrag, i)
-                                        .padding(start = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    // Auch Text-/Notiz-Unterpunkte tragen einen Haken (done gibt es auf jedem Knoten).
-                                    Checkbox(checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly)
-                                    // clickable nur auf dem Text -> Tap/Long-Press auf dem Ziehgriff navigiert nicht.
-                                    Text(
-                                        s.title.ifBlank { "(ohne Titel)" },
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        textDecoration = if (s.done) TextDecoration.LineThrough else null,
-                                        modifier = Modifier.weight(1f).clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s },
-                                    )
-                                    if (!readOnly) {
-                                        ColumnDragHandle(
-                                            subDrag, i, s.title, subItems.size,
-                                            onDragStart = { openTrash = null },
-                                            onDrop = { from, to ->
-                                                val cur = subItems.toMutableList()
-                                                val moved = cur.removeAt(from)
-                                                cur.add(to, moved)
-                                                scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, cur.getOrNull(to - 1), cur.getOrNull(to + 1)) } }
-                                            },
-                                        )
+                    }
+                } else {
+                    // Render-Modus Kopf: Checkbox + Titel + optionaler Chevron
+                    item(key = "head") {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = node.done,
+                                onCheckedChange = { setDone(node.nodeId, it) },
+                                enabled = !readOnly,
+                                modifier = Modifier.tag("todo:done"),
+                            )
+                            Text(
+                                highlightedText(node.title.ifBlank { "(ohne Titel)" }, q, null),
+                                style = MaterialTheme.typography.headlineSmall,
+                                textDecoration = if (node.done) TextDecoration.LineThrough else null,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (hasBody) {
+                                ExpandChevron(expanded = bodyExpanded, onToggle = { bodyExpanded = !bodyExpanded })
+                            }
+                        }
+                    }
+                    // Render-Modus Body: Blöcke mit Drag/Swipe (falls ausgeklappt)
+                    if (bodyExpanded && hasBody) {
+                        markdownBlockItems(
+                            blocks = parseMarkdownBody(node.text),
+                            listState = listState,
+                            drag = mdDrag,
+                            bodyStyle = bodyStyle,
+                            firstItemIndex = 1,
+                            onToggleTask = ::toggleBodyTask,
+                            onEditAt = if (!readOnly) { _ ->
+                                editTfv = TextFieldValue(node.text); bodySource = true
+                            } else { _ -> },
+                            onMoveLine = if (!readOnly) { from, to ->
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        repo.headContent(node.nodeId)?.let { hc ->
+                                            repo.editNode(node.nodeId, hc.copy(text = moveLineTo(hc.text, from, to)))
+                                        }
                                     }
+                                }
+                            } else null,
+                            onDeleteLine = if (!readOnly) { line ->
+                                openTrash = null
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        repo.headContent(node.nodeId)?.let { hc ->
+                                            repo.editNode(node.nodeId, hc.copy(text = deleteLineWithChildren(hc.text, line)))
+                                        }
+                                    }
+                                }
+                            } else null,
+                            openTrashKey = openTrash,
+                            onOpenTrash = if (!readOnly) ({ openTrash = it }) else null,
+                            highlight = q,
+                            currentRangeFor = { null },
+                        )
+                    }
+                }
+                item(key = "subitems") {
+                    // Unterpunkte: visuell separiert vom Rest (eigener Kasten).
+                    Card(Modifier.fillMaxWidth().padding(vertical = 8.dp).tag("box:subitems")) {
+                        Column(Modifier.padding(vertical = 6.dp)) {
+                            Text(
+                                "Unterpunkte",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                            for ((i, s) in subItems.withIndex()) {
+                                val row: @Composable () -> Unit = {
+                                    Row(
+                                        Modifier.fillMaxWidth()
+                                            .tag(rowTag(s.title))
+                                            .columnDragItem(subDrag, i)
+                                            .padding(start = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        // Auch Text-/Notiz-Unterpunkte tragen einen Haken (done gibt es auf jedem Knoten).
+                                        Checkbox(checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly)
+                                        // clickable nur auf dem Text -> Tap/Long-Press auf dem Ziehgriff navigiert nicht.
+                                        Text(
+                                            s.title.ifBlank { "(ohne Titel)" },
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            textDecoration = if (s.done) TextDecoration.LineThrough else null,
+                                            modifier = Modifier.weight(1f).clickable { if (s.kind == NodeKind.TODO) subTodo = s else subNote = s },
+                                        )
+                                        if (!readOnly) {
+                                            ColumnDragHandle(
+                                                subDrag, i, s.title, subItems.size,
+                                                onDragStart = { openTrash = null },
+                                                onDrop = { from, to ->
+                                                    val cur = subItems.toMutableList()
+                                                    val moved = cur.removeAt(from)
+                                                    cur.add(to, moved)
+                                                    scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, cur.getOrNull(to - 1), cur.getOrNull(to + 1)) } }
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                                if (!readOnly) {
+                                    SwipeRevealRow(
+                                        key = s.nodeId, openKey = openTrash, onOpenChange = { openTrash = it },
+                                        onDelete = { deleteChild(s.nodeId) },
+                                    ) { row() }
+                                } else {
+                                    row()
                                 }
                             }
                             if (!readOnly) {
-                                SwipeRevealRow(
-                                    key = s.nodeId, openKey = openTrash, onOpenChange = { openTrash = it },
-                                    onDelete = { deleteChild(s.nodeId) },
-                                ) { row() }
-                            } else {
-                                row()
-                            }
-                        }
-                        if (!readOnly) {
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedTextField(
-                                    value = quickAdd, onValueChange = { quickAdd = it },
-                                    placeholder = { Text("Neuer Unterpunkt…") }, singleLine = true,
-                                    modifier = Modifier.weight(1f).tag("field:subitem-add"),
-                                )
-                                IconButton(onClick = ::addSubTask, modifier = Modifier.tag("subitem:add")) {
-                                    Icon(Icons.Filled.Add, contentDescription = "Unterpunkt hinzufügen")
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        value = quickAdd, onValueChange = { quickAdd = it },
+                                        placeholder = { Text("Neuer Unterpunkt…") }, singleLine = true,
+                                        modifier = Modifier.weight(1f).tag("field:subitem-add"),
+                                    )
+                                    IconButton(onClick = ::addSubTask, modifier = Modifier.tag("subitem:add")) {
+                                        Icon(Icons.Filled.Add, contentDescription = "Unterpunkt hinzufügen")
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            if (attachments.isNotEmpty()) {
-                item(key = "attachments") {
-                    AttachmentBox(
-                        attachments, blobStore,
-                        openTrashKey = openTrash,
-                        onOpenTrash = if (readOnly) null else ({ openTrash = it }),
-                        onDelete = if (readOnly) null else ({ a -> deleteChild(a.node.nodeId) }),
-                        onReorder = if (readOnly) null else ({ moved, prev, next ->
-                            scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
-                        }),
-                        onOpen = { attOpen = it.node },
-                    )
+                if (attachments.isNotEmpty()) {
+                    item(key = "attachments") {
+                        AttachmentBox(
+                            attachments, blobStore,
+                            horizontalPadding = 0.dp,
+                            openTrashKey = openTrash,
+                            onOpenTrash = if (readOnly) null else ({ openTrash = it }),
+                            onDelete = if (readOnly) null else ({ a -> deleteChild(a.node.nodeId) }),
+                            onReorder = if (readOnly) null else ({ moved, prev, next ->
+                                scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+                            }),
+                            onOpen = { attOpen = it.node },
+                        )
+                    }
                 }
-            }
-            if (events.isNotEmpty()) {
-                item(key = "events-head") {
-                    Text(
-                        "Termine",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
-                }
-                for (e in events) {
-                    item(key = e.nodeId) { CalendarRow(post = e, onClick = { calEdit = e }) }
+                if (events.isNotEmpty()) {
+                    item(key = "events-head") {
+                        Text(
+                            "Termine",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                    for (e in events) {
+                        item(key = e.nodeId) { CalendarRow(post = e, onClick = { calEdit = e }) }
+                    }
                 }
             }
         }

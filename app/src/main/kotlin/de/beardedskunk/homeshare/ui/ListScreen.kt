@@ -379,7 +379,7 @@ fun ListScreen(
     }
     todoOpen?.let { t ->
         BackHandler { todoOpen = null; reload() }
-        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onRequestCalendarSync = onRequestCalendarSync, readOnly = !canWrite, onClose = { todoOpen = null; reload() })
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onShare = container?.let { c -> { onOpenShare(c) } }, onRequestCalendarSync = onRequestCalendarSync, readOnly = !canWrite, onClose = { todoOpen = null; reload() })
         return
     }
     descEdit?.let { d ->
