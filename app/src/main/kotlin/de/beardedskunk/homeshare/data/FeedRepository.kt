@@ -18,6 +18,7 @@ import de.beardedskunk.homeshare.sync.FeedScopedSource
 import de.beardedskunk.homeshare.sync.OpDto
 import de.beardedskunk.homeshare.sync.OpSource
 import de.beardedskunk.homeshare.sync.PeerState
+import de.beardedskunk.homeshare.sync.subtreeOpAllowed
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -117,15 +118,21 @@ class FeedRepository(
      * Setzt den orderKey von [nodeId] zwischen die Geschwister [prev] und [next]
      * (null = Anfang/Ende). Genau EIN Op pro Umsortierung; unbeteiligte Geschwister
      * behalten ihre (ggf. virtuellen) Schlüssel – siehe [OrderKeys].
+     * Fremdwurzeln werden nur lokal gepinnt (kein Op, Sortierung bleibt beim Owner unberührt).
      */
     fun reorderNode(nodeId: String, prev: NodeState?, next: NodeState?) {
-        val hc = headContent(nodeId) ?: return
         val lo = prev?.let { OrderKeys.effective(it.orderKey, it.created) }
         var hi = next?.let { OrderKeys.effective(it.orderKey, it.created) }
-        // Defensive: identische/vertauschte Nachbar-Keys (z. B. identischer Midpoint von zwei
-        // Geräten) -> nur an der unteren Grenze einsortieren statt zu crashen.
         if (lo != null && hi != null && lo >= hi) hi = null
-        editNode(nodeId, hc.copy(orderKey = OrderKeys.between(lo, hi)))
+        val newKey = OrderKeys.between(lo, hi)
+        if (isForeignRoot(nodeId)) {
+            db.execSQL("UPDATE foreign_refs SET local_order_key = ? WHERE node_id = ?", arrayOf(newKey, nodeId))
+            db.execSQL("UPDATE node_current SET order_key = ? WHERE node_id = ?", arrayOf(newKey, nodeId))
+            bumpRevision(); onAnyChange?.invoke()
+            return
+        }
+        val hc = headContent(nodeId) ?: return
+        editNode(nodeId, hc.copy(orderKey = newKey))
     }
 
     fun resolveConflict(nodeId: String, chosen: NodeContent): NodeVersion =
@@ -286,10 +293,38 @@ class FeedRepository(
 
     // ------------------------------ Cross-Group-Sync (#10) ------------------------------
 
+    /** Alle Knoten-Ids im Teilbaum unter [nodeId] (inkl. nodeId, inkl. gelöschter). */
+    private fun subtreeIds(nodeId: String): Set<String> {
+        val out = HashSet<String>()
+        db.rawQuery(
+            """WITH RECURSIVE sub(id) AS (
+               SELECT ? UNION ALL
+               SELECT n.node_id FROM node_current n JOIN sub ON n.parent_id = sub.id)
+               SELECT id FROM sub""",
+            arrayOf(nodeId),
+        ).use { c -> while (c.moveToNext()) out += c.getString(0) }
+        return out
+    }
+
+    private fun rootIdOf(nodeId: String): String =
+        db.rawQuery("SELECT root_id FROM node_current WHERE node_id = ?", arrayOf(nodeId))
+            .use { if (it.moveToFirst()) it.getString(0) else nodeId }
+
+    private fun isSharedSubtreeFeed(feedId: String): Boolean = rootIdOf(feedId) != feedId
+
+
     override fun feedVersionVector(rootId: String): Map<String, PeerState> {
         val seqs = HashMap<String, MutableList<Long>>()
-        db.rawQuery("SELECT device_id, seq FROM ops WHERE root_id = ?", arrayOf(rootId)).use { c ->
-            while (c.moveToNext()) seqs.getOrPut(c.getString(0)) { ArrayList() }.add(c.getLong(1))
+        if (!isSharedSubtreeFeed(rootId)) {
+            db.rawQuery("SELECT device_id, seq FROM ops WHERE root_id = ?", arrayOf(rootId)).use { c ->
+                while (c.moveToNext()) seqs.getOrPut(c.getString(0)) { ArrayList() }.add(c.getLong(1))
+            }
+        } else {
+            val ids = subtreeIds(rootId)
+            val placeholders = ids.joinToString(",") { "?" }
+            db.rawQuery("SELECT device_id, seq FROM ops WHERE node_id IN ($placeholders)", ids.toTypedArray()).use { c ->
+                while (c.moveToNext()) seqs.getOrPut(c.getString(0)) { ArrayList() }.add(c.getLong(1))
+            }
         }
         return seqStates(seqs)
     }
@@ -297,13 +332,28 @@ class FeedRepository(
     override fun feedMissingFor(rootId: String, remote: Map<String, PeerState>): List<OpDto> {
         val remoteGaps = remote.mapValues { it.value.gaps.toHashSet() }
         val out = ArrayList<OpDto>()
-        db.rawQuery("$OP_SELECT WHERE root_id = ? ORDER BY device_id, seq", arrayOf(rootId)).use { c ->
-            while (c.moveToNext()) {
-                val device = c.getString(IDX_DEVICE)
-                val seq = c.getLong(IDX_SEQ)
-                val st = remote[device]
-                if (st != null && seq <= st.maxSeq && seq !in (remoteGaps[device] ?: emptySet())) continue
-                out += readOpDto(c)
+        if (!isSharedSubtreeFeed(rootId)) {
+            db.rawQuery("$OP_SELECT WHERE root_id = ? ORDER BY device_id, seq", arrayOf(rootId)).use { c ->
+                while (c.moveToNext()) {
+                    val device = c.getString(IDX_DEVICE)
+                    val seq = c.getLong(IDX_SEQ)
+                    val st = remote[device]
+                    if (st != null && seq <= st.maxSeq && seq !in (remoteGaps[device] ?: emptySet())) continue
+                    out += readOpDto(c)
+                }
+            }
+        } else {
+            val ids = subtreeIds(rootId)
+            val placeholders = ids.joinToString(",") { "?" }
+            db.rawQuery("$OP_SELECT WHERE node_id IN ($placeholders) ORDER BY device_id, seq", ids.toTypedArray()).use { c ->
+                while (c.moveToNext()) {
+                    val device = c.getString(IDX_DEVICE)
+                    val seq = c.getLong(IDX_SEQ)
+                    val st = remote[device]
+                    if (st != null && seq <= st.maxSeq && seq !in (remoteGaps[device] ?: emptySet())) continue
+                    // rootId auf dem Draht auf feedId umlabeln (rootId steckt nicht im Hash → kein Integritätsproblem).
+                    out += readOpDto(c).copy(rootId = rootId)
+                }
             }
         }
         return out
@@ -316,9 +366,9 @@ class FeedRepository(
 
     override fun acceptForeignOp(op: OpDto, rootId: String, right: FeedRight): Boolean {
         if (op.rootId != rootId || !op.isConsistent()) return false
-        if (!right.canWrite()) return false
-        if (op.parents.size > 1 && !right.canMerge()) return false
-        return ingest(op.toVersion(), op.rootId, op.seq, op.deviceName)
+        val subtree = subtreeIds(rootId)
+        if (!subtreeOpAllowed(op, rootId, subtree, right)) return false
+        return ingest(op.toVersion(), rootIdOf(rootId), op.seq, op.deviceName)
     }
 
     // ------------------------------ Freigaben (Original-Gruppe) ------------------------------
@@ -351,7 +401,12 @@ class FeedRepository(
     private fun isForeignRoot(rootId: String): Boolean =
         db.rawQuery("SELECT 1 FROM foreign_refs WHERE node_id = ? LIMIT 1", arrayOf(rootId)).use { it.moveToFirst() }
 
-    fun registerForeignFeed(ref: ForeignFeedRef, name: String, calendar: Boolean) {
+    fun registerForeignFeed(ref: ForeignFeedRef, name: String, calendar: Boolean, parentId: String = ROOT) {
+        // Einfüge-Schlüssel ans Ende von parentId berechnen (analog zu createNode).
+        val last = children(parentId).lastOrNull()
+        val loKey = last?.let { OrderKeys.effective(it.orderKey, it.created) }
+        val endKey = OrderKeys.between(loKey, null)
+
         db.insertWithOnConflict(
             "foreign_refs", null,
             ContentValues().apply {
@@ -360,6 +415,8 @@ class FeedRepository(
                 put("cap_id", ref.capId)
                 put("cap_secret", ref.capSecret)
                 put("foreign_right", ref.right.name)
+                put("local_parent_id", parentId)
+                put("local_order_key", endKey)
             },
             SQLiteDatabase.CONFLICT_REPLACE,
         )
@@ -369,8 +426,8 @@ class FeedRepository(
             db.insertWithOnConflict(
                 "node_current", null,
                 ContentValues().apply {
-                    put("node_id", ref.nodeId); put("parent_id", ROOT); put("root_id", ref.nodeId)
-                    put("type", NodeType.TEXT.name); put("head_version_id", ""); put("order_key", "")
+                    put("node_id", ref.nodeId); put("parent_id", parentId); put("root_id", ref.nodeId)
+                    put("type", NodeType.TEXT.name); put("head_version_id", ""); put("order_key", endKey)
                     put("text", name); put("meta", meta); put("fmt", FORMAT_VERSION)
                     put("deleted", 0); put("conflicted", 0)
                     put("created_wall", h.wallMillis); put("created_counter", h.counter)
@@ -484,13 +541,20 @@ class FeedRepository(
             if (it.moveToFirst()) it.getString(0) else if (shown.content.parentId == ROOT) nodeId else rootOfParent(shown.content.parentId)
         }
         val c = shown.content
+        // Für abonnierte Fremdwurzeln: parent_id und order_key aus dem lokalen Pin übernehmen.
+        val pin = db.rawQuery(
+            "SELECT local_parent_id, local_order_key FROM foreign_refs WHERE node_id = ?", arrayOf(nodeId),
+        ).use { if (it.moveToFirst()) (it.getString(0) to it.getString(1)) else null }
+        val effectiveParent = pin?.first?.ifEmpty { ROOT } ?: c.parentId
+        val effectiveOrderKey = pin?.second?.ifEmpty { c.orderKey } ?: c.orderKey
+        val effectiveRootId = if (pin != null) nodeId else rootId
         val cv = ContentValues().apply {
             put("node_id", nodeId)
-            put("parent_id", c.parentId)
-            put("root_id", rootId)
+            put("parent_id", effectiveParent)
+            put("root_id", effectiveRootId)
             put("type", c.type.name)
             put("head_version_id", shown.versionId)
-            put("order_key", c.orderKey)
+            put("order_key", effectiveOrderKey)
             put("text", c.text)
             put("meta", MetaCodec.encode(c.metaMap()))
             put("fmt", shown.formatVersion)

@@ -366,8 +366,9 @@ class SyncManager(
     /**
      * Fremdgeraet: nach Scan/Code-Eingabe beim Eigentuemer melden (Gruppenname uebertragen) und
      * den Fremdfeed lokal abonnieren. Blockierend -> auf IO-Thread aufrufen. @return true bei Erfolg.
+     * [parentId] = lokaler Elternknoten, in den der abonnierte Knoten eingehaengt wird (Default: ROOT).
      */
-    fun pairAndSubscribe(payload: PairingPayload, calendar: Boolean = false): Boolean {
+    fun pairAndSubscribe(payload: PairingPayload, calendar: Boolean = false, parentId: String = de.beardedskunk.homeshare.core.ROOT): Boolean {
         val addr = InetSocketAddress(payload.host, payload.port)
         val ok = runCatching {
             connect(addr)?.use {
@@ -381,7 +382,7 @@ class SyncManager(
         if (ok) {
             repo.registerForeignFeed(
                 ForeignFeedRef(payload.feedId, payload.originGroup, payload.capId, payload.capSecret, FeedRight.READ),
-                payload.feedName, calendar,
+                payload.feedName, calendar, parentId,
             )
             connectFeed(addr, repo.foreignFeedRef(payload.feedId) ?: return true) // sofort einmal ziehen
         }

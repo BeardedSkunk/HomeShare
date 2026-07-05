@@ -252,3 +252,22 @@ object SyncReconciler {
         return SyncResult(pulled = pulled, pushed = pushed)
     }
 }
+
+/**
+ * Reine Guard-Funktion für den Subtree-Sync: prüft, ob [op] für den geteilten Teilbaum
+ * [feedId] zulässig ist, ohne in die Datenbank zu greifen (testbar). Prüfreihenfolge:
+ * 1. rootId + Konsistenz (muss beim Aufrufer bereits geprüft sein, Guard setzt das voraus).
+ * 2. Schreibrecht + Merge-Recht.
+ * 3. Subtree-Guard: Op darf nur Knoten im [subtree] (inkl. [feedId]) betreffen.
+ *
+ * Gibt `false` zurück (nie werfen/puffern), damit die Fremdseite in der nächsten Sync-Runde
+ * erneut sendet (Eltern-Op muss vor Kind-Op ankommen, selbstheilend).
+ */
+fun subtreeOpAllowed(op: OpDto, feedId: String, subtree: Set<String>, right: de.beardedskunk.homeshare.data.FeedRight): Boolean {
+    if (!right.canWrite()) return false
+    if (op.parents.size > 1 && !right.canMerge()) return false
+    // Op betrifft entweder den Feed-Wurzelknoten selbst oder einen Knoten dessen parentId im Subtree liegt.
+    val parentId = op.toVersion().content.parentId
+    if (op.nodeId != feedId && parentId !in subtree) return false
+    return true
+}

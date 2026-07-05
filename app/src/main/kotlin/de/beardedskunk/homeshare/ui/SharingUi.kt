@@ -144,9 +144,9 @@ fun PairingQrDialog(sync: SyncManager, payload: PairingPayload, onClose: () -> U
     )
 }
 
-/** „Geteilten Feed hinzufügen" auf dem Fremdgerät: QR scannen ODER Code einfügen -> abonnieren. */
+/** „Geteilten Eintrag hinzufügen" auf dem Fremdgerät: QR scannen ODER Code einfügen -> abonnieren. */
 @Composable
-fun AddSharedFeedDialog(sync: SyncManager, onDone: () -> Unit, onDismiss: () -> Unit) {
+fun AddSharedFeedDialog(sync: SyncManager, parentId: String, onDone: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var code by remember { mutableStateOf("") }
@@ -159,9 +159,9 @@ fun AddSharedFeedDialog(sync: SyncManager, onDone: () -> Unit, onDismiss: () -> 
         if (payload == null) { toast(context, "Ungültiger Code"); return }
         busy = true
         scope.launch {
-            val ok = withContext(Dispatchers.IO) { sync.pairAndSubscribe(payload) }
+            val ok = withContext(Dispatchers.IO) { sync.pairAndSubscribe(payload, parentId = parentId) }
             busy = false
-            toast(context, if (ok) "Feed „${payload.feedName}“ abonniert" else "Kopplung fehlgeschlagen", long = true)
+            toast(context, if (ok) "\"${payload.feedName}\" abonniert" else "Kopplung fehlgeschlagen", long = true)
             if (ok) onDone()
         }
     }
@@ -169,7 +169,7 @@ fun AddSharedFeedDialog(sync: SyncManager, onDone: () -> Unit, onDismiss: () -> 
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(enabled = !busy, onClick = { subscribe() }) { Text("Abonnieren") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
-        title = { Text("Geteilten Feed hinzufügen") },
+        title = { Text("Geteilten Eintrag hinzufügen") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = {

@@ -98,4 +98,48 @@ class CrossGroupProtocolTest {
         val origM = MemFeedSource(listOf(base)); run(MemFeedSource(listOf(base, mergeOp)), origM, "feedA", FeedRight.MERGE)
         assertTrue("merge darf Konflikt loesen", origM.ops.containsKey(mergeOp.versionId))
     }
+
+    // ---- subtreeOpAllowed (reine Guard-Funktion) ----
+
+    private fun guardOp(nodeId: String, parentId: String, feedId: String): OpDto {
+        val v = NodeVersion(nodeId, emptySet(), "dev", Hlc(1, 0), NodeContent(parentId = parentId, text = "x"))
+        return OpDto.from(v, feedId, 1)
+    }
+
+    @Test fun subtreeGuard_opAtFeedRoot_alwaysAllowed() {
+        val feedId = "feed"
+        val subtree = setOf(feedId, "child1")
+        val op = guardOp(feedId, "any-parent", feedId)
+        assertTrue(subtreeOpAllowed(op, feedId, subtree, FeedRight.WRITE))
+    }
+
+    @Test fun subtreeGuard_opWithParentInSubtree_allowed() {
+        val feedId = "feed"
+        val subtree = setOf(feedId, "child1")
+        val op = guardOp("newNode", "child1", feedId)
+        assertTrue(subtreeOpAllowed(op, feedId, subtree, FeedRight.WRITE))
+    }
+
+    @Test fun subtreeGuard_opWithParentOutsideSubtree_rejected() {
+        val feedId = "feed"
+        val subtree = setOf(feedId, "child1")
+        val op = guardOp("attacker", "ROOT", feedId)
+        assertFalse(subtreeOpAllowed(op, feedId, subtree, FeedRight.WRITE))
+    }
+
+    @Test fun subtreeGuard_noWriteRight_rejected() {
+        val feedId = "feed"
+        val subtree = setOf(feedId)
+        val op = guardOp(feedId, "any", feedId)
+        assertFalse(subtreeOpAllowed(op, feedId, subtree, FeedRight.READ))
+    }
+
+    @Test fun subtreeGuard_mergeOpWithoutMergeRight_rejected() {
+        val feedId = "feed"
+        val subtree = setOf(feedId, "child1")
+        val v = NodeVersion(feedId, setOf("p1", "p2"), "dev", Hlc(1, 0), NodeContent(parentId = feedId, text = "m"))
+        val op = OpDto.from(v, feedId, 1)
+        assertFalse(subtreeOpAllowed(op, feedId, subtree, FeedRight.WRITE))
+        assertTrue(subtreeOpAllowed(op, feedId, subtree, FeedRight.MERGE))
+    }
 }

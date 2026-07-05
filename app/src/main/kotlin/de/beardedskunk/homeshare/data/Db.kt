@@ -81,7 +81,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
               origin_group TEXT NOT NULL,
               cap_id TEXT NOT NULL,
               cap_secret TEXT NOT NULL,
-              foreign_right TEXT NOT NULL
+              foreign_right TEXT NOT NULL,
+              local_parent_id TEXT NOT NULL DEFAULT '',
+              local_order_key TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -113,10 +115,14 @@ class Db(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION
             // Beim inkompatiblen Wipe auch die Bild-/Datei-Blobs des alten Schemas mitleeren.
             BlobStore.purgeAll(appContext.filesDir)
         }
+        if (oldVersion in 7 until 8) {
+            db.execSQL("ALTER TABLE foreign_refs ADD COLUMN local_parent_id TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE foreign_refs ADD COLUMN local_order_key TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     companion object {
         const val DB_NAME = "homeshare.db"
-        const val DB_VERSION = 7
+        const val DB_VERSION = 8
     }
 }

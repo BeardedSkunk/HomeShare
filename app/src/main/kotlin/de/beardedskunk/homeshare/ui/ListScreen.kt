@@ -609,7 +609,7 @@ fun ListScreen(
     }
 
     if (showAddShared) {
-        AddSharedFeedDialog(sync = sync, onDone = { showAddShared = false; reload() }, onDismiss = { showAddShared = false })
+        AddSharedFeedDialog(sync = sync, parentId = parentId, onDone = { showAddShared = false; reload() }, onDismiss = { showAddShared = false })
     }
 
     if (showCreateTodo) {
