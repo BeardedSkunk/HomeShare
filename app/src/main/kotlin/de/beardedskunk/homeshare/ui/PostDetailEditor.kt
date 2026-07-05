@@ -33,6 +33,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Sell
+import de.beardedskunk.homeshare.core.Tags
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -125,6 +127,7 @@ fun PostDetailEditor(
      */
     showAttachments: Boolean = true,
     onOpenShare: ((NodeState) -> Unit)? = null,
+    onSearchTag: ((String) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -136,6 +139,13 @@ fun PostDetailEditor(
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
     var currentNodeId by remember { mutableStateOf(post?.nodeId) }
 
+    var nodeTags by remember { mutableStateOf(post?.tags ?: emptyList<String>()) }
+    var tagPicker by remember { mutableStateOf(false) }
+    var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(tagPicker) {
+        if (tagPicker) allTagsCache = withContext(Dispatchers.IO) { repo.allTags() }
+    }
+
     // ---- Anhänge (IMAGE/FILE-Kinder mit Caption-Titel) ----
     var attachments by remember { mutableStateOf<List<AttachmentRow>>(emptyList()) }
     var attOpen by remember { mutableStateOf<NodeState?>(null) }
@@ -146,6 +156,10 @@ fun PostDetailEditor(
             withContext(Dispatchers.IO) { loadAttachmentRows(repo, id) }
         } else {
             emptyList()
+        }
+        if (id != null) {
+            val fresh = withContext(Dispatchers.IO) { repo.getNode(id)?.tags }
+            if (fresh != null) nodeTags = fresh
         }
     }
 
@@ -235,6 +249,16 @@ fun PostDetailEditor(
         scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(nid) }; onClose() }
     }
 
+    fun addTag(raw: String) = scope.launch { withContext(Dispatchers.IO) {
+        val id = currentNodeId ?: return@withContext
+        val vocab = repo.allTags()
+        repo.headContent(id)?.let { repo.editNode(id, it.copy(tags = Tags.add(it.tags, raw, vocab))) }
+    } }
+    fun removeTag(tag: String) = scope.launch { withContext(Dispatchers.IO) {
+        val id = currentNodeId ?: return@withContext
+        repo.headContent(id)?.let { repo.editNode(id, it.copy(tags = Tags.remove(it.tags, tag))) }
+    } }
+
     // Haken in der gerenderten Ansicht umschalten -> Zeile kippen + sofort neue Version.
     fun toggleTask(sourceLine: Int) {
         val lines = tfv.text.split("\n").toMutableList()
@@ -278,7 +302,7 @@ fun PostDetailEditor(
                 searchOpen = findOpen,
                 onToggleSearch = { onSearchQueryChange(if (findOpen) null else "") },
                 onShare = null,
-                menuContent = if (!readOnly && post != null || onOpenShare != null && currentNodeId != null) { dismiss ->
+                menuContent = if (!readOnly && currentNodeId != null || onOpenShare != null && currentNodeId != null) { dismiss ->
                     if (onOpenShare != null && currentNodeId != null) {
                         DropdownMenuItem(
                             text = { Text("Mit Gruppe teilen / Freigaben…") },
@@ -291,6 +315,14 @@ fun PostDetailEditor(
                                 }
                             },
                             modifier = Modifier.tag("menu:share"),
+                        )
+                    }
+                    if (!readOnly && currentNodeId != null) {
+                        DropdownMenuItem(
+                            text = { Text("Tag hinzufügen…") },
+                            leadingIcon = { Icon(Icons.Filled.Sell, contentDescription = null) },
+                            onClick = { dismiss(); tagPicker = true },
+                            modifier = Modifier.tag("menu:add-tag"),
                         )
                     }
                     if (!readOnly && post != null) {
@@ -327,6 +359,14 @@ fun PostDetailEditor(
                     hasMatches = matchCount > 0,
                     onPrev = { stepMatch(-1) },
                     onNext = { stepMatch(1) },
+                )
+            }
+            if (currentNodeId != null) {
+                TagRow(
+                    tags = nodeTags,
+                    onAdd = if (!readOnly) { { tagPicker = true } } else null,
+                    onRemove = if (!readOnly) { { removeTag(it) } } else null,
+                    onSearchTag = onSearchTag,
                 )
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(bottom = imeBottom)) {
@@ -378,6 +418,15 @@ fun PostDetailEditor(
                 }
             }
         }
+    }
+    if (tagPicker) {
+        TagPickerSheet(
+            available = allTagsCache,
+            assigned = nodeTags,
+            allowCreate = true,
+            onPick = { raw -> tagPicker = false; addTag(raw) },
+            onDismiss = { tagPicker = false },
+        )
     }
 }
 

@@ -19,6 +19,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Sell
+import de.beardedskunk.homeshare.core.Tags
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.Spacer
@@ -109,6 +111,7 @@ fun CalendarEntryEditor(
     settings: Settings,
     onOpenShare: ((NodeState) -> Unit)? = null,
     onRequestCalendarSync: () -> Unit = {},
+    onSearchTag: ((String) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -118,6 +121,29 @@ fun CalendarEntryEditor(
     // Lazy-Create: ein neuer Termin bekommt seine nodeId erst beim ersten persist(). Danach sind
     // Anhänge und der Menü-Sync-Toggle möglich.
     var currentNodeId by remember { mutableStateOf(post?.nodeId) }
+
+    var nodeTags by remember { mutableStateOf(post?.tags ?: emptyList<String>()) }
+    var tagPicker by remember { mutableStateOf(false) }
+    var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(tagPicker) {
+        if (tagPicker) allTagsCache = withContext(Dispatchers.IO) { repo.allTags() }
+    }
+    LaunchedEffect(revision, currentNodeId) {
+        val id = currentNodeId
+        if (id != null) {
+            val fresh = withContext(Dispatchers.IO) { repo.getNode(id)?.tags }
+            if (fresh != null) nodeTags = fresh
+        }
+    }
+    fun addTag(raw: String) = scope.launch { withContext(Dispatchers.IO) {
+        val id = currentNodeId ?: return@withContext
+        val vocab = repo.allTags()
+        repo.headContent(id)?.let { repo.editNode(id, it.copy(tags = Tags.add(it.tags, raw, vocab))) }
+    } }
+    fun removeTag(tag: String) = scope.launch { withContext(Dispatchers.IO) {
+        val id = currentNodeId ?: return@withContext
+        repo.headContent(id)?.let { repo.editNode(id, it.copy(tags = Tags.remove(it.tags, tag))) }
+    } }
     val persistMutex = remember { Mutex() }
 
     // Anhänge (Bilder/Dateien) als separate Kindknoten des CALENDAR-Knotens – erst ab vorhandener
@@ -286,6 +312,14 @@ fun CalendarEntryEditor(
                             modifier = Modifier.tag("menu:share"),
                         )
                     }
+                    if (currentNodeId != null) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Sell, contentDescription = null) },
+                            text = { Text("Tag hinzufügen…") },
+                            onClick = { dismiss(); tagPicker = true },
+                            modifier = Modifier.tag("menu:add-tag"),
+                        )
+                    }
                     if (post != null || currentNodeId != null) {
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
@@ -332,6 +366,14 @@ fun CalendarEntryEditor(
                     hasMatches = matches.isNotEmpty(),
                     onPrev = { stepMatch(-1) },
                     onNext = { stepMatch(1) },
+                )
+            }
+            if (currentNodeId != null) {
+                TagRow(
+                    tags = nodeTags,
+                    onAdd = { tagPicker = true },
+                    onRemove = { removeTag(it) },
+                    onSearchTag = onSearchTag,
                 )
             }
             Column(
@@ -428,6 +470,15 @@ fun CalendarEntryEditor(
                 Spacer(Modifier.height(ATTACHMENT_FAB_CLEARANCE))
             }
         }
+    }
+    if (tagPicker) {
+        TagPickerSheet(
+            available = allTagsCache,
+            assigned = nodeTags,
+            allowCreate = true,
+            onPick = { raw -> tagPicker = false; addTag(raw) },
+            onDismiss = { tagPicker = false },
+        )
     }
 }
 

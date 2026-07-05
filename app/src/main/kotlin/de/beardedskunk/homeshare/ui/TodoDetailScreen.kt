@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Sell
+import de.beardedskunk.homeshare.core.Tags
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
@@ -85,11 +87,18 @@ fun TodoDetailScreen(
     onOpenShare: ((NodeState) -> Unit)? = null,
     onRequestCalendarSync: () -> Unit = {},
     readOnly: Boolean = false,
+    onSearchTag: ((String) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val revision by repo.revision.collectAsState()
+
+    var tagPicker by remember { mutableStateOf(false) }
+    var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(tagPicker) {
+        if (tagPicker) allTagsCache = withContext(Dispatchers.IO) { repo.allTags() }
+    }
 
     var node by remember { mutableStateOf(todo) }
     var kids by remember { mutableStateOf<List<NodeState>>(emptyList()) }
@@ -204,6 +213,14 @@ fun TodoDetailScreen(
         }
     }
 
+    fun addTag(raw: String) = scope.launch { withContext(Dispatchers.IO) {
+        val vocab = repo.allTags()
+        repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(tags = Tags.add(it.tags, raw, vocab))) }
+    } }
+    fun removeTag(tag: String) = scope.launch { withContext(Dispatchers.IO) {
+        repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(tags = Tags.remove(it.tags, tag))) }
+    } }
+
     // Links-Swipe -> stehende Mülltonne; ein Zustand für Markdown-Zeilen, Unterpunkte und Anhänge.
     var openTrash by remember { mutableStateOf<String?>(null) }
     val subDrag = rememberColumnDragState()
@@ -236,6 +253,12 @@ fun TodoDetailScreen(
                         )
                     }
                     if (!readOnly) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Sell, contentDescription = null) },
+                            text = { Text("Tag hinzufügen…") },
+                            onClick = { dismiss(); tagPicker = true },
+                            modifier = Modifier.tag("menu:add-tag"),
+                        )
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
                             text = { Text("Aufgabe löschen") },
@@ -274,6 +297,12 @@ fun TodoDetailScreen(
                     onNext = { stepMatch(1) },
                 )
             }
+            TagRow(
+                tags = node.tags,
+                onAdd = if (!readOnly) { { tagPicker = true } } else null,
+                onRemove = if (!readOnly) { { removeTag(it) } } else null,
+                onSearchTag = onSearchTag,
+            )
             LazyColumn(
                 Modifier.fillMaxSize().padding(horizontal = 12.dp).imePadding(),
                 state = listState,
@@ -445,5 +474,14 @@ fun TodoDetailScreen(
                 }
             }
         }
+    }
+    if (tagPicker) {
+        TagPickerSheet(
+            available = allTagsCache,
+            assigned = node.tags,
+            allowCreate = true,
+            onPick = { raw -> tagPicker = false; addTag(raw) },
+            onDismiss = { tagPicker = false },
+        )
     }
 }

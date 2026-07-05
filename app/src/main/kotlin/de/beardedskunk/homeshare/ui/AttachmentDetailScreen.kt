@@ -25,6 +25,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Sell
+import de.beardedskunk.homeshare.core.Tags
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -79,6 +81,7 @@ fun AttachmentDetailScreen(
     attachment: NodeState,
     readOnly: Boolean = false,
     onOpenShare: ((NodeState) -> Unit)? = null,
+    onSearchTag: ((String) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -185,6 +188,19 @@ fun AttachmentDetailScreen(
         }
     }
 
+    var tagPicker by remember { mutableStateOf(false) }
+    var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(tagPicker) {
+        if (tagPicker) allTagsCache = withContext(Dispatchers.IO) { repo.allTags() }
+    }
+    fun addTag(raw: String) = scope.launch { withContext(Dispatchers.IO) {
+        val vocab = repo.allTags()
+        repo.headContent(att.nodeId)?.let { repo.editNode(att.nodeId, it.copy(tags = Tags.add(it.tags, raw, vocab))) }
+    } }
+    fun removeTag(tag: String) = scope.launch { withContext(Dispatchers.IO) {
+        repo.headContent(att.nodeId)?.let { repo.editNode(att.nodeId, it.copy(tags = Tags.remove(it.tags, tag))) }
+    } }
+
     var findQuery by remember { mutableStateOf<String?>(null) }
     var matchIdx by remember { mutableStateOf(0) }
     val matches: List<Int> = remember(tfv.text, findQuery) {
@@ -217,6 +233,12 @@ fun AttachmentDetailScreen(
                     }
                     if (!readOnly) {
                         DropdownMenuItem(
+                            text = { Text("Tag hinzufügen…") },
+                            leadingIcon = { Icon(Icons.Filled.Sell, contentDescription = null) },
+                            onClick = { dismiss(); tagPicker = true },
+                            modifier = Modifier.tag("menu:add-tag"),
+                        )
+                        DropdownMenuItem(
                             text = { Text("Anhang löschen") },
                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
                             onClick = { dismiss(); scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(att.nodeId) }; onClose() } },
@@ -243,6 +265,12 @@ fun AttachmentDetailScreen(
                     onNext = { stepMatch(1) },
                 )
             }
+            TagRow(
+                tags = att.tags,
+                onAdd = if (!readOnly) { { tagPicker = true } } else null,
+                onRemove = if (!readOnly) { { removeTag(it) } } else null,
+                onSearchTag = onSearchTag,
+            )
             // ---- Beschreibung (Titel + Markdown) – höhenbegrenzt + scrollbar; der Anhang darunter
             // bekommt den ganzen Rest (weight(1f)). Titel bleibt immer sichtbar, der Markdown-Body
             // ist über das Ausklapp-Chevron einklappbar (klappt beim Reinzoomen automatisch ein). ----
@@ -366,6 +394,15 @@ fun AttachmentDetailScreen(
                 Spacer(Modifier.size(24.dp))
             }
         }
+    }
+    if (tagPicker) {
+        TagPickerSheet(
+            available = allTagsCache,
+            assigned = att.tags,
+            allowCreate = true,
+            onPick = { raw -> tagPicker = false; addTag(raw) },
+            onDismiss = { tagPicker = false },
+        )
     }
 }
 

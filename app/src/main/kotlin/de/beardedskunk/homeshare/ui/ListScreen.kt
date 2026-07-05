@@ -45,7 +45,9 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material.icons.filled.TaskAlt
+import de.beardedskunk.homeshare.core.Tags
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -155,6 +157,7 @@ fun ListScreen(
     onRequestCalendarSync: () -> Unit = {},
     searchQuery: String? = null,
     onSearchQueryChange: (String?) -> Unit = {},
+    onSearchTag: ((String) -> Unit)? = null,
     onBack: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
@@ -175,6 +178,13 @@ fun ListScreen(
     // Hamburger-Überlaufmenü (Liste löschen + Kalender-Sync-Toggle).
     var overflowOpen by remember { mutableStateOf(false) }
     var deleteListConfirm by remember { mutableStateOf(false) }
+    var containerTags by remember(parentId) { mutableStateOf(container?.tags ?: emptyList<String>()) }
+    var tagPicker by remember { mutableStateOf(false) }
+    var rootTagPicker by remember { mutableStateOf(false) }
+    var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(tagPicker || rootTagPicker) {
+        if (tagPicker || rootTagPicker) allTagsCache = withContext(Dispatchers.IO) { repo.allTags() }
+    }
     var matchedIds by remember { mutableStateOf<Set<String>?>(null) }
     val searching = searchQuery != null
     val query = searchQuery ?: ""
@@ -231,8 +241,21 @@ fun ListScreen(
             postImages = result.imgs
             taskBadges = result.badges
             captionTitles = result.captions
+            if (!isRoot) {
+                val freshTags = withContext(Dispatchers.IO) { repo.getNode(parentId)?.tags }
+                if (freshTags != null) containerTags = freshTags
+            }
         }
     }
+
+    fun addTag(raw: String) = scope.launch { withContext(Dispatchers.IO) {
+        val vocab = repo.allTags()
+        repo.headContent(parentId)?.let { repo.editNode(parentId, it.copy(tags = Tags.add(it.tags, raw, vocab))) }
+    } }
+    fun removeTag(tag: String) = scope.launch { withContext(Dispatchers.IO) {
+        repo.headContent(parentId)?.let { repo.editNode(parentId, it.copy(tags = Tags.remove(it.tags, tag))) }
+    } }
+
     LaunchedEffect(parentId, revision) { reload() }
     LaunchedEffect(searching, query, revision) {
         matchedIds = if (searching && query.isNotBlank()) {
@@ -376,19 +399,19 @@ fun ListScreen(
     val shareCb: ((NodeState) -> Unit)? = if (container?.isForeign == true) null else onOpenShare
     attOpen?.let { a ->
         BackHandler { attOpen = null; reload() }
-        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = !canWrite, onOpenShare = shareCb, onClose = { attOpen = null; reload() })
+        AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = !canWrite, onOpenShare = shareCb, onSearchTag = onSearchTag, onClose = { attOpen = null; reload() })
         return
     }
     todoOpen?.let { t ->
         BackHandler { todoOpen = null; reload() }
-        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onOpenShare = shareCb, onRequestCalendarSync = onRequestCalendarSync, readOnly = !canWrite, onClose = { todoOpen = null; reload() })
+        TodoDetailScreen(repo = repo, blobStore = blobStore, todo = t, settings = settings, onOpenShare = shareCb, onRequestCalendarSync = onRequestCalendarSync, readOnly = !canWrite, onSearchTag = onSearchTag, onClose = { todoOpen = null; reload() })
         return
     }
     descEdit?.let { d ->
         BackHandler { descEdit = null; reload() }
         PostDetailEditor(
             repo = repo, blobStore = blobStore, parentId = parentId, post = d,
-            readOnly = !canWrite, showAttachments = false, onOpenShare = shareCb,
+            readOnly = !canWrite, showAttachments = false, onOpenShare = shareCb, onSearchTag = onSearchTag,
             onClose = { descEdit = null; reload() },
         )
         return
@@ -398,7 +421,7 @@ fun ListScreen(
         PostDetailEditor(
             repo = repo, blobStore = blobStore, parentId = parentId, post = noteEdit,
             searchQuery = if (noteEdit != null) searchQuery else null,
-            onSearchQueryChange = onSearchQueryChange, readOnly = !canWrite, onOpenShare = shareCb,
+            onSearchQueryChange = onSearchQueryChange, readOnly = !canWrite, onOpenShare = shareCb, onSearchTag = onSearchTag,
             onClose = { noteEdit = null; creatingNote = false; reload() },
         )
         return
@@ -410,6 +433,7 @@ fun ListScreen(
             settings = settings,
             onOpenShare = shareCb,
             onRequestCalendarSync = onRequestCalendarSync,
+            onSearchTag = onSearchTag,
             onClose = { calEdit = null; creatingCal = false; reload() },
         )
         return
@@ -441,6 +465,12 @@ fun ListScreen(
                         Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, contentDescription = if (searching) "Suche schließen" else "Suchen")
                     }
                     if (!searching) {
+                        // Tag-Suche (nur Root): öffnet Tag-Picker und dann den Tag-Such-Screen.
+                        if (isRoot) {
+                            IconButton(onClick = { rootTagPicker = true }, modifier = Modifier.tag("topbar:tags")) {
+                                Icon(Icons.Filled.Sell, contentDescription = "Nach Tags suchen")
+                            }
+                        }
                         // QR: geteilten Eintrag in die aktuelle Liste einfügen; ausblenden in fremden Listen ohne Schreibrecht.
                         if (container?.isForeign != true || canWrite) {
                             IconButton(onClick = { showAddShared = true }, modifier = Modifier.tag("topbar:share")) {
@@ -463,6 +493,12 @@ fun ListScreen(
                                         )
                                     }
                                     if (canWrite) {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Filled.Sell, contentDescription = null) },
+                                            text = { Text("Tag hinzufügen…") },
+                                            onClick = { overflowOpen = false; tagPicker = true },
+                                            modifier = Modifier.tag("menu:add-tag"),
+                                        )
                                         DropdownMenuItem(
                                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
                                             text = { Text("Liste löschen") },
@@ -540,6 +576,12 @@ fun ListScreen(
                 Text("🔗 Geteilt von „${f.foreignOrigin}” · $rightLabel", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
             if (container != null) {
+                TagRow(
+                    tags = containerTags,
+                    onAdd = if (canWrite) { { tagPicker = true } } else null,
+                    onRemove = if (canWrite) { { removeTag(it) } } else null,
+                    onSearchTag = onSearchTag,
+                )
                 ListHeader(
                     container = container,
                     sourceMode = headerSource,
@@ -682,6 +724,24 @@ fun ListScreen(
                 }) { Text("Löschen") }
             },
             dismissButton = { TextButton(onClick = { deleteListConfirm = false }) { Text("Abbrechen") } },
+        )
+    }
+    if (tagPicker && !isRoot) {
+        TagPickerSheet(
+            available = allTagsCache,
+            assigned = containerTags,
+            allowCreate = true,
+            onPick = { raw -> tagPicker = false; addTag(raw) },
+            onDismiss = { tagPicker = false },
+        )
+    }
+    if (rootTagPicker) {
+        TagPickerSheet(
+            available = allTagsCache,
+            assigned = emptyList(),
+            allowCreate = false,
+            onPick = { tag -> rootTagPicker = false; onSearchTag?.invoke(tag) },
+            onDismiss = { rootTagPicker = false },
         )
     }
 }
