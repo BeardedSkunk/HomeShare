@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
@@ -76,6 +77,7 @@ fun AttachmentBox(
     attachments: List<AttachmentRow>,
     blobStore: BlobStore,
     modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 12.dp,
     /** Tonnen-Zustand des Screens (max. eine offene Tonne pro Screen). */
     openTrashKey: String? = null,
     onOpenTrash: ((String?) -> Unit)? = null,
@@ -87,7 +89,7 @@ fun AttachmentBox(
 ) {
     if (attachments.isEmpty()) return
     val drag = rememberColumnDragState()
-    Card(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).tag("box:attachments")) {
+    Card(modifier.fillMaxWidth().padding(horizontal = horizontalPadding, vertical = 8.dp).tag("box:attachments")) {
         Column(Modifier.padding(vertical = 6.dp)) {
             Text(
                 "Anhänge",

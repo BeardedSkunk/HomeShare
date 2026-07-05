@@ -68,6 +68,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import de.beardedskunk.homeshare.core.NodeContent
@@ -252,9 +253,10 @@ fun PostDetailEditor(
 
     // Links-Swipe -> stehende Mülltonne; EIN Zustand für Anhänge und Markdown-Zeilen.
     var openTrash by remember { mutableStateOf<String?>(null) }
-    val attachmentBox: @Composable () -> Unit = {
+    val attachmentBox: @Composable (Dp) -> Unit = { hPad ->
         AttachmentBox(
             attachments, blobStore,
+            horizontalPadding = hPad,
             openTrashKey = openTrash,
             onOpenTrash = if (readOnly) null else ({ openTrash = it }),
             onDelete = if (readOnly) null else ({ a ->
@@ -421,7 +423,7 @@ private fun SourceEditor(
     tfv: TextFieldValue,
     onTfvChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester,
-    attachmentBox: @Composable () -> Unit,
+    attachmentBox: @Composable (Dp) -> Unit,
     bottomInset: androidx.compose.ui.unit.Dp,
 ) {
     // Editier-Fläche scrollt; Such-Leiste/Padding/imePadding liegen im Eltern-Layout (fix oben).
@@ -432,7 +434,7 @@ private fun SourceEditor(
             fieldModifier = Modifier.heightIn(min = 120.dp).padding(8.dp).tag("field:body"),
             focusRequester = focusRequester,
         )
-        attachmentBox()
+        attachmentBox(12.dp)
         // Puffer = Tastatur ODER FAB, je nachdem was höher ist — letztes Feld bleibt scrollbar.
         Spacer(Modifier.height(maxOf(bottomInset, ATTACHMENT_FAB_CLEARANCE)))
     }
@@ -446,7 +448,7 @@ private fun RenderedView(
     text: String,
     onToggleTask: (Int) -> Unit,
     onEditAt: (Int) -> Unit,
-    attachmentBox: @Composable () -> Unit,
+    attachmentBox: @Composable (Dp) -> Unit,
     hasAttachments: Boolean,
     /** Tonnen-Zustand des Screens (geteilt mit dem Anhänge-Kasten). */
     openTrashKey: String?,
@@ -574,7 +576,7 @@ private fun RenderedView(
             }
         }
         if (hasAttachments) {
-            item("attachments") { attachmentBox() }
+            item("attachments") { attachmentBox(0.dp) }
         }
     }
 }

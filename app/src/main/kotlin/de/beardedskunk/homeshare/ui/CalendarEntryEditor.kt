@@ -402,6 +402,7 @@ fun CalendarEntryEditor(
                 }
                 AttachmentBox(
                     attachments, blobStore,
+                    horizontalPadding = 0.dp,
                     openTrashKey = openTrash,
                     onOpenTrash = { openTrash = it },
                     onDelete = { a -> openTrash = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(a.node.nodeId) } } },
