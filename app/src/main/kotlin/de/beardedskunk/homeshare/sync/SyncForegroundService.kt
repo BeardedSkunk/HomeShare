@@ -24,8 +24,16 @@ import de.beardedskunk.homeshare.MainActivity
  * (unaufdringlicher) Notification nimmt die App von diesen Einschränkungen aus; ein
  * Partial-WakeLock hält zusätzlich die CPU für den Abgleich wach.
  *
+ * Typ ist bewusst connectedDevice, NICHT dataSync: dataSync hat seit Android 15 ein hartes
+ * 6h/24h-Laufzeitbudget — danach killt das System den Service (ForegroundServiceDidNotStopInTime)
+ * und jeder STICKY-Neustart crasht sofort wieder ("Time limit already exhausted"). connectedDevice
+ * (Interaktion mit externen Geräten übers Netzwerk) ist unbudgetiert und passt semantisch:
+ * dauerhaft erreichbarer LAN-Peer. Startvoraussetzung ist eine Berechtigung aus der
+ * connectedDevice-Liste — CHANGE_WIFI_MULTICAST_STATE (Discovery) erfüllt das bereits.
+ *
  * Benötigt im Manifest: <service android:name=".sync.SyncForegroundService"
- * android:foregroundServiceType="dataSync"/> + FOREGROUND_SERVICE(_DATA_SYNC)/POST_NOTIFICATIONS/WAKE_LOCK.
+ * android:foregroundServiceType="connectedDevice"/> + FOREGROUND_SERVICE(_CONNECTED_DEVICE)/
+ * POST_NOTIFICATIONS/WAKE_LOCK.
  */
 class SyncForegroundService : Service() {
 
@@ -35,13 +43,31 @@ class SyncForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
-        startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        // startForeground kann werfen (z.B. FGS-Start aus dem Hintergrund verboten bei
+        // STICKY-Neustart, "mAllowStartForeground false"). Dann NICHT crashen: Sync ohne
+        // FGS-Ausnahmen weiterlaufen lassen und den Service zügig beenden — sonst killt
+        // uns das System später wegen "did not call startForeground".
+        val fg = runCatching {
+            startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        }
+        if (fg.isFailure) {
+            runCatching { (application as ClipApplication).graph.autoSync.start() }
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "homeshare:sync")
             .apply { setReferenceCounted(false); runCatching { acquire() } }
         // Sync starten (idempotent); nur, wenn der Schalter an ist.
         (application as ClipApplication).graph.autoSync.start()
         return START_STICKY
+    }
+
+    // Sicherheitsnetz (API 35+): falls das System diesem FGS-Typ doch mal ein Zeitbudget
+    // verpasst (bei connectedDevice derzeit nicht), sauber stoppen statt gekillt zu werden.
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
     }
 
     override fun onDestroy() {
