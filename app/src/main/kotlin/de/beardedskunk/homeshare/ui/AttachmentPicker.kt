@@ -34,8 +34,11 @@ object AttachmentPicker {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
         val sha = blobStore.put(bytes)
         val name = displayName(context, uri).orEmpty()
-        val imgId = repo.createNode(NodeContent(parentId = parentId, type = NodeType.IMAGE, blobHash = sha)).nodeId
-        val capId = repo.createNode(NodeContent(parentId = imgId, type = NodeType.TEXT, text = name)).nodeId
+        // Anhang + Beschreibungs-Kind als EIN Undo-Schritt (2 Ops, eine Gruppe).
+        val (imgId, capId) = repo.undo.group {
+            val img = repo.createNode(NodeContent(parentId = parentId, type = NodeType.IMAGE, blobHash = sha)).nodeId
+            img to repo.createNode(NodeContent(parentId = img, type = NodeType.TEXT, text = name)).nodeId
+        }
         return Added(imgId, sha, capId)
     }
 
@@ -46,10 +49,13 @@ object AttachmentPicker {
         val sha = blobStore.put(bytes)
         val name = displayName(context, uri) ?: "Datei"
         val mime = resolver.getType(uri)
-        val fileId = repo.createNode(
-            NodeContent(parentId = parentId, type = NodeType.FILE, text = name, blobHash = sha, fileName = name, mime = mime),
-        ).nodeId
-        val capId = repo.createNode(NodeContent(parentId = fileId, type = NodeType.TEXT, text = name)).nodeId
+        // Anhang + Beschreibungs-Kind als EIN Undo-Schritt (2 Ops, eine Gruppe).
+        val (fileId, capId) = repo.undo.group {
+            val file = repo.createNode(
+                NodeContent(parentId = parentId, type = NodeType.FILE, text = name, blobHash = sha, fileName = name, mime = mime),
+            ).nodeId
+            file to repo.createNode(NodeContent(parentId = file, type = NodeType.TEXT, text = name)).nodeId
+        }
         return Added(fileId, sha, capId)
     }
 
