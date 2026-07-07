@@ -130,7 +130,16 @@ class FeedRepository(
         val heads = loadNode(nodeId).heads()
         // Kein-Op-Guard: identischer Inhalt bei linearem Zustand -> nichts schreiben
         // (früher erzeugte jeder Save eine neue versionId, weil die HLC in den Hash einfließt).
-        heads.singleOrNull()?.let { if (it.content == stripped) return it }
+        // Der Head-Vergleich ignoriert den restore-Marker beidseitig: sonst würde ein
+        // UNVERÄNDERTER Save direkt nach einem Undo eine Op erzeugen und das Redo kappen.
+        heads.singleOrNull()?.let { head ->
+            val headStripped = if (UndoMeta.RESTORE in head.content.ext) {
+                head.content.copy(ext = head.content.ext - UndoMeta.RESTORE)
+            } else {
+                head.content
+            }
+            if (headStripped == stripped) return head
+        }
         return author(nodeId, heads.map { it.versionId }.toSet(), stripped)
     }
 
@@ -170,9 +179,12 @@ class FeedRepository(
 
     // ----------------------------------------------------------- Wiederholende Aufgaben (TaskRepeat)
 
-    /** Knoten mit VORGEGEBENER (deterministischer) Id anlegen — nur für Repeat-Kopien. */
-    private fun createNodeAt(nodeId: String, content: NodeContent): NodeVersion =
-        author(nodeId, currentHeads(nodeId), content)
+    /** Knoten mit VORGEGEBENER (deterministischer) Id anlegen — nur für Repeat-Kopien.
+     *  Ein aus dem Quell-ext geerbter restore-Marker gehört nicht in die Kopie. */
+    private fun createNodeAt(nodeId: String, content: NodeContent): NodeVersion {
+        val c = if (UndoMeta.RESTORE in content.ext) content.copy(ext = content.ext - UndoMeta.RESTORE) else content
+        return author(nodeId, currentHeads(nodeId), c)
+    }
 
     /** Schlüssel direkt HINTER [node] unter seinen Geschwistern (Landeplatz der Repeat-Kopie). */
     private fun orderKeyAfter(node: NodeState): String {
