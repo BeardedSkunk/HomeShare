@@ -13,6 +13,8 @@ import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
 import de.beardedskunk.homeshare.core.NodeVersion
 import de.beardedskunk.homeshare.core.OrderKeys
+import de.beardedskunk.homeshare.core.Priority
+import de.beardedskunk.homeshare.core.DropPlan
 import de.beardedskunk.homeshare.core.ROOT
 import de.beardedskunk.homeshare.sync.FeedScopedSource
 import de.beardedskunk.homeshare.sync.OpDto
@@ -172,6 +174,45 @@ class FeedRepository(
         }
         val hc = headContent(nodeId) ?: return
         editNode(nodeId, hc.copy(orderKey = newKey))
+    }
+
+    // ----------------------------------------------------------- Prioritäten (Priority/PrioritySort)
+
+    /** Hand-Priorität (Band-Level 1..3) setzen; 0 = entfernen. Nur für Aufgaben ohne Due-Date gedacht. */
+    fun setPriority(nodeId: String, level: Int) {
+        headContent(nodeId)?.let {
+            val ext = if (level <= 0) it.ext - Priority.KEY_PRIO else it.ext + (Priority.KEY_PRIO to level.toString())
+            editNode(nodeId, it.copy(ext = ext))
+        }
+    }
+
+    /**
+     * Auto-Sort-Flag am Container setzen/entfernen, dazu die einmalige orderKey-Materialisierung
+     * ([plan] aus [de.beardedskunk.homeshare.core.rekeyPlan]) — als EIN Undo-Schritt.
+     */
+    fun setPrioritySort(containerId: String, enabled: Boolean, plan: List<Pair<String, String>> = emptyList()) {
+        undo.group {
+            headContent(containerId)?.let {
+                val ext = if (enabled) it.ext + (Priority.KEY_SORT to "1") else it.ext - Priority.KEY_SORT
+                editNode(containerId, it.copy(ext = ext))
+            }
+            for ((id, key) in plan) headContent(id)?.let { editNode(id, it.copy(orderKey = key)) }
+        }
+    }
+
+    /** Drop in der auto-sortierten Liste: orderKey (+ ggf. Hand-Prio) in EINER Op. */
+    fun applyPriorityDrop(nodeId: String, plan: DropPlan) {
+        if (plan.skip) return
+        var hi = plan.hi
+        if (plan.lo != null && hi != null && plan.lo >= hi) hi = null
+        headContent(nodeId)?.let { hc ->
+            val ext = when {
+                plan.newPrioLevel == null -> hc.ext
+                plan.newPrioLevel <= 0 -> hc.ext - Priority.KEY_PRIO
+                else -> hc.ext + (Priority.KEY_PRIO to plan.newPrioLevel.toString())
+            }
+            editNode(nodeId, hc.copy(orderKey = OrderKeys.between(plan.lo, hi), ext = ext))
+        }
     }
 
     fun resolveConflict(nodeId: String, chosen: NodeContent): NodeVersion =
