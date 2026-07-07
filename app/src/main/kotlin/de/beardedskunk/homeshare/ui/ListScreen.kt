@@ -100,6 +100,7 @@ import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.FeedShareCodec
 import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.data.Settings
+import de.beardedskunk.homeshare.data.TaskRepeat
 import de.beardedskunk.homeshare.data.childTaskCounts
 import de.beardedskunk.homeshare.sync.SyncManager
 import kotlinx.coroutines.Dispatchers
@@ -111,6 +112,7 @@ private data class ListScreenData(
     val imgs: Map<String, List<String>>,
     val badges: Map<String, Pair<Int, Int>>,
     val captions: Map<String, String>,
+    val dues: Map<String, DueInfo>,
 )
 
 /** Einheitliche Höhe aller Item-Zeilen (Notiz/Liste/Bild/Datei/Aufgabe) — Referenz war das Notiz-Item. */
@@ -173,6 +175,8 @@ fun ListScreen(
     var postImages by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     // Fortschritts-Badge (erledigt/gesamt) je Aufgabe bzw. Aufgaben-Liste (childDefault==TODO).
     var taskBadges by remember { mutableStateOf<Map<String, Pair<Int, Int>>>(emptyMap()) }
+    // Fälligkeits-Badge je Aufgabe (erster Datums-Kindknoten + Wiederholungs-Flag).
+    var taskDues by remember { mutableStateOf<Map<String, DueInfo>>(emptyMap()) }
     // Caption-Titel für IMAGE/FILE-Direktkinder (aus Beschreibungs-Notiz des Anhangs).
     var captionTitles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     // Hamburger-Überlaufmenü (Liste löschen + Kalender-Sync-Toggle).
@@ -235,12 +239,19 @@ fun ListScreen(
                     .toMap()
                 // Caption-Titel für IMAGE/FILE-Direktkinder (Beschreibungs-Notiz des Anhangs).
                 val captions = loadAttachmentRows(repo, parentId).associate { it.node.nodeId to it.label() }
-                ListScreenData(list, imgs, badges, captions)
+                // Due-Badge: Fälligkeits-Tag (erster Datums-Kindknoten) + Wiederholungs-Flag je Aufgabe.
+                val dues = list.filter { it.kind == NodeKind.TODO }
+                    .mapNotNull { p ->
+                        TaskRepeat.dueChild(repo.children(p.nodeId))?.let { TaskRepeat.dueDate(it) }
+                            ?.let { day -> p.nodeId to DueInfo(day, TaskRepeat.rule(p.ext) != null) }
+                    }.toMap()
+                ListScreenData(list, imgs, badges, captions, dues)
             }
             children = result.list
             postImages = result.imgs
             taskBadges = result.badges
             captionTitles = result.captions
+            taskDues = result.dues
             if (!isRoot) {
                 val freshTags = withContext(Dispatchers.IO) { repo.getNode(parentId)?.tags }
                 if (freshTags != null) containerTags = freshTags
@@ -619,8 +630,10 @@ fun ListScreen(
                                     NodeKind.CALENDAR -> CalendarRow(post = node, onClick = { openChild(node) }, onLongClick = { actionNode = node }, trailing = handle)
                                     NodeKind.TODO -> TodoRow(
                                         node = node, enabled = canWrite, badge = taskBadges[node.nodeId],
+                                        due = taskDues[node.nodeId],
                                         onClick = { openChild(node) }, onLongClick = { actionNode = node },
-                                        onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(done = done)) } } } },
+                                        // setTaskDone statt editNode: der Repeater legt beim Abhaken ggf. die Kopie an.
+                                        onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.setTaskDone(node.nodeId, done) } } },
                                         trailing = handle,
                                     )
                                     else -> NodeRow(
@@ -817,7 +830,7 @@ private fun TaskBadge(done: Int, total: Int) {
 /** Aufgaben-Zeile: Haken direkt abhakbar (ohne Öffnen), Tap öffnet die Aufgaben-Ansicht. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = null, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
+private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = null, due: DueInfo? = null, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .tag(rowTag(node.title)),
@@ -836,6 +849,7 @@ private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = 
                     textDecoration = if (node.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
                     modifier = Modifier.weight(1f),
                 )
+                if (due != null) DueBadge(due, node.done)
                 if (badge != null) TaskBadge(badge.first, badge.second)
             }
             trailing?.invoke()

@@ -66,16 +66,20 @@ import de.beardedskunk.homeshare.data.BlobStore
 import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.data.Settings
+import de.beardedskunk.homeshare.data.TaskRepeat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 
 /**
  * Einzelansicht einer Aufgabe: Haken + Titel, gerenderter Markdown-Body, darunter visuell
  * getrennt der **Unterpunkte**-Kasten (alle Sub-Items mit Haken, Quick-Add-Zeile), dann
  * **Anhänge** (Bilder/Dateien) und **Termine**. Im Knotenbaum sind Unterpunkte/Anhänge/
  * Termine schlicht Geschwister-Kinder der Aufgabe – die Gruppierung ist rein visuell.
- * Ohne Reminder/Due-Date (kommt später).
+ * **Due Date** = erster CALENDAR-Kindknoten (Fällig-Zeile, [DueRow]); die **Wiederholung**
+ * lebt als ext-Meta direkt am Aufgabenknoten ([TaskRepeat], [RepeatDialog]) — beim Abhaken
+ * bzw. verstrichenem Due Date legt das Repository eine Kopie an ([FeedRepository.setTaskDone]).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -114,12 +118,15 @@ fun TodoDetailScreen(
 
     val subItems = kids.filter { it.kind == NodeKind.TODO || it.kind == NodeKind.NOTE }
     val events = kids.filter { it.kind == NodeKind.CALENDAR }
+    // Erster Datumsknoten = Due Date (Fällig-Zeile); weitere sind Altbestand und bleiben gelistet.
+    val dueEvent = TaskRepeat.dueChild(kids)
+    val otherEvents = events.filterNot { it.nodeId == dueEvent?.nodeId }
+    val repeatRule = TaskRepeat.rule(node.ext)
 
     fun setDone(id: String, done: Boolean) {
         if (readOnly) return
-        scope.launch {
-            withContext(Dispatchers.IO) { repo.headContent(id)?.let { repo.editNode(id, it.copy(done = done)) } }
-        }
+        // Über setTaskDone, damit der Repeater greift (Kopie beim Abhaken, Rücknahme beim Enthaken).
+        scope.launch { withContext(Dispatchers.IO) { repo.setTaskDone(id, done) } }
     }
 
     // ---- In-Place-Edit: Titel+Body in einem Quelltext-Feld ----
@@ -152,6 +159,20 @@ fun TodoDetailScreen(
     var subNote by remember { mutableStateOf<NodeState?>(null) }
     var calEdit by remember { mutableStateOf<NodeState?>(null) }
     var attOpen by remember { mutableStateOf<NodeState?>(null) }
+    var dueEdit by remember { mutableStateOf(false) }
+    var repeatDialog by remember { mutableStateOf(false) }
+
+    if (dueEdit) {
+        BackHandler { dueEdit = false }
+        // Due Date = normaler Datumsknoten, aber ohne eigene Wiederholung (die lebt an der Aufgabe).
+        CalendarEntryEditor(
+            repo = repo, blobStore = blobStore, parentId = node.nodeId, post = dueEvent, settings = settings,
+            onOpenShare = onOpenShare, onRequestCalendarSync = onRequestCalendarSync,
+            showRecurrence = false, defaultAllDay = true, initialTitle = TaskRepeat.DUE_TITLE,
+            onClose = { dueEdit = false },
+        )
+        return
+    }
 
     attOpen?.let { a ->
         BackHandler { attOpen = null }
@@ -302,6 +323,15 @@ fun TodoDetailScreen(
                 onAdd = if (!readOnly) { { tagPicker = true } } else null,
                 onRemove = if (!readOnly) { { removeTag(it) } } else null,
                 onSearchTag = onSearchTag,
+            )
+            DueRow(
+                due = dueEvent,
+                ruleSummary = repeatRule?.summary(),
+                overdue = !node.done &&
+                    dueEvent?.let { TaskRepeat.dueDate(it) }?.let { TaskRepeat.isOverdue(it, LocalDate.now()) } == true,
+                readOnly = readOnly,
+                onEditDue = { dueEdit = true },
+                onEditRepeat = { repeatDialog = true },
             )
             LazyColumn(
                 Modifier.fillMaxSize().padding(horizontal = 12.dp).imePadding(),
@@ -459,7 +489,7 @@ fun TodoDetailScreen(
                         )
                     }
                 }
-                if (events.isNotEmpty()) {
+                if (otherEvents.isNotEmpty()) {
                     item(key = "events-head") {
                         Text(
                             "Termine",
@@ -468,7 +498,7 @@ fun TodoDetailScreen(
                             modifier = Modifier.padding(vertical = 4.dp),
                         )
                     }
-                    for (e in events) {
+                    for (e in otherEvents) {
                         item(key = e.nodeId) { CalendarRow(post = e, onClick = { calEdit = e }) }
                     }
                 }
@@ -482,6 +512,35 @@ fun TodoDetailScreen(
             allowCreate = true,
             onPick = { raw -> tagPicker = false; addTag(raw) },
             onDismiss = { tagPicker = false },
+        )
+    }
+    if (repeatDialog) {
+        RepeatDialog(
+            initial = repeatRule,
+            initialMode = TaskRepeat.mode(node.ext),
+            hasDue = dueEvent != null,
+            onSave = { rule, mode ->
+                repeatDialog = false
+                scope.launch { withContext(Dispatchers.IO) {
+                    repo.headContent(node.nodeId)?.let {
+                        repo.editNode(
+                            node.nodeId,
+                            it.copy(ext = it.ext + (TaskRepeat.KEY_RULE to rule.format()) + (TaskRepeat.KEY_MODE to mode)),
+                        )
+                    }
+                } }
+            },
+            onRemove = if (repeatRule != null) {
+                {
+                    repeatDialog = false
+                    scope.launch { withContext(Dispatchers.IO) {
+                        repo.headContent(node.nodeId)?.let {
+                            repo.editNode(node.nodeId, it.copy(ext = it.ext - TaskRepeat.KEY_RULE - TaskRepeat.KEY_MODE))
+                        }
+                    } }
+                }
+            } else null,
+            onDismiss = { repeatDialog = false },
         )
     }
 }

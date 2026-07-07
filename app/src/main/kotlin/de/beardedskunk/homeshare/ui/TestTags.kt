@@ -20,6 +20,9 @@ import androidx.compose.ui.platform.testTag
 //   tags:add               Plus-Button der Tag-Zeile
 //   tagsel:<tag>           Gewaehltes Tag im Tag-Such-Screen (Chip mit X)
 //   todo:done, box:subitems, box:attachments, box:event
+//   field:due              Fällig-Chip der Aufgaben-Ansicht (öffnet den Datums-Editor)
+//   action:repeat          Wiederholungs-Chip der Aufgaben-Ansicht (öffnet den Repeater-Dialog;
+//                          der Dialog selbst ist ein Fenster ohne resource-ids -> per text matchen)
 
 fun Modifier.tag(name: String): Modifier = testTag(name)
 

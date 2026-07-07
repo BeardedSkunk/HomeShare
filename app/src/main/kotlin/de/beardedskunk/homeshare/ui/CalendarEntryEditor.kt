@@ -112,6 +112,11 @@ fun CalendarEntryEditor(
     onOpenShare: ((NodeState) -> Unit)? = null,
     onRequestCalendarSync: () -> Unit = {},
     onSearchTag: ((String) -> Unit)? = null,
+    /** Wiederholungs-Dropdown ausblenden — Due-Date-Knoten: die Wiederholung lebt an der Aufgabe. */
+    showRecurrence: Boolean = true,
+    /** Vorgaben nur für die NEUANLAGE (Due Date: ganztägig, Titel „Fällig"). */
+    defaultAllDay: Boolean = false,
+    initialTitle: String = "",
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -162,7 +167,7 @@ fun CalendarEntryEditor(
 
     // Titel (1. Zeile) + Markdown-Beschreibung (Rest) in EINEM Feld – wie Notiz/Liste.
     val initialHeader = remember(post?.headVersionId) {
-        if (existing == null) ""
+        if (existing == null) initialTitle
         else existing.title + (if (existing.description.isNotBlank()) "\n" + existing.description else "")
     }
     var headerTfv by remember { mutableStateOf(TextFieldValue(initialHeader)) }
@@ -170,7 +175,7 @@ fun CalendarEntryEditor(
     var sourceMode by remember { mutableStateOf(post == null) }
     var headerExpanded by remember { mutableStateOf(true) } // default ausgeklappt (anders als ListScreen)
 
-    var allDay by remember { mutableStateOf(existing?.allDay ?: false) }
+    var allDay by remember { mutableStateOf(existing?.allDay ?: defaultAllDay) }
     var startDate by remember { mutableStateOf(existing?.let { dateOf(it.start) } ?: now.toLocalDate()) }
     var startTime by remember { mutableStateOf(existing?.takeIf { !it.allDay }?.let { timeOf(it.start) } ?: defStart) }
     var endDate by remember { mutableStateOf(existing?.let { dateOf(it.end) } ?: now.toLocalDate()) }
@@ -438,12 +443,14 @@ fun CalendarEntryEditor(
                         options = reminderOptions.map { it.first },
                         onSelect = { sel -> reminder = reminderOptions.first { it.first == sel }.second; persist() },
                     )
-                    LabeledDropdown(
-                        label = "Wiederholung",
-                        current = recurrence.label,
-                        options = Recurrence.entries.map { it.label },
-                        onSelect = { sel -> recurrence = Recurrence.entries.first { it.label == sel }; persist() },
-                    )
+                    if (showRecurrence) {
+                        LabeledDropdown(
+                            label = "Wiederholung",
+                            current = recurrence.label,
+                            options = Recurrence.entries.map { it.label },
+                            onSelect = { sel -> recurrence = Recurrence.entries.first { it.label == sel }; persist() },
+                        )
+                    }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(if (busy) "Als gebucht anzeigen" else "Als frei anzeigen", modifier = Modifier.weight(1f))
@@ -482,9 +489,10 @@ fun CalendarEntryEditor(
     }
 }
 
+/** Datums-Knopf mit DatePicker-Dialog (auch vom Wiederholungs-Dialog genutzt). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DateField(label: String, date: LocalDate, modifier: Modifier = Modifier, onPick: (LocalDate) -> Unit) {
+internal fun DateField(label: String, date: LocalDate, modifier: Modifier = Modifier, onPick: (LocalDate) -> Unit) {
     var show by remember { mutableStateOf(false) }
     OutlinedButton(onClick = { show = true }, modifier = modifier) {
         Text("$label: ${date.format(DATE_UI)}")
