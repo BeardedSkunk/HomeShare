@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.homeshare.core.NodeKind
@@ -85,11 +87,16 @@ fun AttachmentBox(
     onDelete: ((AttachmentRow) -> Unit)? = null,
     /** Umsortieren per Drag-Handle. null = keine Handles. */
     onReorder: ((moved: NodeState, prev: NodeState?, next: NodeState?) -> Unit)? = null,
+    /** Optionale Prio-Tönung des Kastens (null = Standard-Kartenfarbe). */
+    containerColor: Color? = null,
     onOpen: (AttachmentRow) -> Unit,
 ) {
     if (attachments.isEmpty()) return
     val drag = rememberColumnDragState()
-    Card(modifier.fillMaxWidth().padding(horizontal = horizontalPadding, vertical = 8.dp).tag("box:attachments")) {
+    Card(
+        modifier.fillMaxWidth().padding(horizontal = horizontalPadding, vertical = 8.dp).tag("box:attachments"),
+        colors = if (containerColor != null) CardDefaults.cardColors(containerColor = containerColor) else CardDefaults.cardColors(),
+    ) {
         Column(Modifier.padding(vertical = 6.dp)) {
             Text(
                 "Anhänge",

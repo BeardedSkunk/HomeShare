@@ -99,8 +99,8 @@ fun DueRow(
     }
 }
 
-/** Kompakte Due-Info einer Aufgabe für Listen-Zeilen (Tag + „wiederholt sich"). */
-data class DueInfo(val day: LocalDate, val repeating: Boolean)
+/** Kompakte Due-Info einer Aufgabe für Listen-Zeilen (Tag + „wiederholt sich" + optionale Uhrzeit). */
+data class DueInfo(val day: LocalDate, val repeating: Boolean, val time: java.time.LocalTime? = null)
 
 private val BADGE_FMT = DateTimeFormatter.ofPattern("dd.MM.")
 

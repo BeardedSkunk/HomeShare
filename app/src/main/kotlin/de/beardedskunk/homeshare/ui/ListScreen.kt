@@ -94,14 +94,21 @@ import androidx.core.content.FileProvider
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.core.PrioBand
+import de.beardedskunk.homeshare.core.Priority
 import de.beardedskunk.homeshare.core.ROOT
+import de.beardedskunk.homeshare.core.resolveDrop
+import de.beardedskunk.homeshare.core.rekeyPlan
 import de.beardedskunk.homeshare.data.BlobStore
+import de.beardedskunk.homeshare.data.DueMoment
 import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.FeedShareCodec
 import de.beardedskunk.homeshare.data.NodeState
+import de.beardedskunk.homeshare.data.PrioritySort
 import de.beardedskunk.homeshare.data.Settings
 import de.beardedskunk.homeshare.data.TaskRepeat
 import de.beardedskunk.homeshare.data.childTaskCounts
+import java.time.LocalDateTime
 import de.beardedskunk.homeshare.sync.SyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -187,6 +194,8 @@ fun ListScreen(
     var overflowOpen by remember { mutableStateOf(false) }
     var deleteListConfirm by remember { mutableStateOf(false) }
     var containerTags by remember(parentId) { mutableStateOf(container?.tags ?: emptyList<String>()) }
+    // Auto-Sortierung nach Priorität (ext-Flag am Container; synct auf alle Geräte).
+    var prioSort by remember(parentId) { mutableStateOf(PrioritySort.enabled(container)) }
     var tagPicker by remember { mutableStateOf(false) }
     var rootTagPicker by remember { mutableStateOf(false) }
     var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -212,6 +221,7 @@ fun ListScreen(
     var viewingImage by remember { mutableStateOf<String?>(null) }
     var showCreateList by remember { mutableStateOf(false) }
     var actionNode by remember { mutableStateOf<NodeState?>(null) }
+    var prioPick by remember { mutableStateOf<NodeState?>(null) }
     var showAddShared by remember { mutableStateOf(false) }
     var fabMenu by remember { mutableStateOf(false) }
     var calEnabled by remember(parentId) { mutableStateOf(if (isCalendar) settings.isCalendarFeedEnabled(parentId) else false) }
@@ -246,8 +256,8 @@ fun ListScreen(
                 // Due-Badge: Fälligkeits-Tag (erster Datums-Kindknoten) + Wiederholungs-Flag je Aufgabe.
                 val dues = list.filter { it.kind == NodeKind.TODO }
                     .mapNotNull { p ->
-                        TaskRepeat.dueChild(repo.children(p.nodeId))?.let { TaskRepeat.dueDate(it) }
-                            ?.let { day -> p.nodeId to DueInfo(day, TaskRepeat.rule(p.ext) != null) }
+                        TaskRepeat.dueChild(repo.children(p.nodeId))?.let { PrioritySort.dueMoment(it) }
+                            ?.let { m -> p.nodeId to DueInfo(m.day, TaskRepeat.rule(p.ext) != null, m.time) }
                     }.toMap()
                 ListScreenData(list, imgs, badges, captions, dues)
             }
@@ -257,8 +267,11 @@ fun ListScreen(
             captionTitles = result.captions
             taskDues = result.dues
             if (!isRoot) {
-                val freshTags = withContext(Dispatchers.IO) { repo.getNode(parentId)?.tags }
-                if (freshTags != null) containerTags = freshTags
+                val fresh = withContext(Dispatchers.IO) { repo.getNode(parentId) }
+                if (fresh != null) {
+                    containerTags = fresh.tags
+                    prioSort = PrioritySort.enabled(fresh)
+                }
             }
         }
     }
@@ -284,6 +297,12 @@ fun ListScreen(
     }
     val shown = matchedIds?.let { ids -> children.filter { it.nodeId in ids } } ?: children
 
+    // Bänder werden bei jedem Reload mit „jetzt" neu berechnet (kein Timer nötig).
+    val now = remember(revision) { LocalDateTime.now() }
+    val dueMoments = remember(taskDues) { taskDues.mapValues { DueMoment(it.value.day, it.value.time) } }
+    // Bei aktiver Auto-Sortierung wird nur die ANZEIGE bandweise umsortiert (orderKeys unberührt).
+    val sorted = if (prioSort) PrioritySort.displaySort(shown, dueMoments, now) else shown
+
     // ---- Drag&Drop-Umsortierung (Handle am Zeilenende) ----
     val listState = rememberLazyListState()
     // Vorschau-Reihenfolge während des Zugs; committed wird erst beim Drop (1 Op).
@@ -291,7 +310,7 @@ fun ListScreen(
     val dragState = rememberDragDropState(
         listState,
         onMove = { from, to ->
-            val cur = (dragPreview ?: shown).toMutableList()
+            val cur = (dragPreview ?: sorted).toMutableList()
             if (from in cur.indices && to in cur.indices) {
                 cur.add(to, cur.removeAt(from))
                 dragPreview = cur
@@ -300,10 +319,17 @@ fun ListScreen(
         onDrop = { _, to ->
             dragPreview?.takeIf { to in it.indices }?.let { cur ->
                 val moved = cur[to]
-                val prev = cur.getOrNull(to - 1)
-                val next = cur.getOrNull(to + 1)
                 // Revision-Bump löst den Reload aus; die Vorschau bleibt bis dahin stehen.
-                scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+                if (prioSort) {
+                    // Im Auto-Sort-Modus: Band-/orderKey-Auflösung (ggf. Prio-Wechsel) in EINER Op.
+                    val ranked = cur.map { PrioritySort.ranked(it, dueMoments[it.nodeId], now) }
+                    val plan = resolveDrop(ranked, to)
+                    scope.launch { withContext(Dispatchers.IO) { repo.applyPriorityDrop(moved.nodeId, plan) } }
+                } else {
+                    val prev = cur.getOrNull(to - 1)
+                    val next = cur.getOrNull(to + 1)
+                    scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
+                }
             }
         },
     )
@@ -315,7 +341,7 @@ fun ListScreen(
             dragPreview = null
         }
     }
-    val displayed = dragPreview ?: shown
+    val displayed = dragPreview ?: sorted
     val canDrag = canWrite && !searching
     // Links-Swipe -> stehende Mülltonne (max. eine offen); vertikaler Drag schließt sie.
     var openTrash by remember { mutableStateOf<String?>(null) }
@@ -534,6 +560,40 @@ fun ListScreen(
                                             onClick = { overflowOpen = false; deleteListConfirm = true },
                                             modifier = Modifier.tag("menu:delete-list"),
                                         )
+                                        if (container.childDefault == NodeKind.TODO) {
+                                            DropdownMenuItem(
+                                                text = { Text("Nach Priorität sortieren") },
+                                                trailingIcon = { Switch(checked = prioSort, onCheckedChange = null) },
+                                                onClick = {
+                                                    val enable = !prioSort
+                                                    prioSort = enable
+                                                    overflowOpen = false
+                                                    // Beim EINschalten: einmalig orderKeys materialisieren
+                                                    // (Flag + Rekeys = EIN Undo-Schritt, siehe setPrioritySort).
+                                                    scope.launch {
+                                                        withContext(Dispatchers.IO) {
+                                                            val plan = if (enable) {
+                                                                val kids = repo.children(parentId)
+                                                                val dm = kids
+                                                                    .filter { it.kind == NodeKind.TODO && !it.done }
+                                                                    .mapNotNull { p ->
+                                                                        TaskRepeat.dueChild(repo.children(p.nodeId))
+                                                                            ?.let { PrioritySort.dueMoment(it) }
+                                                                            ?.let { p.nodeId to it }
+                                                                    }.toMap()
+                                                                rekeyPlan(
+                                                                    PrioritySort.materializeOrder(kids, dm, LocalDateTime.now()),
+                                                                )
+                                                            } else {
+                                                                emptyList()
+                                                            }
+                                                            repo.setPrioritySort(parentId, enable, plan)
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.tag("menu:prio-sort"),
+                                            )
+                                        }
                                     }
                                     if (isCalendar) {
                                         DropdownMenuItem(
@@ -649,6 +709,7 @@ fun ListScreen(
                                     NodeKind.TODO -> TodoRow(
                                         node = node, enabled = canWrite, badge = taskBadges[node.nodeId],
                                         due = taskDues[node.nodeId],
+                                        band = PrioritySort.bandOf(node, dueMoments[node.nodeId], now),
                                         onClick = { openChild(node) }, onLongClick = { actionNode = node },
                                         // setTaskDone statt editNode: der Repeater legt beim Abhaken ggf. die Kopie an.
                                         onDone = { done -> scope.launch { withContext(Dispatchers.IO) { repo.setTaskDone(node.nodeId, done) } } },
@@ -725,6 +786,10 @@ fun ListScreen(
                     if (node.kind == NodeKind.LIST) {
                         TextButton(onClick = { val n = node; actionNode = null; descEdit = n }, modifier = Modifier.tag("action:info")) { Text("Beschreibung anzeigen/bearbeiten") }
                     }
+                    // Prio-Picker nur für unerledigte Aufgaben ohne Due-Date (Due leitet die Prio ab).
+                    if (canWrite && node.kind == NodeKind.TODO && !node.done && taskDues[node.nodeId] == null) {
+                        TextButton(onClick = { val n = node; actionNode = null; prioPick = n }, modifier = Modifier.tag("action:prio")) { Text("Priorität…") }
+                    }
                     if (node.conflicted && canMerge && node.kind == NodeKind.NOTE) {
                         TextButton(onClick = { val n = node; actionNode = null; resolving = n }, modifier = Modifier.tag("action:resolve")) { Text("Konflikt: Ganze Fassung wählen") }
                         TextButton(onClick = { val n = node; actionNode = null; resolvingDetailed = n }, modifier = Modifier.tag("action:resolve-detail")) { Text("Konflikt: Im Detail zusammenführen") }
@@ -741,6 +806,18 @@ fun ListScreen(
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { actionNode = null }, modifier = Modifier.tag("action:cancel")) { Text("Abbrechen") } },
+        )
+    }
+
+    prioPick?.let { node ->
+        PriorityPickerDialog(
+            current = Priority.handBand(node.ext),
+            onPick = { level ->
+                val id = node.nodeId
+                prioPick = null
+                scope.launch { withContext(Dispatchers.IO) { repo.setPriority(id, level) } }
+            },
+            onDismiss = { prioPick = null },
         )
     }
 
@@ -850,15 +927,24 @@ private fun TaskBadge(done: Int, total: Int) {
 /** Aufgaben-Zeile: Haken direkt abhakbar (ohne Öffnen), Tap öffnet die Aufgaben-Ansicht. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = null, due: DueInfo? = null, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
+private fun TodoRow(node: NodeState, enabled: Boolean, badge: Pair<Int, Int>? = null, due: DueInfo? = null, band: PrioBand = PrioBand.NONE, onClick: () -> Unit, onLongClick: () -> Unit, onDone: (Boolean) -> Unit, trailing: (@Composable () -> Unit)? = null) {
+    val tint = band.rowTint()
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             .tag(rowTag(node.title)),
-        colors = if (node.conflicted) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer) else CardDefaults.cardColors(),
+        // Konflikt-Optik hat Vorrang; sonst die (evtl.) Band-Tönung.
+        colors = when {
+            node.conflicted -> CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            tint != null -> CardDefaults.cardColors(containerColor = tint)
+            else -> CardDefaults.cardColors()
+        },
     ) {
         Row(Modifier.fillMaxWidth().height(ROW_HEIGHT).padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             // Haken bleibt außerhalb des klickbaren Wrappers (direkt abhakbar, kein Öffnen).
-            Checkbox(checked = node.done, onCheckedChange = onDone, enabled = enabled)
+            val checkboxColors = band.color()
+                ?.let { c -> androidx.compose.material3.CheckboxDefaults.colors(uncheckedColor = c, checkedColor = c) }
+                ?: androidx.compose.material3.CheckboxDefaults.colors()
+            Checkbox(checked = node.done, onCheckedChange = onDone, enabled = enabled, colors = checkboxColors)
             Row(
                 Modifier.weight(1f).fillMaxHeight().combinedClickable(onClick = onClick, onLongClick = onLongClick),
                 verticalAlignment = Alignment.CenterVertically,

@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -59,18 +61,36 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.ui.graphics.compositeOver
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
+import de.beardedskunk.homeshare.core.PrioBand
+import de.beardedskunk.homeshare.core.Priority
+import de.beardedskunk.homeshare.core.rekeyPlan
+import de.beardedskunk.homeshare.core.resolveDrop
 import de.beardedskunk.homeshare.data.BlobStore
+import de.beardedskunk.homeshare.data.DueMoment
 import de.beardedskunk.homeshare.data.FeedRepository
 import de.beardedskunk.homeshare.data.NodeState
+import de.beardedskunk.homeshare.data.PrioritySort
 import de.beardedskunk.homeshare.data.Settings
 import de.beardedskunk.homeshare.data.TaskRepeat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalDateTime
+
+/** Ergebnis des revisions-gebundenen Ladens (Knoten, Kinder, Anhänge, Due-Zeitpunkte der Unterpunkte). */
+private data class TodoLoad(
+    val node: NodeState,
+    val kids: List<NodeState>,
+    val attachments: List<AttachmentRow>,
+    val subDues: Map<String, DueMoment>,
+)
 
 /**
  * Einzelansicht einer Aufgabe: Haken + Titel, gerenderter Markdown-Body, darunter visuell
@@ -110,16 +130,32 @@ fun TodoDetailScreen(
     var node by remember { mutableStateOf(todo) }
     var kids by remember { mutableStateOf<List<NodeState>>(emptyList()) }
     var attachments by remember { mutableStateOf<List<AttachmentRow>>(emptyList()) }
+    // Due-Zeitpunkt je unerledigtem TODO-Unterpunkt (für Band-Sortierung/Farbe der Unterpunkte).
+    var subDues by remember { mutableStateOf<Map<String, DueMoment>>(emptyMap()) }
     LaunchedEffect(revision) {
         val fresh = withContext(Dispatchers.IO) {
-            Triple(repo.getPostState(todo.nodeId) ?: todo, repo.children(todo.nodeId), loadAttachmentRows(repo, todo.nodeId))
+            val n = repo.getPostState(todo.nodeId) ?: todo
+            val k = repo.children(todo.nodeId)
+            val a = loadAttachmentRows(repo, todo.nodeId)
+            val sd = k.filter { it.kind == NodeKind.TODO && !it.done }
+                .mapNotNull { p ->
+                    TaskRepeat.dueChild(repo.children(p.nodeId))?.let { PrioritySort.dueMoment(it) }?.let { p.nodeId to it }
+                }.toMap()
+            TodoLoad(n, k, a, sd)
         }
-        node = fresh.first
-        kids = fresh.second
-        attachments = fresh.third
+        node = fresh.node
+        kids = fresh.kids
+        attachments = fresh.attachments
+        subDues = fresh.subDues
     }
 
     val subItems = kids.filter { it.kind == NodeKind.TODO || it.kind == NodeKind.NOTE }
+    val now = remember(revision) { LocalDateTime.now() }
+    val prioSort = PrioritySort.enabled(node)
+    val subShown = if (prioSort) PrioritySort.displaySort(subItems, subDues, now) else subItems
+    // Eigenes Band der Aufgabe (für die Tönung von Kopf/Kästen); erledigt → automatisch KEINE.
+    val ownBand = PrioritySort.bandOf(node, TaskRepeat.dueChild(kids)?.let { PrioritySort.dueMoment(it) }, now)
+    var prioPick by remember { mutableStateOf(false) }
     val events = kids.filter { it.kind == NodeKind.CALENDAR }
     // Erster Datumsknoten = Due Date (Fällig-Zeile); weitere sind Altbestand und bleiben gelistet.
     val dueEvent = TaskRepeat.dueChild(kids)
@@ -307,6 +343,43 @@ fun TodoDetailScreen(
                             },
                             modifier = Modifier.tag("menu:delete-todo"),
                         )
+                        DropdownMenuItem(
+                            text = { Text("Unterpunkte nach Priorität sortieren") },
+                            trailingIcon = { Switch(checked = prioSort, onCheckedChange = null) },
+                            onClick = {
+                                dismiss()
+                                val enable = !prioSort
+                                // EINschalten: Unterpunkte (TODO/NOTE) einmalig materialisieren
+                                // (Flag + Rekeys = EIN Undo-Schritt). Anhänge/Termine bleiben unberührt.
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        val plan = if (enable) {
+                                            val subs = repo.children(node.nodeId)
+                                                .filter { it.kind == NodeKind.TODO || it.kind == NodeKind.NOTE }
+                                            val dm = subs
+                                                .filter { it.kind == NodeKind.TODO && !it.done }
+                                                .mapNotNull { p ->
+                                                    TaskRepeat.dueChild(repo.children(p.nodeId))
+                                                        ?.let { PrioritySort.dueMoment(it) }
+                                                        ?.let { p.nodeId to it }
+                                                }.toMap()
+                                            rekeyPlan(PrioritySort.materializeOrder(subs, dm, LocalDateTime.now()))
+                                        } else {
+                                            emptyList()
+                                        }
+                                        repo.setPrioritySort(node.nodeId, enable, plan)
+                                    }
+                                }
+                            },
+                            modifier = Modifier.tag("menu:prio-sort"),
+                        )
+                        if (dueEvent == null && !node.done) {
+                            DropdownMenuItem(
+                                text = { Text("Priorität…") },
+                                onClick = { dismiss(); prioPick = true },
+                                modifier = Modifier.tag("menu:prio"),
+                            )
+                        }
                     }
                 } else null,
                 sourceMode = bodySource,
@@ -370,11 +443,20 @@ fun TodoDetailScreen(
                 } else {
                     // Render-Modus Kopf: Checkbox + Titel + optionaler Chevron
                     item(key = "head") {
-                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val headTint = ownBand.rowTint()
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .then(if (headTint != null) Modifier.background(headTint) else Modifier)
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Checkbox(
                                 checked = node.done,
                                 onCheckedChange = { setDone(node.nodeId, it) },
                                 enabled = !readOnly,
+                                colors = ownBand.color()
+                                    ?.let { CheckboxDefaults.colors(uncheckedColor = it, checkedColor = it) }
+                                    ?: CheckboxDefaults.colors(),
                                 modifier = Modifier.tag("todo:done"),
                             )
                             Text(
@@ -427,8 +509,13 @@ fun TodoDetailScreen(
                     }
                 }
                 item(key = "subitems") {
-                    // Unterpunkte: visuell separiert vom Rest (eigener Kasten).
-                    Card(Modifier.fillMaxWidth().padding(vertical = 8.dp).tag("box:subitems")) {
+                    // Unterpunkte: visuell separiert vom Rest (eigener Kasten); ggf. Prio-getönt.
+                    Card(
+                        Modifier.fillMaxWidth().padding(vertical = 8.dp).tag("box:subitems"),
+                        colors = ownBand.boxTint()
+                            ?.let { CardDefaults.cardColors(containerColor = it.compositeOver(MaterialTheme.colorScheme.surfaceVariant)) }
+                            ?: CardDefaults.cardColors(),
+                    ) {
                         Column(Modifier.padding(vertical = 6.dp)) {
                             Text(
                                 "Unterpunkte",
@@ -436,17 +523,25 @@ fun TodoDetailScreen(
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                             )
-                            for ((i, s) in subItems.withIndex()) {
+                            for ((i, s) in subShown.withIndex()) {
+                                val sBand = PrioritySort.bandOf(s, subDues[s.nodeId], now)
+                                val sTint = sBand.rowTint()
                                 val row: @Composable () -> Unit = {
                                     Row(
                                         Modifier.fillMaxWidth()
                                             .tag(rowTag(s.title))
                                             .columnDragItem(subDrag, i)
+                                            .then(if (sTint != null) Modifier.background(sTint) else Modifier)
                                             .padding(start = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         // Auch Text-/Notiz-Unterpunkte tragen einen Haken (done gibt es auf jedem Knoten).
-                                        Checkbox(checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly)
+                                        Checkbox(
+                                            checked = s.done, onCheckedChange = { setDone(s.nodeId, it) }, enabled = !readOnly,
+                                            colors = sBand.color()
+                                                ?.let { CheckboxDefaults.colors(uncheckedColor = it, checkedColor = it) }
+                                                ?: CheckboxDefaults.colors(),
+                                        )
                                         // clickable nur auf dem Text -> Tap/Long-Press auf dem Ziehgriff navigiert nicht.
                                         Text(
                                             s.title.ifBlank { "(ohne Titel)" },
@@ -456,13 +551,19 @@ fun TodoDetailScreen(
                                         )
                                         if (!readOnly) {
                                             ColumnDragHandle(
-                                                subDrag, i, s.title, subItems.size,
+                                                subDrag, i, s.title, subShown.size,
                                                 onDragStart = { openTrash = null },
                                                 onDrop = { from, to ->
-                                                    val cur = subItems.toMutableList()
+                                                    val cur = subShown.toMutableList()
                                                     val moved = cur.removeAt(from)
                                                     cur.add(to, moved)
-                                                    scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, cur.getOrNull(to - 1), cur.getOrNull(to + 1)) } }
+                                                    if (prioSort) {
+                                                        val ranked = cur.map { PrioritySort.ranked(it, subDues[it.nodeId], now) }
+                                                        val plan = resolveDrop(ranked, to)
+                                                        scope.launch { withContext(Dispatchers.IO) { repo.applyPriorityDrop(moved.nodeId, plan) } }
+                                                    } else {
+                                                        scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, cur.getOrNull(to - 1), cur.getOrNull(to + 1)) } }
+                                                    }
                                                 },
                                             )
                                         }
@@ -503,6 +604,7 @@ fun TodoDetailScreen(
                             onReorder = if (readOnly) null else ({ moved, prev, next ->
                                 scope.launch { withContext(Dispatchers.IO) { repo.reorderNode(moved.nodeId, prev, next) } }
                             }),
+                            containerColor = ownBand.boxTint()?.compositeOver(MaterialTheme.colorScheme.surfaceVariant),
                             onOpen = { attOpen = it.node },
                         )
                     }
@@ -532,6 +634,16 @@ fun TodoDetailScreen(
             allowCreate = true,
             onPick = { raw -> tagPicker = false; addTag(raw) },
             onDismiss = { tagPicker = false },
+        )
+    }
+    if (prioPick) {
+        PriorityPickerDialog(
+            current = Priority.handBand(node.ext),
+            onPick = { level ->
+                prioPick = false
+                scope.launch { withContext(Dispatchers.IO) { repo.setPriority(node.nodeId, level) } }
+            },
+            onDismiss = { prioPick = false },
         )
     }
     if (repeatDialog) {

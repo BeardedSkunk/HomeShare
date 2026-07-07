@@ -20,7 +20,8 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
   werden (frühere „nicht flashen"-Sperre am 2026-07-05 aufgehoben). Cubot Max = Android 6, App läuft dort nicht.
 - UI-Automatisierung: testTags erscheinen als resource-id im `uiautomator dump`
   (Konvention in `ui/TestTags.kt`: `row:<titel>`, `fab:add`, `topbar:*`, `menu:create:*`,
-  `drag:*`, `trash:*`, `box:*`, `field:*`). In Dialog-Fenstern fehlen die IDs → per `text="…"` matchen.
+  `drag:*`, `trash:*`, `box:*`, `field:*`, `prio:{none|yellow|orange|red}`, `menu:prio-sort`,
+  `menu:prio`/`action:prio`). In Dialog-Fenstern fehlen die IDs → per `text="…"` matchen.
   Screenshots vor dem Auswerten auf 1/3 verkleinern (Pillow), Tap-Koordinaten ×3.
 
 ## Datenmodell (der Kern, alles hängt daran)
@@ -67,7 +68,10 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
 ## Aktueller Stand / offene Baustellen
 
 Branch `feature/list-types`. Fertig: einheitliche Listen-UI, Todo-UI, Anhänge-Redesign +
-Detailansicht, versionierte Drag-Sortierung, Swipe-Löschen, testTags. Offen (Auswahl):
-Zeilen-Drag ohne Live-Preview; Farben/Tags-UI; Knoten verschieben (moveNode existiert im Backend);
+Detailansicht, versionierte Drag-Sortierung, Swipe-Löschen, testTags, **Prioritäts-Farben**
+(5-Band-Modell in `core/Priority.kt`/`data/PrioritySort.kt`: Hand-Prio-Picker ohne Due-Date,
+Due-Date leitet Band automatisch ab; optionale Auto-Sortierung pro Liste/Unterpunkte-Kasten,
+Flag synct via ext am Container; Drag ändert Prio bzw. snappt ins eigene Band). Offen (Auswahl):
+Zeilen-Drag ohne Live-Preview; Tags-UI; Knoten verschieben (moveNode existiert im Backend);
 15-MiB-Blob-Limit (docs/large-file-streaming-plan.md); History-Browser; Op-Log-Kompaktierung;
 Eviction wieder verdrahten; Web-UI. Cross-Gruppen-Design: docs/cross-group-sharing-design.md.
