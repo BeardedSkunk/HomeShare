@@ -139,6 +139,11 @@ fun PostDetailEditor(
     var tfv by remember { mutableStateOf(TextFieldValue(post?.text ?: "")) }
     var currentNodeId by remember { mutableStateOf(post?.nodeId) }
 
+    // Undo-Anker: bei Neuanlage ein stabiler Besuchs-Schlüssel (nach Schließen/Wiederöffnen
+    // startet die Kette der dann existierenden Notiz leer — akzeptiert).
+    val anchorId = remember { post?.nodeId ?: "new:" + java.util.UUID.randomUUID() }
+    RegisterUndoAnchor(repo.undo, anchorId)
+
     var nodeTags by remember { mutableStateOf(post?.tags ?: emptyList<String>()) }
     var tagPicker by remember { mutableStateOf(false) }
     var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -226,6 +231,8 @@ fun PostDetailEditor(
     /** Persistiert den Text des Eintrags (Anhänge werden sofort beim Anlegen/Löschen persistiert). */
     fun save() {
         val text = tfv.text
+        // Leere Neuanlage nicht anlegen — sonst erzeugt der Auto-Save-Debounce leere Knoten.
+        if (currentNodeId == null && text.isBlank()) return
         scope.launch {
             val newId = withContext(Dispatchers.IO) {
                 val entryId = currentNodeId
@@ -269,11 +276,38 @@ fun PostDetailEditor(
         }
     }
 
+    // Auto-Save: 3 s Tipp-Pause committet (dank editNode-Guard gratis, wenn nichts geändert).
+    LaunchedEffect(sourceMode, tfv.text) {
+        if (!sourceMode) return@LaunchedEffect
+        kotlinx.coroutines.delay(3000)
+        save()
+    }
+    // App in den Hintergrund -> offenen Quelltext committen (Auto-Save-Modell, kein Verwerfen).
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE && sourceMode) save()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     // ---- Anhang-Detailansicht (modal) ----
     attOpen?.let { a ->
         BackHandler { attOpen = null }
         AttachmentDetailScreen(repo = repo, blobStore = blobStore, attachment = a, readOnly = readOnly, onOpenShare = onOpenShare, onClose = { attOpen = null })
         return
+    }
+
+    // Back speichert im Quelltext-Modus statt zu verwerfen (behebt den alten Datenverlust-Bug);
+    // eine leere Neuanlage schließt direkt. Überschreibt den BackHandler des aufrufenden Screens.
+    BackHandler {
+        if (sourceMode) {
+            save()
+            if (currentNodeId == null && tfv.text.isBlank()) onClose() else sourceMode = false
+        } else {
+            onClose()
+        }
     }
 
     // Links-Swipe -> stehende Mülltonne; EIN Zustand für Anhänge und Markdown-Zeilen.
@@ -295,6 +329,7 @@ fun PostDetailEditor(
         )
     }
 
+    Box {
     Scaffold(
         topBar = {
             DetailTopBar(
@@ -418,6 +453,8 @@ fun PostDetailEditor(
                 }
             }
         }
+    }
+    UndoRedoButtons(repo.undo, anchorId, Modifier.align(Alignment.BottomStart))
     }
     if (tagPicker) {
         TagPickerSheet(

@@ -127,6 +127,11 @@ fun CalendarEntryEditor(
     // Anhänge und der Menü-Sync-Toggle möglich.
     var currentNodeId by remember { mutableStateOf(post?.nodeId) }
 
+    // Undo-Anker (Neuanlage: stabiler Besuchs-Schlüssel wie im PostDetailEditor). Jede
+    // Feldänderung persistiert bereits einzeln -> automatisch je ein Undo-Punkt.
+    val anchorId = remember { post?.nodeId ?: "new:" + java.util.UUID.randomUUID() }
+    RegisterUndoAnchor(repo.undo, anchorId)
+
     var nodeTags by remember { mutableStateOf(post?.tags ?: emptyList<String>()) }
     var tagPicker by remember { mutableStateOf(false) }
     var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -295,6 +300,21 @@ fun CalendarEntryEditor(
         mutableStateOf(post?.let { settings.calendarEntrySyncOverride(it.nodeId) ?: settings.isCalendarFeedEnabled(it.rootId) } ?: true)
     }
 
+    // Unveränderte Neuanlage nicht anlegen — sonst erzeugen Debounce/Back leere Termin-Knoten.
+    fun headerUntouched() = currentNodeId == null && headerTfv.text == initialHeader
+
+    // Auto-Save: 3 s Tipp-Pause im Titel/Body-Quelltext committet (Feld-persist() bleiben unverändert).
+    LaunchedEffect(sourceMode, headerTfv.text) {
+        if (!sourceMode || headerUntouched()) return@LaunchedEffect
+        kotlinx.coroutines.delay(3000)
+        persist()
+    }
+    // Back speichert im Quelltext-Modus statt zu verwerfen (Auto-Save-Modell).
+    BackHandler {
+        if (sourceMode && !headerUntouched()) { persist(); sourceMode = false } else onClose()
+    }
+
+    Box {
     Scaffold(
         topBar = {
             DetailTopBar(
@@ -477,6 +497,8 @@ fun CalendarEntryEditor(
                 Spacer(Modifier.height(ATTACHMENT_FAB_CLEARANCE))
             }
         }
+    }
+    UndoRedoButtons(repo.undo, anchorId, Modifier.align(Alignment.BottomStart))
     }
     if (tagPicker) {
         TagPickerSheet(

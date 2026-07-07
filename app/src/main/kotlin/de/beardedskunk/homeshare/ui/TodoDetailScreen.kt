@@ -98,6 +98,9 @@ fun TodoDetailScreen(
     val context = LocalContext.current
     val revision by repo.revision.collectAsState()
 
+    // Undo-Anker = Aufgaben-Knoten (deckt Body, Unterpunkte, Anhänge und Termine ab).
+    RegisterUndoAnchor(repo.undo, todo.nodeId)
+
     var tagPicker by remember { mutableStateOf(false) }
     var allTagsCache by remember { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(tagPicker) {
@@ -134,13 +137,26 @@ fun TodoDetailScreen(
     var bodyExpanded by remember { mutableStateOf(true) }
     var editTfv by remember { mutableStateOf(TextFieldValue("")) }
 
-    fun saveBody() {
+    // Persistiert Titel+Body (dank editNode-Guard gratis, wenn nichts geändert).
+    fun persistBody() {
+        val t = editTfv.text
         scope.launch {
             withContext(Dispatchers.IO) {
-                repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(text = editTfv.text)) }
+                repo.headContent(node.nodeId)?.let { repo.editNode(node.nodeId, it.copy(text = t)) }
             }
-            bodySource = false
         }
+    }
+
+    fun saveBody() {
+        persistBody()
+        bodySource = false
+    }
+
+    // Auto-Save: 3 s Tipp-Pause im Quelltext committet.
+    LaunchedEffect(bodySource, editTfv.text) {
+        if (!bodySource) return@LaunchedEffect
+        kotlinx.coroutines.delay(3000)
+        persistBody()
     }
 
     // ---- Suche im Body ----
@@ -197,7 +213,8 @@ fun TodoDetailScreen(
         CalendarEntryEditor(repo = repo, blobStore = blobStore, parentId = node.nodeId, post = c, settings = settings, onOpenShare = onOpenShare, onRequestCalendarSync = onRequestCalendarSync, onClose = { calEdit = null })
         return
     }
-    BackHandler { onClose() }
+    // Back speichert einen offenen Quelltext statt ihn zu verwerfen (Auto-Save-Modell).
+    BackHandler { if (bodySource) saveBody() else onClose() }
 
     // Anhänge direkt unter der Aufgabe anlegen.
     val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
@@ -257,6 +274,7 @@ fun TodoDetailScreen(
     val hasBody = postBody(node.text).isNotBlank()
     val bodyStyle = MaterialTheme.typography.bodyLarge
 
+    Box {
     Scaffold(
         topBar = {
             DetailTopBar(
@@ -504,6 +522,8 @@ fun TodoDetailScreen(
                 }
             }
         }
+    }
+    UndoRedoButtons(repo.undo, todo.nodeId, Modifier.align(Alignment.BottomStart))
     }
     if (tagPicker) {
         TagPickerSheet(

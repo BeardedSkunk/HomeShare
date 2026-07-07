@@ -88,6 +88,10 @@ fun AttachmentDetailScreen(
     val context = LocalContext.current
     val revision by repo.revision.collectAsState()
 
+    // Undo-Anker = Anhang-Knoten (deckt auch Edits am Beschreibungs-Kind ab — es zählt der
+    // aktive Anker beim Authoring, nicht die nodeId der Op).
+    RegisterUndoAnchor(repo.undo, attachment.nodeId)
+
     var att by remember { mutableStateOf(attachment) }
     var capId by remember { mutableStateOf<String?>(null) }
     var tfv by remember { mutableStateOf(TextFieldValue("")) }
@@ -215,6 +219,14 @@ fun AttachmentDetailScreen(
 
     BackHandler { if (sourceMode) { save(); sourceMode = false } else onClose() }
 
+    // Auto-Save: 3 s Tipp-Pause committet (dank editNode-Guard gratis, wenn nichts geändert).
+    LaunchedEffect(sourceMode, tfv.text) {
+        if (!sourceMode) return@LaunchedEffect
+        kotlinx.coroutines.delay(3000)
+        save()
+    }
+
+    Box {
     Scaffold(
         topBar = {
             DetailTopBar(
@@ -394,6 +406,8 @@ fun AttachmentDetailScreen(
                 Spacer(Modifier.size(24.dp))
             }
         }
+    }
+    UndoRedoButtons(repo.undo, attachment.nodeId, Modifier.align(Alignment.BottomStart))
     }
     if (tagPicker) {
         TagPickerSheet(

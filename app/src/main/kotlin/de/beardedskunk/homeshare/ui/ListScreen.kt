@@ -171,6 +171,10 @@ fun ListScreen(
     val canMerge = container?.let { !it.isForeign || it.foreignRight.canMerge() } ?: true
     val isCalendar = container?.isCalendarFeed == true
 
+    // Undo-Anker dieses Screens (Wurzel = ROOT-Sentinel). VOR den modalen Editor-Zweigen, damit
+    // er aktiv bleibt, wenn ein Editor seinen eigenen Anker oben drauflegt.
+    RegisterUndoAnchor(repo.undo, parentId)
+
     var children by remember { mutableStateOf<List<NodeState>>(emptyList()) }
     var postImages by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     // Fortschritts-Badge (erledigt/gesamt) je Aufgabe bzw. Aufgaben-Liste (childDefault==TODO).
@@ -380,13 +384,25 @@ fun ListScreen(
         }
     }
 
-    // Speichert den bearbeiteten Kopf-Text (Typ bleibt unangetastet) und kehrt in die Render-Ansicht zurück.
-    fun saveHeader() {
+    // Persistiert den Kopf-Text (Typ bleibt unangetastet); dank editNode-Guard gratis ohne Änderung.
+    fun persistHeader() {
         val t = headerTfv.text
         val id = container?.nodeId ?: return
         scope.launch { withContext(Dispatchers.IO) { repo.headContent(id)?.let { repo.editNode(id, it.copy(text = t)) } } }
+    }
+
+    // Speichern + zurück in die Render-Ansicht (✓-Toggle und Back).
+    fun saveHeader() {
+        persistHeader()
         headerSource = false
         headerExpanded = false
+    }
+
+    // Auto-Save: 3 s Tipp-Pause im Kopf-Quelltext committet (startet bei jedem Tastendruck neu).
+    LaunchedEffect(headerSource, headerTfv.text) {
+        if (!headerSource) return@LaunchedEffect
+        kotlinx.coroutines.delay(3000)
+        persistHeader()
     }
 
     // ---- Vollbild-Unteransichten (Editor/Konflikt/Bild) ----
@@ -450,8 +466,10 @@ fun ListScreen(
         return
     }
 
-    if (!isRoot) BackHandler { onBack() }
+    // Back speichert einen offenen Kopf-Quelltext statt ihn zu verwerfen (Auto-Save-Modell).
+    if (!isRoot) BackHandler { if (headerSource) saveHeader() else onBack() }
 
+    Box {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -661,6 +679,8 @@ fun ListScreen(
                 }
             }
         }
+    }
+    UndoRedoButtons(repo.undo, parentId, Modifier.align(Alignment.BottomStart))
     }
 
     // ---- Dialoge ----
