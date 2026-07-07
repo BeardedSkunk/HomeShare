@@ -39,10 +39,26 @@ import java.util.UUID
 class FeedRepository(
     private val db: SQLiteDatabase,
     private val identity: DeviceIdentity,
+    val undo: UndoManager = UndoManager(),
 ) : OpSource, FeedScopedSource {
 
     var onLocalChange: (() -> Unit)? = null
     var onAnyChange: (() -> Unit)? = null
+
+    init {
+        undo.executor = object : UndoExecutor {
+            override fun soleHeadId(nodeId: String): String? =
+                loadNode(nodeId).heads().singleOrNull()?.versionId
+
+            override fun versionContent(nodeId: String, versionId: String): NodeContent? =
+                loadNode(nodeId)[versionId]?.content
+
+            // Bewusst OHNE Marker-Strip und OHNE Gleichheits-Guard: der Undo-Pfad liefert nie
+            // No-Ops, und der restore-Marker muss die Op überleben.
+            override fun authorRestore(nodeId: String, content: NodeContent): String =
+                author(nodeId, currentHeads(nodeId), content).versionId
+        }
+    }
 
     private val _revision = MutableStateFlow(0)
     val revision: StateFlow<Int> = _revision
@@ -76,6 +92,7 @@ class FeedRepository(
             db.endTransaction()
         }
         bumpRevision()
+        undo.onLocalOp(nodeId, parents, version.versionId)
         onLocalChange?.invoke()
         onAnyChange?.invoke()
         return version
@@ -102,12 +119,24 @@ class FeedRepository(
         return getNode(id)!!
     }
 
-    fun editNode(nodeId: String, content: NodeContent): NodeVersion =
-        author(nodeId, currentHeads(nodeId), content)
+    fun editNode(nodeId: String, content: NodeContent): NodeVersion {
+        // restore-Marker eines Undo-Heads nicht in normale Folge-Edits durchsickern lassen
+        // (Edits basieren auf headContent().copy(...)).
+        val stripped = if (UndoMeta.RESTORE in content.ext) {
+            content.copy(ext = content.ext - UndoMeta.RESTORE)
+        } else {
+            content
+        }
+        val heads = loadNode(nodeId).heads()
+        // Kein-Op-Guard: identischer Inhalt bei linearem Zustand -> nichts schreiben
+        // (früher erzeugte jeder Save eine neue versionId, weil die HLC in den Hash einfließt).
+        heads.singleOrNull()?.let { if (it.content == stripped) return it }
+        return author(nodeId, heads.map { it.versionId }.toSet(), stripped)
+    }
 
     fun deleteNode(nodeId: String): NodeVersion {
         val hc = headContent(nodeId) ?: NodeContent()
-        return author(nodeId, currentHeads(nodeId), hc.copy(deleted = true))
+        return editNode(nodeId, hc.copy(deleted = true))
     }
 
     fun moveNode(nodeId: String, newParentId: String, orderKey: String = "") {
@@ -155,12 +184,14 @@ class FeedRepository(
         return OrderKeys.between(lo, hi)
     }
 
-    /** Führt einen Klon-Plan aus: erst der Spawn-Marker am Original, dann die Kopie-Knoten. */
-    private fun executeSpawn(taskId: String, newContent: NodeContent, plan: TaskRepeat.ClonePlan): NodeVersion {
-        val version = editNode(taskId, newContent.copy(ext = newContent.ext + (TaskRepeat.KEY_SPAWNED to plan.rootId)))
-        for ((id, content) in plan.nodes) createNodeAt(id, content)
-        return version
-    }
+    /** Führt einen Klon-Plan aus: erst der Spawn-Marker am Original, dann die Kopie-Knoten.
+     *  Als EINE Undo-Gruppe: ein Undo entfernt die Kopie UND stellt das Original zurück. */
+    private fun executeSpawn(taskId: String, newContent: NodeContent, plan: TaskRepeat.ClonePlan): NodeVersion =
+        undo.group {
+            val version = editNode(taskId, newContent.copy(ext = newContent.ext + (TaskRepeat.KEY_SPAWNED to plan.rootId)))
+            for ((id, content) in plan.nodes) createNodeAt(id, content)
+            version
+        }
 
     /**
      * Haken einer Aufgabe setzen/entfernen — zentrale Stelle, damit der Repeater greift.
@@ -179,8 +210,10 @@ class FeedRepository(
             val fresh = spawned != null && !spawned.deleted &&
                 System.currentTimeMillis() - spawned.created.wallMillis < TaskRepeat.UNSPAWN_WINDOW_MILLIS
             if (!fresh) return editNode(nodeId, hc.copy(done = false))
-            deleteNode(spawned!!.nodeId)
-            return editNode(nodeId, hc.copy(done = false, ext = hc.ext - TaskRepeat.KEY_SPAWNED))
+            return undo.group { // Rücknahme = Kopie löschen + Marker entfernen: EIN Undo-Schritt
+                deleteNode(spawned!!.nodeId)
+                editNode(nodeId, hc.copy(done = false, ext = hc.ext - TaskRepeat.KEY_SPAWNED))
+            }
         }
         val wantsSpawn = TaskRepeat.rule(hc.ext) != null &&
             TaskRepeat.mode(hc.ext) == TaskRepeat.MODE_DONE &&
@@ -375,6 +408,8 @@ class FeedRepository(
             db.endTransaction()
         }
         bumpRevision()
+        // Fremde Op: betroffene Undo-Einträge sind stale -> raus (fremde Ops nie in die Kette).
+        undo.invalidate(version.nodeId)
         onAnyChange?.invoke()
         maybeAutoResolve(version.nodeId)
         return true
