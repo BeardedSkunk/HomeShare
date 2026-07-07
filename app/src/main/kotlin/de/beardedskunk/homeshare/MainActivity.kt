@@ -77,6 +77,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // App im Vordergrund -> einmal synchronisieren.
         appGraph.autoSync.trigger()
+        // Fälligkeits-Trigger wiederholender Aufgaben: jetzt fällige Kopien nachziehen
+        // (kein Alarm/Scheduler — die Kopie muss erst sichtbar sein, wenn die App läuft).
+        Thread { runCatching { appGraph.repo.rollOverdueRepeats() } }.start()
     }
 
     // Kein autoSync.stop() mehr beim Schliessen: der Vordergrund-Service haelt den Sync am

@@ -22,6 +22,7 @@ import de.beardedskunk.homeshare.sync.subtreeOpAllowed
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -137,6 +138,89 @@ class FeedRepository(
 
     fun resolveConflict(nodeId: String, chosen: NodeContent): NodeVersion =
         author(nodeId, currentHeads(nodeId), chosen)
+
+    // ----------------------------------------------------------- Wiederholende Aufgaben (TaskRepeat)
+
+    /** Knoten mit VORGEGEBENER (deterministischer) Id anlegen — nur für Repeat-Kopien. */
+    private fun createNodeAt(nodeId: String, content: NodeContent): NodeVersion =
+        author(nodeId, currentHeads(nodeId), content)
+
+    /** Schlüssel direkt HINTER [node] unter seinen Geschwistern (Landeplatz der Repeat-Kopie). */
+    private fun orderKeyAfter(node: NodeState): String {
+        val sibs = children(node.parentId)
+        val i = sibs.indexOfFirst { it.nodeId == node.nodeId }
+        val lo = OrderKeys.effective(node.orderKey, node.created)
+        var hi = if (i >= 0) sibs.getOrNull(i + 1)?.let { OrderKeys.effective(it.orderKey, it.created) } else null
+        if (hi != null && lo >= hi) hi = null
+        return OrderKeys.between(lo, hi)
+    }
+
+    /** Führt einen Klon-Plan aus: erst der Spawn-Marker am Original, dann die Kopie-Knoten. */
+    private fun executeSpawn(taskId: String, newContent: NodeContent, plan: TaskRepeat.ClonePlan): NodeVersion {
+        val version = editNode(taskId, newContent.copy(ext = newContent.ext + (TaskRepeat.KEY_SPAWNED to plan.rootId)))
+        for ((id, content) in plan.nodes) createNodeAt(id, content)
+        return version
+    }
+
+    /**
+     * Haken einer Aufgabe setzen/entfernen — zentrale Stelle, damit der Repeater greift.
+     * Abhaken bei Regel mit Trigger „Erledigung": im selben Op wird [TaskRepeat.KEY_SPAWNED]
+     * gesetzt (Sperre) und direkt danach die Kopie erzeugt. Enthaken nimmt eine noch frische
+     * Kopie (< [TaskRepeat.UNSPAWN_WINDOW_MILLIS]) samt Marker wieder zurück; eine ältere bleibt
+     * stehen (und erneutes Abhaken spawnt wegen des Markers NICHT noch einmal).
+     * Spawns passieren nur hier beim lokalen Autorisieren — nie im [ingest]-Pfad, damit
+     * empfangende Geräte keine Duplikate erzeugen.
+     */
+    fun setTaskDone(nodeId: String, done: Boolean): NodeVersion? {
+        val hc = headContent(nodeId) ?: return null
+        if (hc.done == done) return null
+        if (!done) {
+            val spawned = hc.ext[TaskRepeat.KEY_SPAWNED]?.let { getNode(it) }
+            val fresh = spawned != null && !spawned.deleted &&
+                System.currentTimeMillis() - spawned.created.wallMillis < TaskRepeat.UNSPAWN_WINDOW_MILLIS
+            if (!fresh) return editNode(nodeId, hc.copy(done = false))
+            deleteNode(spawned!!.nodeId)
+            return editNode(nodeId, hc.copy(done = false, ext = hc.ext - TaskRepeat.KEY_SPAWNED))
+        }
+        val wantsSpawn = TaskRepeat.rule(hc.ext) != null &&
+            TaskRepeat.mode(hc.ext) == TaskRepeat.MODE_DONE &&
+            hc.ext[TaskRepeat.KEY_SPAWNED] == null
+        val source = if (wantsSpawn) getNode(nodeId) else null
+        val plan = source?.let {
+            // Vorkommens-Schlüssel = Head vor dem Abhaken: eindeutig pro Abhak-Zyklus.
+            TaskRepeat.plan(it, ::children, it.headVersionId, LocalDate.now(), orderKeyAfter(it))
+        } ?: return editNode(nodeId, hc.copy(done = true)) // keine/erschöpfte Regel -> nur abhaken
+        return executeSpawn(nodeId, hc.copy(done = true), plan)
+    }
+
+    /**
+     * Fälligkeits-Sweep (Trigger „Fälligkeit"): erzeugt für jede Aufgabe mit Regel, verstrichenem
+     * Due Date (erster CALENDAR-Kindknoten, Tages-Granularität) und ohne Spawn-Marker die Kopie
+     * mit dem nächsten Vorkommen NACH heute (Catch-up = genau eine Kopie). Aufruf beim
+     * App-Start/-Resume; kein Alarm nötig — die Kopie muss erst sichtbar sein, wenn die App läuft.
+     * @return Anzahl erzeugter Kopien.
+     */
+    fun rollOverdueRepeats(today: LocalDate = LocalDate.now()): Int {
+        val candidates = queryNodeStates(
+            "n.type = ? AND n.deleted = 0 AND n.meta LIKE ?",
+            arrayOf(NodeType.TODO.name, "%${TaskRepeat.KEY_RULE}%"),
+        )
+        var spawned = 0
+        for (task in candidates) {
+            if (TaskRepeat.rule(task.ext) == null) continue
+            if (TaskRepeat.mode(task.ext) != TaskRepeat.MODE_DUE) continue
+            if (task.ext[TaskRepeat.KEY_SPAWNED] != null) continue
+            if (task.conflicted) continue // erst auflösen, sonst spawnen wir von der falschen Seite
+            val dueDay = TaskRepeat.dueChild(children(task.nodeId))?.let { TaskRepeat.dueDate(it) } ?: continue
+            if (!TaskRepeat.isOverdue(dueDay, today)) continue
+            // Vorkommens-Schlüssel = altes Due-Datum: geräteübergreifend dieselbe Kopie-Id.
+            val plan = TaskRepeat.plan(task, ::children, dueDay.toString(), today, orderKeyAfter(task)) ?: continue
+            val hc = headContent(task.nodeId) ?: continue
+            executeSpawn(task.nodeId, hc, plan)
+            spawned++
+        }
+        return spawned
+    }
 
     // ----------------------------------------------------------- Listen (= navigierbare TEXT-Knoten)
 
