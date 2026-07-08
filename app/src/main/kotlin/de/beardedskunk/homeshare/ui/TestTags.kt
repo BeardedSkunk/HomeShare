@@ -19,9 +19,10 @@ import androidx.compose.ui.platform.testTag
 //   field:<name>           Eingabefelder (body|listbody|calbody|caption:<i>|search|subitem-add|find|tag)
 //   tags:add               Plus-Button der Tag-Zeile
 //   tagsel:<tag>           Gewaehltes Tag im Tag-Such-Screen (Chip mit X)
-//   todo:done, box:subitems, box:attachments, box:event
-//   field:due              Fällig-Chip der Aufgaben-Ansicht (öffnet den Datums-Editor)
-//   action:repeat          Wiederholungs-Chip der Aufgaben-Ansicht (Kurzklick öffnet den
+//   todo:done, box:subitems, box:attachments
+//   box:reminder           Erinnerungs-Kasten der Aufgaben-Ansicht (Termin + Prio-Kreise + Wiederholung)
+//   field:due              Termin-Chip in der Erinnerungs-Box (öffnet den Datums-Editor)
+//   action:repeat          Wiederholungs-Chip in der Erinnerungs-Box (Kurzklick öffnet den
 //                          Repeater-Dialog, Langdruck entfernt die Wiederholung direkt; der
 //                          Dialog selbst ist ein Fenster ohne resource-ids -> per text matchen)
 //   fab:undo, fab:redo     Undo/Redo-Paar unten links (alle Screens; ausgegraut = Richtung leer)

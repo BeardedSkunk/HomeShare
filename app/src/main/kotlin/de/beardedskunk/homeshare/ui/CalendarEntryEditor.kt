@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -114,9 +113,13 @@ fun CalendarEntryEditor(
     onSearchTag: ((String) -> Unit)? = null,
     /** Wiederholungs-Dropdown ausblenden — Due-Date-Knoten: die Wiederholung lebt an der Aufgabe. */
     showRecurrence: Boolean = true,
-    /** Vorgaben nur für die NEUANLAGE (Due Date: ganztägig, Titel „Fällig"). */
+    /** Vorgaben nur für die NEUANLAGE (Due Date: ganztägig, Titel „zu Erledigen bis"). */
     defaultAllDay: Boolean = false,
     initialTitle: String = "",
+    /** EIN Zeitpunkt statt Start/Ende (Due Date): Ende = Start, nur Datum + ggf. Zeit, ohne Labels. */
+    singleDate: Boolean = false,
+    /** Undo-Kette des aufrufenden Screens mitbenutzen (Due Date: Änderungen gehören zur Aufgabe). */
+    undoAnchorId: String? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -128,8 +131,10 @@ fun CalendarEntryEditor(
     var currentNodeId by remember { mutableStateOf(post?.nodeId) }
 
     // Undo-Anker (Neuanlage: stabiler Besuchs-Schlüssel wie im PostDetailEditor). Jede
-    // Feldänderung persistiert bereits einzeln -> automatisch je ein Undo-Punkt.
-    val anchorId = remember { post?.nodeId ?: "new:" + java.util.UUID.randomUUID() }
+    // Feldänderung persistiert bereits einzeln -> automatisch je ein Undo-Punkt. Mit
+    // [undoAnchorId] landen die Ops stattdessen in der Kette des Aufrufers (Due Date:
+    // sonst wären Termin-Änderungen aus der Aufgaben-Ansicht heraus nicht rückgängig machbar).
+    val anchorId = remember { undoAnchorId ?: post?.nodeId ?: "new:" + java.util.UUID.randomUUID() }
     RegisterUndoAnchor(repo.undo, anchorId)
 
     var nodeTags by remember { mutableStateOf(post?.tags ?: emptyList<String>()) }
@@ -184,7 +189,7 @@ fun CalendarEntryEditor(
     var startDate by remember { mutableStateOf(existing?.let { dateOf(it.start) } ?: now.toLocalDate()) }
     var startTime by remember { mutableStateOf(existing?.takeIf { !it.allDay }?.let { timeOf(it.start) } ?: defStart) }
     var endDate by remember { mutableStateOf(existing?.let { dateOf(it.end) } ?: now.toLocalDate()) }
-    var endTime by remember { mutableStateOf(existing?.takeIf { !it.allDay }?.let { timeOf(it.end) } ?: defStart.plusHours(1)) }
+    var endTime by remember { mutableStateOf(existing?.takeIf { !it.allDay }?.let { timeOf(it.end) } ?: defStart.plusMinutes(30)) }
     var location by remember { mutableStateOf(existing?.location ?: "") }
     var reminder by remember { mutableStateOf(existing?.reminderMinutes) }
     var recurrence by remember { mutableStateOf(existing?.recurrence ?: Recurrence.NONE) }
@@ -219,12 +224,16 @@ fun CalendarEntryEditor(
         val end: String
         if (allDay) {
             start = startDate.toString()
-            end = (if (endDate.isBefore(startDate)) startDate else endDate).toString()
+            end = if (singleDate) start else (if (endDate.isBefore(startDate)) startDate else endDate).toString()
         } else {
             start = ZonedDateTime.of(startDate, startTime, zone).toString()
-            val endZdt = ZonedDateTime.of(endDate, endTime, zone)
-            val startZdt = ZonedDateTime.of(startDate, startTime, zone)
-            end = (if (endZdt.isBefore(startZdt)) startZdt else endZdt).toString()
+            end = if (singleDate) {
+                start // Due Date ist EIN Zeitpunkt, kein Zeitraum.
+            } else {
+                val endZdt = ZonedDateTime.of(endDate, endTime, zone)
+                val startZdt = ZonedDateTime.of(startDate, startTime, zone)
+                (if (endZdt.isBefore(startZdt)) startZdt else endZdt).toString()
+            }
         }
         return EventData(
             title = postTitle(headerText).trim(),
@@ -405,7 +414,8 @@ fun CalendarEntryEditor(
                 Modifier.fillMaxSize().imePadding().padding(16.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                // Kopf: Titel + Markdown-Beschreibung (gerendert bzw. als gemeinsames Quelltext-Feld).
+                // Kopf: NUR Titel + Markdown-Beschreibung wechseln mit ✓/✎ zwischen Render und
+                // Quelltext — alle Termin-Felder darunter bleiben in beiden Modi editierbar.
                 if (sourceMode) {
                     MarkdownEditField(
                         value = headerTfv,
@@ -414,68 +424,6 @@ fun CalendarEntryEditor(
                         minLines = 3,
                         focusRequester = findFocus,
                     )
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Ganztägig", modifier = Modifier.weight(1f))
-                        Switch(checked = allDay, onCheckedChange = { allDay = it; persist() })
-                    }
-
-                    Text("Start", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Beim Verschieben des Starts die Dauer beibehalten (Ende wandert mit).
-                        DateField("Datum", startDate, Modifier.weight(1f)) { picked ->
-                            if (allDay) {
-                                val days = ChronoUnit.DAYS.between(startDate, endDate).coerceAtLeast(0)
-                                startDate = picked
-                                endDate = picked.plusDays(days)
-                            } else {
-                                val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
-                                startDate = picked
-                                val ne = LocalDateTime.of(picked, startTime).plus(if (dur.isNegative) Duration.ZERO else dur)
-                                endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
-                            }
-                            persist()
-                        }
-                        if (!allDay) TimeField("Zeit", startTime, Modifier.weight(1f)) { picked ->
-                            val dur = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
-                            startTime = picked
-                            val ne = LocalDateTime.of(startDate, picked).plus(if (dur.isNegative) Duration.ZERO else dur)
-                            endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
-                            persist()
-                        }
-                    }
-
-                    Text("Ende", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DateField("Datum", endDate, Modifier.weight(1f)) { endDate = it; persist() }
-                        if (!allDay) TimeField("Zeit", endTime, Modifier.weight(1f)) { endTime = it; persist() }
-                    }
-
-                    OutlinedTextField(
-                        location, { location = it },
-                        label = { Text("Ort") }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) persistIfDirty() },
-                    )
-
-                    LabeledDropdown(
-                        label = "Erinnerung",
-                        current = reminderOptions.firstOrNull { it.second == reminder }?.first ?: "Keine",
-                        options = reminderOptions.map { it.first },
-                        onSelect = { sel -> reminder = reminderOptions.first { it.first == sel }.second; persist() },
-                    )
-                    if (showRecurrence) {
-                        LabeledDropdown(
-                            label = "Wiederholung",
-                            current = recurrence.label,
-                            options = Recurrence.entries.map { it.label },
-                            onSelect = { sel -> recurrence = Recurrence.entries.first { it.label == sel }; persist() },
-                        )
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (busy) "Als gebucht anzeigen" else "Als frei anzeigen", modifier = Modifier.weight(1f))
-                        Switch(checked = busy, onCheckedChange = { busy = it; persist() })
-                    }
                 } else {
                     MarkdownRenderHeader(
                         text = headerText,
@@ -483,7 +431,77 @@ fun CalendarEntryEditor(
                         onExpandedChange = { headerExpanded = it },
                         highlight = findQuery,
                     )
-                    EventSummary(buildEvent())
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Ganztägig", modifier = Modifier.weight(1f))
+                    Switch(checked = allDay, onCheckedChange = { allDay = it; persist() })
+                }
+
+                if (singleDate) {
+                    // Due Date: EIN Zeitpunkt — nur Datum (+ Zeit wenn getimt), ohne jedes Label.
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DateField("", startDate, Modifier.weight(1f)) { startDate = it; endDate = it; persist() }
+                        if (!allDay) {
+                            TimeField("", startTime, Modifier.weight(1f)) { startTime = it; endTime = it; persist() }
+                        }
+                    }
+                } else if (allDay) {
+                    // Ganztägig: von/bis nebeneinander (Verschieben des Starts hält die Dauer).
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DateField("von", startDate, Modifier.weight(1f)) { picked ->
+                            val days = ChronoUnit.DAYS.between(startDate, endDate).coerceAtLeast(0)
+                            startDate = picked
+                            endDate = picked.plusDays(days)
+                            persist()
+                        }
+                        DateField("bis", endDate, Modifier.weight(1f)) { endDate = it; persist() }
+                    }
+                } else {
+                    // Getimt: links die Zeitspanne (Dialog: Startzeit + Dauer), rechts der Start-Tag;
+                    // das Ende ergibt sich aus Start + Dauer (darf über Mitternacht laufen).
+                    val duration = Duration.between(LocalDateTime.of(startDate, startTime), LocalDateTime.of(endDate, endTime))
+                        .coerceAtLeast(Duration.ZERO)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TimeRangeField(startTime, endTime, duration.toMinutes(), Modifier.weight(1f)) { picked, minutes ->
+                            startTime = picked
+                            val ne = LocalDateTime.of(startDate, picked).plusMinutes(minutes)
+                            endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                            persist()
+                        }
+                        DateField("", startDate, Modifier.weight(1f)) { picked ->
+                            startDate = picked
+                            val ne = LocalDateTime.of(picked, startTime).plus(duration)
+                            endDate = ne.toLocalDate(); endTime = ne.toLocalTime()
+                            persist()
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    location, { location = it },
+                    label = { Text("Ort") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) persistIfDirty() },
+                )
+
+                LabeledDropdown(
+                    label = "Erinnerung",
+                    current = reminderOptions.firstOrNull { it.second == reminder }?.first ?: "Keine",
+                    options = reminderOptions.map { it.first },
+                    onSelect = { sel -> reminder = reminderOptions.first { it.first == sel }.second; persist() },
+                )
+                if (showRecurrence) {
+                    LabeledDropdown(
+                        label = "Wiederholung",
+                        current = recurrence.label,
+                        options = Recurrence.entries.map { it.label },
+                        onSelect = { sel -> recurrence = Recurrence.entries.first { it.label == sel }; persist() },
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (busy) "Als gebucht anzeigen" else "Als frei anzeigen", modifier = Modifier.weight(1f))
+                    Switch(checked = busy, onCheckedChange = { busy = it; persist() })
                 }
                 AttachmentBox(
                     attachments, blobStore,
@@ -541,7 +559,7 @@ internal fun DateField(label: String, date: LocalDate, modifier: Modifier = Modi
 private fun TimeField(label: String, time: LocalTime, modifier: Modifier = Modifier, onPick: (LocalTime) -> Unit) {
     var show by remember { mutableStateOf(false) }
     OutlinedButton(onClick = { show = true }, modifier = modifier) {
-        Text("$label: ${time.format(HM)}")
+        Text(if (label.isBlank()) time.format(HM) else "$label: ${time.format(HM)}")
     }
     if (show) {
         val state = rememberTimePickerState(initialHour = time.hour, initialMinute = time.minute, is24Hour = true)
@@ -550,6 +568,51 @@ private fun TimeField(label: String, time: LocalTime, modifier: Modifier = Modif
             confirmButton = { TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute)); show = false }) { Text("OK") } },
             dismissButton = { TextButton(onClick = { show = false }) { Text("Abbrechen") } },
             text = { TimePicker(state = state) },
+        )
+    }
+}
+
+/**
+ * Zeitspannen-Knopf „19:00 – 19:30": der Dialog stellt die Startzeit (TimePicker) und darunter
+ * die DAUER des Termins ein (Stunden 0–99 / Minuten 0–59 als horizontale [WheelNumberPicker],
+ * Vorgabe neuer Termine: 30 Minuten) — kein separates End-Datum/-Zeit-Feld mehr nötig.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeRangeField(
+    start: LocalTime,
+    end: LocalTime,
+    durationMinutes: Long,
+    modifier: Modifier = Modifier,
+    onPick: (LocalTime, Long) -> Unit,
+) {
+    var show by remember { mutableStateOf(false) }
+    OutlinedButton(onClick = { show = true }, modifier = modifier) {
+        Text("${start.format(HM)} – ${end.format(HM)}")
+    }
+    if (show) {
+        val state = rememberTimePickerState(initialHour = start.hour, initialMinute = start.minute, is24Hour = true)
+        val clamped = durationMinutes.coerceIn(0, 99L * 60 + 59)
+        var durH by remember { mutableStateOf((clamped / 60).toInt()) }
+        var durM by remember { mutableStateOf((clamped % 60).toInt()) }
+        AlertDialog(
+            onDismissRequest = { show = false },
+            confirmButton = {
+                TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute), durH * 60L + durM); show = false }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { show = false }) { Text("Abbrechen") } },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TimePicker(state = state)
+                    Text("Dauer", style = MaterialTheme.typography.labelLarge)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WheelNumberPicker(durH, { durH = it }, range = 0..99, orientation = WheelOrientation.HORIZONTAL)
+                        Text("Std.")
+                        WheelNumberPicker(durM, { durM = it }, range = 0..59, orientation = WheelOrientation.HORIZONTAL)
+                        Text("Min.")
+                    }
+                }
+            },
         )
     }
 }
@@ -570,28 +633,6 @@ private fun LabeledDropdown(label: String, current: String, options: List<String
                     DropdownMenuItem(text = { Text(opt) }, onClick = { open = false; onSelect(opt) })
                 }
             }
-        }
-    }
-}
-
-/** Read-only-Zusammenfassung des Termins in der Render-Ansicht — kompakt wie die
- *  Listen-Zeile ([CalendarRow]), aber mit ALLEN Details. */
-@Composable
-private fun EventSummary(ev: EventData) {
-    Card(Modifier.fillMaxWidth().tag("box:event")) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(formatWhen(ev), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-            if (ev.location.isNotBlank()) Text("📍 ${ev.location}", style = MaterialTheme.typography.bodySmall)
-            Text(
-                "🔔 " + (reminderOptions.firstOrNull { it.second == ev.reminderMinutes }?.first ?: "Keine Erinnerung"),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (ev.recurrence != Recurrence.NONE) Text("🔁 ${ev.recurrence.label}", style = MaterialTheme.typography.bodySmall)
-            Text(
-                if (ev.busy) "Als gebucht angezeigt" else "Als frei angezeigt",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

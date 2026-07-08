@@ -97,7 +97,7 @@ private data class TodoLoad(
  * getrennt der **Unterpunkte**-Kasten (alle Sub-Items mit Haken, Quick-Add-Zeile), dann
  * **Anhänge** (Bilder/Dateien) und **Termine**. Im Knotenbaum sind Unterpunkte/Anhänge/
  * Termine schlicht Geschwister-Kinder der Aufgabe – die Gruppierung ist rein visuell.
- * **Due Date** = erster CALENDAR-Kindknoten (Fällig-Zeile, [DueRow]); die **Wiederholung**
+ * **Due Date** = erster CALENDAR-Kindknoten (Erinnerungs-Kasten, [ReminderBox]); die **Wiederholung**
  * lebt als ext-Meta direkt am Aufgabenknoten ([TaskRepeat], [RepeatDialog]) — beim Abhaken
  * bzw. verstrichenem Due Date legt das Repository eine Kopie an ([FeedRepository.setTaskDone]).
  */
@@ -157,7 +157,7 @@ fun TodoDetailScreen(
     val ownBand = PrioritySort.bandOf(node, TaskRepeat.dueChild(kids)?.let { PrioritySort.dueMoment(it) }, now)
     var prioPick by remember { mutableStateOf(false) }
     val events = kids.filter { it.kind == NodeKind.CALENDAR }
-    // Erster Datumsknoten = Due Date (Fällig-Zeile); weitere sind Altbestand und bleiben gelistet.
+    // Erster Datumsknoten = Due Date (Erinnerungs-Kasten); weitere sind Altbestand und bleiben gelistet.
     val dueEvent = TaskRepeat.dueChild(kids)
     val otherEvents = events.filterNot { it.nodeId == dueEvent?.nodeId }
     val repeatRule = TaskRepeat.rule(node.ext)
@@ -220,8 +220,16 @@ fun TodoDetailScreen(
         CalendarEntryEditor(
             repo = repo, blobStore = blobStore, parentId = node.nodeId, post = dueEvent, settings = settings,
             onOpenShare = onOpenShare, onRequestCalendarSync = onRequestCalendarSync,
-            showRecurrence = false, defaultAllDay = true, initialTitle = TaskRepeat.DUE_TITLE,
-            onClose = { dueEdit = false },
+            showRecurrence = false, defaultAllDay = true, initialTitle = "zu Erledigen bis",
+            singleDate = true, undoAnchorId = node.nodeId,
+            onClose = {
+                dueEdit = false
+                // Termin und Hand-Prio schließen sich aus: wurde ein Termin angelegt/behalten,
+                // fällt die Prio zurück auf weiß (ohne Prio ein No-Op dank editNode-Guard).
+                scope.launch { withContext(Dispatchers.IO) {
+                    if (TaskRepeat.dueChild(repo.children(node.nodeId)) != null) repo.setPriority(node.nodeId, 0)
+                } }
+            },
         )
         return
     }
@@ -584,14 +592,17 @@ fun TodoDetailScreen(
                         }
                     }
                 }
-                if (!readOnly || dueEvent != null || repeatRule != null) {
+                val handPrio = Priority.handBand(node.ext)
+                if (!readOnly || dueEvent != null || repeatRule != null || handPrio != PrioBand.NONE) {
                     item(key = "due-repeat") {
-                        DueRow(
+                        ReminderBox(
                             due = dueEvent,
                             ruleSummary = repeatRule?.summary(),
                             overdue = !node.done &&
                                 dueEvent?.let { TaskRepeat.dueDate(it) }?.let { TaskRepeat.isOverdue(it, LocalDate.now()) } == true,
                             readOnly = readOnly,
+                            prio = handPrio,
+                            containerColor = ownBand.boxTint()?.compositeOver(MaterialTheme.colorScheme.surfaceVariant),
                             onEditDue = { dueEdit = true },
                             onEditRepeat = { repeatDialog = true },
                             onRemoveRepeat = if (repeatRule != null) {
@@ -603,6 +614,21 @@ fun TodoDetailScreen(
                                     } }
                                 }
                             } else null,
+                            onPickPrio = { level ->
+                                scope.launch { withContext(Dispatchers.IO) {
+                                    val due = TaskRepeat.dueChild(repo.children(node.nodeId))
+                                    if (level > 0 && due != null) {
+                                        // Hand-Prio und Termin schließen sich aus: Farbwahl
+                                        // löscht den Termin mit (EIN Undo-Schritt).
+                                        repo.undo.group {
+                                            repo.deleteNode(due.nodeId)
+                                            repo.setPriority(node.nodeId, level)
+                                        }
+                                    } else {
+                                        repo.setPriority(node.nodeId, level)
+                                    }
+                                } }
+                            },
                         )
                     }
                 }

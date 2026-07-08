@@ -1,5 +1,6 @@
 package de.beardedskunk.homeshare.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -37,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 enum class WheelOrientation { VERTICAL, HORIZONTAL }
 
@@ -189,6 +192,7 @@ fun WheelNumberPicker(
  * zentriert zwischen zwei festen Trennstrichen, die Nachbarn lugen abgedunkelt an den Rändern
  * herein — der linke rechtsbündig (sein Text-ENDE liegt am linken Strich), der rechte
  * linksbündig. Die Ausrichtung wechselt erst nach dem Settle, damit beim Wischen nichts springt.
+ * Tap auf einen Nachbarn wählt ihn direkt (animiert in die Mitte), Wischen geht weiterhin.
  */
 @Composable
 fun <T> PagerTextPicker(
@@ -201,6 +205,7 @@ fun <T> PagerTextPicker(
     val pagerState = rememberPagerState(
         initialPage = remember { items.indexOf(selected).coerceAtLeast(0) },
     ) { items.size }
+    val scope = rememberCoroutineScope()
     var lastEmitted by remember { mutableStateOf(selected) }
 
     LaunchedEffect(selected) {
@@ -232,7 +237,15 @@ fun <T> PagerTextPicker(
                 page > pagerState.settledPage -> Alignment.CenterStart
                 else -> Alignment.Center
             }
-            Box(Modifier.fillMaxSize().padding(horizontal = 6.dp), contentAlignment = align) {
+            Box(
+                Modifier.fillMaxSize()
+                    // Nachbar antippen = auswählen (ohne Ripple — der Pager animiert sichtbar genug).
+                    .clickable(interactionSource = null, indication = null, enabled = page != pagerState.settledPage) {
+                        scope.launch { pagerState.animateScrollToPage(page) }
+                    }
+                    .padding(horizontal = 6.dp),
+                contentAlignment = align,
+            ) {
                 Text(
                     label(items[page]),
                     maxLines = 1,

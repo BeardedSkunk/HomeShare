@@ -45,6 +45,34 @@ private val PICK_TAGS = mapOf(
 )
 
 /**
+ * Kompakte Prio-Kreise in einer Reihe (Erinnerungs-Box der Aufgaben-Ansicht): vier tappbare
+ * Kreise keine/gelb/orange/rot ohne Beschriftung; der aktuelle Wert bekommt einen Rahmen.
+ * [onPick] liefert den Level 0..3.
+ */
+@Composable
+fun PriorityDots(current: PrioBand, enabled: Boolean, onPick: (Int) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (band in PICK_BANDS) {
+            val fill = band.color() ?: MaterialTheme.colorScheme.surfaceVariant
+            Surface(
+                onClick = { onPick(band.level) },
+                enabled = enabled,
+                shape = CircleShape,
+                color = fill,
+                border = if (band == current) {
+                    BorderStroke(2.dp, MaterialTheme.colorScheme.onSurface)
+                } else if (band == PrioBand.NONE) {
+                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                } else {
+                    null
+                },
+                modifier = Modifier.size(26.dp).tag(PICK_TAGS.getValue(band)),
+            ) {}
+        }
+    }
+}
+
+/**
  * Farb-Picker für die Hand-Priorität einer Aufgabe (nur ohne Due-Date). Vier tappbare Kreise
  * keine/gelb/orange/rot; der aktuelle Wert bekommt einen Rahmen. [onPick] liefert den Level 0..3.
  */

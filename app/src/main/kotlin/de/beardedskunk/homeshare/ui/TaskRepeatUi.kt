@@ -21,6 +21,8 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,8 +36,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import de.beardedskunk.homeshare.core.PrioBand
 import de.beardedskunk.homeshare.core.RRule
 import de.beardedskunk.homeshare.data.NodeState
 import de.beardedskunk.homeshare.data.TaskRepeat
@@ -58,31 +62,59 @@ private val WEEKDAY_FULL = mapOf(
 )
 
 /**
- * Fällig-Zeile der Aufgaben-Ansicht: links das Due Date (erster Datums-Kindknoten, rot wenn
- * überfällig), rechts die Wiederholungsregel als Kurztext. Beide Chips öffnen ihre Editoren;
- * ohne Daten dienen sie als Anlege-Knöpfe (readOnly: nur vorhandene Infos, nicht klickbar).
+ * Erinnerungs-Kasten der Aufgaben-Ansicht (zwischen Unterpunkten und Anhängen): Zeile 1 = Termin
+ * (erster Datums-Kindknoten, „Termin: dd.MM.yyyy" bzw. „kein Termin", rot wenn überfällig) plus
+ * die vier Prio-Kreise ([PriorityDots] — Termin und Hand-Prio schließen sich aus, die Umschalt-
+ * Logik liegt beim Aufrufer). Zeile 2 = Wiederholungsregel als Kurztext („keine Wiederholung"
+ * ohne Regel). Chips öffnen ihre Editoren (readOnly: nur vorhandene Infos, nicht klickbar).
  */
 @Composable
-fun DueRow(
+fun ReminderBox(
     due: NodeState?,
     ruleSummary: String?,
     overdue: Boolean,
     readOnly: Boolean,
+    prio: PrioBand,
+    containerColor: Color?,
     onEditDue: () -> Unit,
     onEditRepeat: () -> Unit,
     onRemoveRepeat: (() -> Unit)?,
+    onPickPrio: (Int) -> Unit,
 ) {
-    if (readOnly && due == null && ruleSummary == null) return
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val dueDay = due?.let { TaskRepeat.dueDate(it) }
-        if (due != null || !readOnly) {
-            val error = MaterialTheme.colorScheme.error
-            Row(Modifier.fillMaxWidth()) {
+    if (readOnly && due == null && ruleSummary == null && prio == PrioBand.NONE) return
+    Card(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp).tag("box:reminder"),
+        colors = containerColor
+            ?.let { CardDefaults.cardColors(containerColor = it) }
+            ?: CardDefaults.cardColors(),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                "Erinnerung",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            val dueDay = due?.let { TaskRepeat.dueDate(it) }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val error = MaterialTheme.colorScheme.error
                 AssistChip(
                     onClick = onEditDue,
                     enabled = !readOnly,
-                    label = { Text(dueDay?.format(DUE_FMT) ?: (due?.title ?: "Fällig…")) },
-                    leadingIcon = { Icon(Icons.Filled.Event, contentDescription = "Fälligkeitsdatum") },
+                    label = {
+                        Text(
+                            when {
+                                dueDay != null -> "Termin: " + dueDay.format(DUE_FMT)
+                                due != null -> "Termin: " + due.title
+                                else -> "kein Termin"
+                            },
+                        )
+                    },
+                    leadingIcon = { Icon(Icons.Filled.Event, contentDescription = "Termin") },
                     colors = if (overdue) {
                         AssistChipDefaults.assistChipColors(labelColor = error, leadingIconContentColor = error)
                     } else {
@@ -90,16 +122,18 @@ fun DueRow(
                     },
                     modifier = Modifier.tag("field:due"),
                 )
+                Text("Prio:", style = MaterialTheme.typography.labelLarge)
+                PriorityDots(current = prio, enabled = !readOnly, onPick = onPickPrio)
             }
-        }
-        if (ruleSummary != null || !readOnly) {
-            Row(Modifier.fillMaxWidth()) {
-                RepeatChip(
-                    summary = ruleSummary,
-                    readOnly = readOnly,
-                    onClick = onEditRepeat,
-                    onLongClick = onRemoveRepeat,
-                )
+            if (ruleSummary != null || !readOnly) {
+                Row(Modifier.fillMaxWidth()) {
+                    RepeatChip(
+                        summary = ruleSummary,
+                        readOnly = readOnly,
+                        onClick = onEditRepeat,
+                        onLongClick = onRemoveRepeat,
+                    )
+                }
             }
         }
     }
@@ -123,7 +157,7 @@ private fun RepeatChip(summary: String?, readOnly: Boolean, onClick: () -> Unit,
         ) {
             Icon(Icons.Filled.Repeat, contentDescription = "Wiederholung", modifier = Modifier.size(18.dp))
             Text(
-                summary ?: "Wiederholung…",
+                summary ?: "keine Wiederholung",
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 6.dp),
             )
@@ -166,11 +200,11 @@ private val ORDINALS = listOf(1 to "1.", 2 to "2.", 3 to "3.", 4 to "4.", -1 to 
 
 /**
  * Editor der Wiederholungsregel einer Aufgabe. Verbirgt die RRULE-Komplexität hinter vier
- * Bausteinen (Text-Auswahlen als [PagerTextPicker]): Trigger (Fälligkeit/Erledigung/nie),
+ * Bausteinen (Text-Auswahlen als [PagerTextPicker]): Trigger (Termin/Erledigung/nie),
  * direkt darunter das Ende (für immer / bis Datum / für X Mal), dann Frequenz („alle N
  * Tage/Wochen/Monate/Jahre") und Detail je Frequenz (Wochentags-Chips; Monatstage inkl.
  * „letzter" oder Position wie „am 2. Dienstag"). Die Vorschauzeile zeigt live [RRule.summary].
- * Ohne Due Date fehlt „nach Fälligkeit" im Trigger-Picker (kein Disabled-Zustand im Picker
+ * Ohne Due Date fehlt „nach Termin" im Trigger-Picker (kein Disabled-Zustand im Picker
  * möglich); Trigger „nie" entfernt die Wiederholung beim Speichern (kein separater
  * Entfernen-Button mehr nötig).
  */
@@ -253,11 +287,11 @@ fun RepeatDialog(
                 val triggerItems = remember(hasDue) {
                     if (hasDue) listOf(Trigger.DUE, Trigger.DONE, Trigger.NONE) else listOf(Trigger.DONE, Trigger.NONE)
                 }
-                val triggerLabels = mapOf(Trigger.DUE to "nach Fälligkeit", Trigger.DONE to "nach Erledigung", Trigger.NONE to "nie")
+                val triggerLabels = mapOf(Trigger.DUE to "nach Termin", Trigger.DONE to "nach Erledigung", Trigger.NONE to "nie")
                 PagerTextPicker(triggerItems, trigger, { trigger = it }) { triggerLabels.getValue(it) }
                 if (!hasDue) {
                     Text(
-                        "(nach Fälligkeit erst mit Fälligkeitsdatum wählbar)",
+                        "(nach Termin erst mit Termin wählbar)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
