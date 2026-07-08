@@ -517,7 +517,7 @@ fun CalendarEntryEditor(
 internal fun DateField(label: String, date: LocalDate, modifier: Modifier = Modifier, onPick: (LocalDate) -> Unit) {
     var show by remember { mutableStateOf(false) }
     OutlinedButton(onClick = { show = true }, modifier = modifier) {
-        Text("$label: ${date.format(DATE_UI)}")
+        Text(if (label.isBlank()) date.format(DATE_UI) else "$label: ${date.format(DATE_UI)}")
     }
     if (show) {
         val state = rememberDatePickerState(

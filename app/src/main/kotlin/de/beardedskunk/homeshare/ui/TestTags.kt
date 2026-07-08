@@ -21,8 +21,9 @@ import androidx.compose.ui.platform.testTag
 //   tagsel:<tag>           Gewaehltes Tag im Tag-Such-Screen (Chip mit X)
 //   todo:done, box:subitems, box:attachments, box:event
 //   field:due              Fällig-Chip der Aufgaben-Ansicht (öffnet den Datums-Editor)
-//   action:repeat          Wiederholungs-Chip der Aufgaben-Ansicht (öffnet den Repeater-Dialog;
-//                          der Dialog selbst ist ein Fenster ohne resource-ids -> per text matchen)
+//   action:repeat          Wiederholungs-Chip der Aufgaben-Ansicht (Kurzklick öffnet den
+//                          Repeater-Dialog, Langdruck entfernt die Wiederholung direkt; der
+//                          Dialog selbst ist ein Fenster ohne resource-ids -> per text matchen)
 //   fab:undo, fab:redo     Undo/Redo-Paar unten links (alle Screens; ausgegraut = Richtung leer)
 
 fun Modifier.tag(name: String): Modifier = testTag(name)

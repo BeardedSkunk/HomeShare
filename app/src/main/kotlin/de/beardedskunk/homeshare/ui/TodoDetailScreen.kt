@@ -415,15 +415,6 @@ fun TodoDetailScreen(
                 onRemove = if (!readOnly) { { removeTag(it) } } else null,
                 onSearchTag = onSearchTag,
             )
-            DueRow(
-                due = dueEvent,
-                ruleSummary = repeatRule?.summary(),
-                overdue = !node.done &&
-                    dueEvent?.let { TaskRepeat.dueDate(it) }?.let { TaskRepeat.isOverdue(it, LocalDate.now()) } == true,
-                readOnly = readOnly,
-                onEditDue = { dueEdit = true },
-                onEditRepeat = { repeatDialog = true },
-            )
             LazyColumn(
                 Modifier.fillMaxSize().padding(horizontal = 12.dp).imePadding(),
                 state = listState,
@@ -593,6 +584,28 @@ fun TodoDetailScreen(
                         }
                     }
                 }
+                if (!readOnly || dueEvent != null || repeatRule != null) {
+                    item(key = "due-repeat") {
+                        DueRow(
+                            due = dueEvent,
+                            ruleSummary = repeatRule?.summary(),
+                            overdue = !node.done &&
+                                dueEvent?.let { TaskRepeat.dueDate(it) }?.let { TaskRepeat.isOverdue(it, LocalDate.now()) } == true,
+                            readOnly = readOnly,
+                            onEditDue = { dueEdit = true },
+                            onEditRepeat = { repeatDialog = true },
+                            onRemoveRepeat = if (repeatRule != null) {
+                                {
+                                    scope.launch { withContext(Dispatchers.IO) {
+                                        repo.headContent(node.nodeId)?.let {
+                                            repo.editNode(node.nodeId, it.copy(ext = it.ext - TaskRepeat.KEY_RULE - TaskRepeat.KEY_MODE))
+                                        }
+                                    } }
+                                }
+                            } else null,
+                        )
+                    }
+                }
                 if (attachments.isNotEmpty()) {
                     item(key = "attachments") {
                         AttachmentBox(
@@ -655,23 +668,15 @@ fun TodoDetailScreen(
                 repeatDialog = false
                 scope.launch { withContext(Dispatchers.IO) {
                     repo.headContent(node.nodeId)?.let {
-                        repo.editNode(
-                            node.nodeId,
-                            it.copy(ext = it.ext + (TaskRepeat.KEY_RULE to rule.format()) + (TaskRepeat.KEY_MODE to mode)),
-                        )
+                        val ext = if (rule == null) {
+                            it.ext - TaskRepeat.KEY_RULE - TaskRepeat.KEY_MODE
+                        } else {
+                            it.ext + (TaskRepeat.KEY_RULE to rule.format()) + (TaskRepeat.KEY_MODE to mode)
+                        }
+                        repo.editNode(node.nodeId, it.copy(ext = ext))
                     }
                 } }
             },
-            onRemove = if (repeatRule != null) {
-                {
-                    repeatDialog = false
-                    scope.launch { withContext(Dispatchers.IO) {
-                        repo.headContent(node.nodeId)?.let {
-                            repo.editNode(node.nodeId, it.copy(ext = it.ext - TaskRepeat.KEY_RULE - TaskRepeat.KEY_MODE))
-                        }
-                    } }
-                }
-            } else null,
             onDismiss = { repeatDialog = false },
         )
     }

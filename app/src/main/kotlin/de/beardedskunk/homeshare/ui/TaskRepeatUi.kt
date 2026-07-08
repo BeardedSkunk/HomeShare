@@ -1,16 +1,19 @@
 package de.beardedskunk.homeshare.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Event
@@ -21,8 +24,6 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,7 +34,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import de.beardedskunk.homeshare.core.RRule
@@ -51,6 +51,12 @@ private val WEEKDAY_SHORT = mapOf(
     DayOfWeek.SUNDAY to "So",
 )
 
+private val WEEKDAY_FULL = mapOf(
+    DayOfWeek.MONDAY to "Montag", DayOfWeek.TUESDAY to "Dienstag", DayOfWeek.WEDNESDAY to "Mittwoch",
+    DayOfWeek.THURSDAY to "Donnerstag", DayOfWeek.FRIDAY to "Freitag", DayOfWeek.SATURDAY to "Samstag",
+    DayOfWeek.SUNDAY to "Sonntag",
+)
+
 /**
  * Fällig-Zeile der Aufgaben-Ansicht: links das Due Date (erster Datums-Kindknoten, rot wenn
  * überfällig), rechts die Wiederholungsregel als Kurztext. Beide Chips öffnen ihre Editoren;
@@ -64,36 +70,62 @@ fun DueRow(
     readOnly: Boolean,
     onEditDue: () -> Unit,
     onEditRepeat: () -> Unit,
+    onRemoveRepeat: (() -> Unit)?,
 ) {
     if (readOnly && due == null && ruleSummary == null) return
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val dueDay = due?.let { TaskRepeat.dueDate(it) }
         if (due != null || !readOnly) {
             val error = MaterialTheme.colorScheme.error
-            AssistChip(
-                onClick = onEditDue,
-                enabled = !readOnly,
-                label = { Text(dueDay?.format(DUE_FMT) ?: (due?.title ?: "Fällig…")) },
-                leadingIcon = { Icon(Icons.Filled.Event, contentDescription = "Fälligkeitsdatum") },
-                colors = if (overdue) {
-                    AssistChipDefaults.assistChipColors(labelColor = error, leadingIconContentColor = error)
-                } else {
-                    AssistChipDefaults.assistChipColors()
-                },
-                modifier = Modifier.tag("field:due"),
-            )
+            Row(Modifier.fillMaxWidth()) {
+                AssistChip(
+                    onClick = onEditDue,
+                    enabled = !readOnly,
+                    label = { Text(dueDay?.format(DUE_FMT) ?: (due?.title ?: "Fällig…")) },
+                    leadingIcon = { Icon(Icons.Filled.Event, contentDescription = "Fälligkeitsdatum") },
+                    colors = if (overdue) {
+                        AssistChipDefaults.assistChipColors(labelColor = error, leadingIconContentColor = error)
+                    } else {
+                        AssistChipDefaults.assistChipColors()
+                    },
+                    modifier = Modifier.tag("field:due"),
+                )
+            }
         }
         if (ruleSummary != null || !readOnly) {
-            AssistChip(
-                onClick = onEditRepeat,
-                enabled = !readOnly,
-                label = { Text(ruleSummary ?: "Wiederholung…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                leadingIcon = { Icon(Icons.Filled.Repeat, contentDescription = "Wiederholung") },
-                modifier = Modifier.tag("action:repeat"),
+            Row(Modifier.fillMaxWidth()) {
+                RepeatChip(
+                    summary = ruleSummary,
+                    readOnly = readOnly,
+                    onClick = onEditRepeat,
+                    onLongClick = onRemoveRepeat,
+                )
+            }
+        }
+    }
+}
+
+/** Wiederholungs-"Chip": Kurzklick öffnet den Dialog, Langdruck entfernt die Wiederholung direkt. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RepeatChip(summary: String?, readOnly: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)?) {
+    val colors = AssistChipDefaults.assistChipColors()
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = colors.containerColor,
+        modifier = Modifier.tag("action:repeat"),
+    ) {
+        Row(
+            Modifier
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick, enabled = !readOnly)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Repeat, contentDescription = "Wiederholung", modifier = Modifier.size(18.dp))
+            Text(
+                summary ?: "Wiederholung…",
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 6.dp),
             )
         }
     }
@@ -121,16 +153,26 @@ fun DueBadge(info: DueInfo, done: Boolean) {
 }
 
 private enum class MonthlyMode { PLAIN, MONTH_DAYS, POSITION }
+
+private val MONTHLY_LABELS = mapOf(
+    MonthlyMode.PLAIN to "am gleichen Tag",
+    MonthlyMode.MONTH_DAYS to "an Monatstagen",
+    MonthlyMode.POSITION to "am X. Wochentag",
+)
 private enum class EndMode { NEVER, UNTIL, COUNT }
+private enum class Trigger { DUE, DONE, NONE }
 
 private val ORDINALS = listOf(1 to "1.", 2 to "2.", 3 to "3.", 4 to "4.", -1 to "letzten")
 
 /**
  * Editor der Wiederholungsregel einer Aufgabe. Verbirgt die RRULE-Komplexität hinter vier
- * Bausteinen: Trigger (Fälligkeit/Erledigung), Frequenz („alle N Tage/Wochen/Monate/Jahre"),
- * Detail je Frequenz (Wochentags-Chips; Monatstage inkl. „letzter" oder Position wie
- * „am 2. Dienstag"), Ende (nie / an Datum / nach N Wiederholungen). Die Vorschauzeile zeigt
- * live [RRule.summary]. Ohne Due Date ist nur der Erledigt-Trigger wählbar.
+ * Bausteinen (Text-Auswahlen als [PagerTextPicker]): Trigger (Fälligkeit/Erledigung/nie),
+ * direkt darunter das Ende (für immer / bis Datum / für X Mal), dann Frequenz („alle N
+ * Tage/Wochen/Monate/Jahre") und Detail je Frequenz (Wochentags-Chips; Monatstage inkl.
+ * „letzter" oder Position wie „am 2. Dienstag"). Die Vorschauzeile zeigt live [RRule.summary].
+ * Ohne Due Date fehlt „nach Fälligkeit" im Trigger-Picker (kein Disabled-Zustand im Picker
+ * möglich); Trigger „nie" entfernt die Wiederholung beim Speichern (kein separater
+ * Entfernen-Button mehr nötig).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -138,13 +180,20 @@ fun RepeatDialog(
     initial: RRule?,
     initialMode: String,
     hasDue: Boolean,
-    onSave: (RRule, String) -> Unit,
-    onRemove: (() -> Unit)?,
+    onSave: (RRule?, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var mode by remember { mutableStateOf(if (hasDue) initialMode else TaskRepeat.MODE_DONE) }
+    var trigger by remember {
+        mutableStateOf(
+            when {
+                initial == null -> Trigger.NONE
+                initialMode == TaskRepeat.MODE_DUE && hasDue -> Trigger.DUE
+                else -> Trigger.DONE
+            },
+        )
+    }
     var freq by remember { mutableStateOf(initial?.freq ?: RRule.Freq.WEEKLY) }
-    var intervalText by remember { mutableStateOf((initial?.interval ?: 1).toString()) }
+    var interval by remember { mutableStateOf(initial?.interval?.coerceIn(1, 99) ?: 1) }
     var weekDays by remember {
         mutableStateOf(initial?.takeIf { it.freq == RRule.Freq.WEEKLY }?.byDay?.map { it.day }?.toSet() ?: emptySet())
     }
@@ -171,30 +220,26 @@ fun RepeatDialog(
         )
     }
     var untilDate by remember { mutableStateOf(initial?.until ?: LocalDate.now().plusMonths(1)) }
-    var countText by remember { mutableStateOf((initial?.count ?: 5).toString()) }
+    var count by remember { mutableStateOf(initial?.count?.coerceIn(1, 99) ?: 5) }
 
-    // Aktueller Stand als Regel; null solange Zahlenfelder unbrauchbar sind (deaktiviert Speichern).
-    fun build(): RRule? {
-        val interval = intervalText.toIntOrNull()?.takeIf { it >= 1 } ?: return null
-        val count = if (endMode == EndMode.COUNT) countText.toIntOrNull()?.takeIf { it >= 1 } ?: return null else null
-        return RRule(
-            freq = freq,
-            interval = interval,
-            byDay = when {
-                freq == RRule.Freq.WEEKLY -> weekDays.sorted().map { RRule.ByDay(0, it) }
-                freq == RRule.Freq.MONTHLY && monthlyMode == MonthlyMode.POSITION -> listOf(RRule.ByDay(posOrdinal, posDay))
-                else -> emptyList()
-            },
-            byMonthDay = if (freq == RRule.Freq.MONTHLY && monthlyMode == MonthlyMode.MONTH_DAYS) {
-                monthDays.sortedWith(compareBy({ it < 0 }, { it })) // -1 („letzter") ans Ende
-            } else {
-                emptyList()
-            },
-            until = if (endMode == EndMode.UNTIL) untilDate else null,
-            count = count,
-        )
-    }
-    val preview = build()
+    // Aktueller Stand als Regel (Wheel-Picker liefern immer gültige Werte -> nie null).
+    fun build(): RRule = RRule(
+        freq = freq,
+        interval = interval,
+        byDay = when {
+            freq == RRule.Freq.WEEKLY -> weekDays.sorted().map { RRule.ByDay(0, it) }
+            freq == RRule.Freq.MONTHLY && monthlyMode == MonthlyMode.POSITION -> listOf(RRule.ByDay(posOrdinal, posDay))
+            else -> emptyList()
+        },
+        byMonthDay = if (freq == RRule.Freq.MONTHLY && monthlyMode == MonthlyMode.MONTH_DAYS) {
+            monthDays.sortedWith(compareBy({ it < 0 }, { it })) // -1 („letzter") ans Ende
+        } else {
+            emptyList()
+        },
+        until = if (endMode == EndMode.UNTIL) untilDate else null,
+        count = if (endMode == EndMode.COUNT) count else null,
+    )
+    val preview = if (trigger != Trigger.NONE) build() else null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -204,30 +249,36 @@ fun RepeatDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                // Trigger: wann die Kopie entsteht.
-                Text("Wiederholen…", style = MaterialTheme.typography.labelLarge)
-                RadioRow("nach Fälligkeit", selected = mode == TaskRepeat.MODE_DUE, enabled = hasDue) {
-                    mode = TaskRepeat.MODE_DUE
+                // Trigger: wann die Kopie entsteht (oder „nie" = keine Wiederholung).
+                val triggerItems = remember(hasDue) {
+                    if (hasDue) listOf(Trigger.DUE, Trigger.DONE, Trigger.NONE) else listOf(Trigger.DONE, Trigger.NONE)
                 }
+                val triggerLabels = mapOf(Trigger.DUE to "nach Fälligkeit", Trigger.DONE to "nach Erledigung", Trigger.NONE to "nie")
+                PagerTextPicker(triggerItems, trigger, { trigger = it }) { triggerLabels.getValue(it) }
                 if (!hasDue) {
                     Text(
-                        "(erst mit Fälligkeitsdatum wählbar)",
+                        "(nach Fälligkeit erst mit Fälligkeitsdatum wählbar)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                RadioRow("nach Erledigung", selected = mode == TaskRepeat.MODE_DONE) { mode = TaskRepeat.MODE_DONE }
+                if (trigger == Trigger.NONE) return@Column
+
+                // Ende der Wiederholung — direkt unter dem Trigger.
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EndDropdown(endMode) { endMode = it }
+                    if (endMode == EndMode.UNTIL) {
+                        DateField("", untilDate) { untilDate = it }
+                    }
+                    if (endMode == EndMode.COUNT) {
+                        WheelNumberPicker(count, { count = it }, orientation = WheelOrientation.HORIZONTAL)
+                    }
+                }
 
                 // Frequenz: alle N Tage/Wochen/Monate/Jahre.
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Alle")
-                    OutlinedTextField(
-                        value = intervalText,
-                        onValueChange = { intervalText = it.filter(Char::isDigit).take(3) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.width(72.dp),
-                    )
+                    WheelNumberPicker(interval, { interval = it }, orientation = WheelOrientation.HORIZONTAL)
                     UnitDropdown(freq) { freq = it }
                 }
 
@@ -245,12 +296,11 @@ fun RepeatDialog(
                         }
                     }
                     RRule.Freq.MONTHLY -> {
-                        RadioRow("am gleichen Tag", selected = monthlyMode == MonthlyMode.PLAIN) {
-                            monthlyMode = MonthlyMode.PLAIN
-                        }
-                        RadioRow("an Monatstagen", selected = monthlyMode == MonthlyMode.MONTH_DAYS) {
-                            monthlyMode = MonthlyMode.MONTH_DAYS
-                        }
+                        PagerTextPicker(
+                            listOf(MonthlyMode.PLAIN, MonthlyMode.MONTH_DAYS, MonthlyMode.POSITION),
+                            monthlyMode,
+                            { monthlyMode = it },
+                        ) { MONTHLY_LABELS.getValue(it) }
                         if (monthlyMode == MonthlyMode.MONTH_DAYS) {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 for (day in (1..31) + listOf(-1)) {
@@ -262,76 +312,55 @@ fun RepeatDialog(
                                 }
                             }
                         }
-                        RadioRow("am X. Wochentag", selected = monthlyMode == MonthlyMode.POSITION) {
-                            monthlyMode = MonthlyMode.POSITION
-                        }
                         if (monthlyMode == MonthlyMode.POSITION) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                WheelPicker(
+                                    ORDINALS.map { it.first },
+                                    posOrdinal,
+                                    { posOrdinal = it },
+                                    orientation = WheelOrientation.HORIZONTAL,
+                                    itemExtent = 48.dp,
+                                ) { n, distance ->
+                                    val alpha = when (distance) { 0 -> 1f; 1 -> 0.5f; else -> 0.25f }
+                                    Text(
+                                        ORDINALS.first { it.first == n }.second,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                                    )
+                                }
                                 SmallDropdown(
-                                    current = ORDINALS.first { it.first == posOrdinal }.second,
-                                    options = ORDINALS.map { it.second },
-                                    modifier = Modifier.width(110.dp),
-                                ) { sel -> posOrdinal = ORDINALS.first { it.second == sel }.first }
-                                SmallDropdown(
-                                    current = WEEKDAY_SHORT.getValue(posDay),
-                                    options = DayOfWeek.entries.map { WEEKDAY_SHORT.getValue(it) },
-                                    modifier = Modifier.width(90.dp),
-                                ) { sel -> posDay = DayOfWeek.entries.first { WEEKDAY_SHORT.getValue(it) == sel } }
+                                    current = WEEKDAY_FULL.getValue(posDay),
+                                    options = DayOfWeek.entries.map { WEEKDAY_FULL.getValue(it) },
+                                    modifier = Modifier.width(150.dp),
+                                ) { sel -> posDay = DayOfWeek.entries.first { WEEKDAY_FULL.getValue(it) == sel } }
                             }
                         }
                     }
                     else -> {}
                 }
 
-                // Ende der Wiederholung.
-                Text("Ende", style = MaterialTheme.typography.labelLarge)
-                RadioRow("nie", selected = endMode == EndMode.NEVER) { endMode = EndMode.NEVER }
-                RadioRow("an Datum", selected = endMode == EndMode.UNTIL) { endMode = EndMode.UNTIL }
-                if (endMode == EndMode.UNTIL) {
-                    DateField("Bis", untilDate) { untilDate = it }
-                }
-                RadioRow("nach Anzahl", selected = endMode == EndMode.COUNT) { endMode = EndMode.COUNT }
-                if (endMode == EndMode.COUNT) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = countText,
-                            onValueChange = { countText = it.filter(Char::isDigit).take(3) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.width(72.dp),
-                        )
-                        Text("Wiederholungen")
-                    }
-                }
-
                 Text(
-                    preview?.let { "↻ " + it.summary() } ?: "Bitte gültige Zahlen eingeben",
+                    "↻ " + preview!!.summary(),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (preview != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
         },
         confirmButton = {
             TextButton(
-                enabled = preview != null,
-                onClick = { preview?.let { onSave(it, mode) } },
+                onClick = {
+                    if (trigger == Trigger.NONE) {
+                        onSave(null, TaskRepeat.MODE_DONE)
+                    } else {
+                        onSave(preview!!, if (trigger == Trigger.DUE) TaskRepeat.MODE_DUE else TaskRepeat.MODE_DONE)
+                    }
+                },
             ) { Text("Speichern") }
         },
         dismissButton = {
-            Row {
-                if (onRemove != null) TextButton(onClick = onRemove) { Text("Entfernen") }
-                TextButton(onClick = onDismiss) { Text("Abbrechen") }
-            }
+            TextButton(onClick = onDismiss) { Text("Abbrechen") }
         },
     )
-}
-
-@Composable
-private fun RadioRow(label: String, selected: Boolean, enabled: Boolean = true, onSelect: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected = selected, onClick = onSelect, enabled = enabled)
-        Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
 }
 
 @Composable
@@ -347,17 +376,38 @@ private fun UnitDropdown(current: RRule.Freq, onSelect: (RRule.Freq) -> Unit) {
     ) { sel -> onSelect(RRule.Freq.entries.first { labels.getValue(it) == sel }) }
 }
 
+/** Ende-Combobox: „für immer"/„bis Datum"/„für X Mal". */
 @Composable
-private fun SmallDropdown(current: String, options: List<String>, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
+private fun EndDropdown(mode: EndMode, onSelect: (EndMode) -> Unit) {
+    val labels = mapOf(EndMode.NEVER to "für immer", EndMode.UNTIL to "bis Datum", EndMode.COUNT to "für X Mal")
+    SmallDropdown(
+        current = labels.getValue(mode),
+        options = listOf(EndMode.NEVER, EndMode.UNTIL, EndMode.COUNT).map { labels.getValue(it) },
+        modifier = Modifier.width(140.dp),
+    ) { sel -> onSelect(labels.entries.first { it.value == sel }.key) }
+}
+
+@Composable
+private fun SmallDropdown(
+    current: String,
+    options: List<String>,
+    modifier: Modifier = Modifier,
+    enabledFor: (String) -> Boolean = { true },
+    onSelect: (String) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
-    androidx.compose.foundation.layout.Box(modifier) {
+    Box(modifier) {
         androidx.compose.material3.OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
             Text(current, maxLines = 1)
             Text(" ▾")
         }
         androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for (opt in options) {
-                androidx.compose.material3.DropdownMenuItem(text = { Text(opt) }, onClick = { open = false; onSelect(opt) })
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(opt) },
+                    enabled = enabledFor(opt),
+                    onClick = { open = false; onSelect(opt) },
+                )
             }
         }
     }
