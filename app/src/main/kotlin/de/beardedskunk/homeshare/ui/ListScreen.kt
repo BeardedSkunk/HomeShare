@@ -254,7 +254,8 @@ fun ListScreen(
                 // Caption-Titel für IMAGE/FILE-Direktkinder (Beschreibungs-Notiz des Anhangs).
                 val captions = loadAttachmentRows(repo, parentId).associate { it.node.nodeId to it.label() }
                 // Due-Badge: Fälligkeits-Tag (erster Datums-Kindknoten) + Wiederholungs-Flag je Aufgabe.
-                val dues = list.filter { it.kind == NodeKind.TODO }
+                // Eine bunte Hand-Prio maskiert den Termin (siehe PrioritySort.dueDriven) → kein Badge.
+                val dues = list.filter { it.kind == NodeKind.TODO && Priority.handBand(it.ext) == PrioBand.NONE }
                     .mapNotNull { p ->
                         TaskRepeat.dueChild(repo.children(p.nodeId))?.let { PrioritySort.dueMoment(it) }
                             ?.let { m -> p.nodeId to DueInfo(m.day, TaskRepeat.rule(p.ext) != null, m.time) }

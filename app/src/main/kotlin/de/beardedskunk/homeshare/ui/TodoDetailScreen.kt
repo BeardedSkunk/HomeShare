@@ -614,20 +614,13 @@ fun TodoDetailScreen(
                                     } }
                                 }
                             } else null,
+                            onDeleteDue = if (dueEvent != null) {
+                                { scope.launch { withContext(Dispatchers.IO) { repo.deleteNode(dueEvent.nodeId) } } }
+                            } else null,
+                            // Bunte Hand-Prio maskiert den Termin nur (kein Löschen): der Datumsknoten
+                            // bleibt erhalten, das Band richtet sich nach der Prio; weiß zeigt ihn wieder.
                             onPickPrio = { level ->
-                                scope.launch { withContext(Dispatchers.IO) {
-                                    val due = TaskRepeat.dueChild(repo.children(node.nodeId))
-                                    if (level > 0 && due != null) {
-                                        // Hand-Prio und Termin schließen sich aus: Farbwahl
-                                        // löscht den Termin mit (EIN Undo-Schritt).
-                                        repo.undo.group {
-                                            repo.deleteNode(due.nodeId)
-                                            repo.setPriority(node.nodeId, level)
-                                        }
-                                    } else {
-                                        repo.setPriority(node.nodeId, level)
-                                    }
-                                } }
+                                scope.launch { withContext(Dispatchers.IO) { repo.setPriority(node.nodeId, level) } }
                             },
                         )
                     }
@@ -689,7 +682,8 @@ fun TodoDetailScreen(
         RepeatDialog(
             initial = repeatRule,
             initialMode = TaskRepeat.mode(node.ext),
-            hasDue = dueEvent != null,
+            // „nach Termin" nur mit sichtbarem Termin wählbar — eine bunte Hand-Prio maskiert ihn.
+            hasDue = dueEvent != null && Priority.handBand(node.ext) == PrioBand.NONE,
             onSave = { rule, mode ->
                 repeatDialog = false
                 scope.launch { withContext(Dispatchers.IO) {

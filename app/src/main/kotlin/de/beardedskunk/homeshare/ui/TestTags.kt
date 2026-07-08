@@ -20,8 +20,9 @@ import androidx.compose.ui.platform.testTag
 //   tags:add               Plus-Button der Tag-Zeile
 //   tagsel:<tag>           Gewaehltes Tag im Tag-Such-Screen (Chip mit X)
 //   todo:done, box:subitems, box:attachments
-//   box:reminder           Erinnerungs-Kasten der Aufgaben-Ansicht (Termin + Prio-Kreise + Wiederholung)
-//   field:due              Termin-Chip in der Erinnerungs-Box (öffnet den Datums-Editor)
+//   box:reminder           Erinnerungs-Kasten der Aufgaben-Ansicht (Termin links + Prio-Kreise rechts + Wiederholung)
+//   field:due              Termin-Chip in der Erinnerungs-Box (Kurzklick öffnet den Datums-Editor,
+//                          Langdruck löscht den Termin nach Rückfrage; bunte Prio blendet ihn aus)
 //   action:repeat          Wiederholungs-Chip in der Erinnerungs-Box (Kurzklick öffnet den
 //                          Repeater-Dialog, Langdruck entfernt die Wiederholung direkt; der
 //                          Dialog selbst ist ein Fenster ohne resource-ids -> per text matchen)

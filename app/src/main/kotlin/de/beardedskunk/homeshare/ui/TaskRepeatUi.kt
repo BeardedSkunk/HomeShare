@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.rememberScrollState
@@ -19,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,10 +64,12 @@ private val WEEKDAY_FULL = mapOf(
 
 /**
  * Erinnerungs-Kasten der Aufgaben-Ansicht (zwischen Unterpunkten und Anhängen): Zeile 1 = Termin
- * (erster Datums-Kindknoten, „Termin: dd.MM.yyyy" bzw. „kein Termin", rot wenn überfällig) plus
- * die vier Prio-Kreise ([PriorityDots] — Termin und Hand-Prio schließen sich aus, die Umschalt-
- * Logik liegt beim Aufrufer). Zeile 2 = Wiederholungsregel als Kurztext („keine Wiederholung"
- * ohne Regel). Chips öffnen ihre Editoren (readOnly: nur vorhandene Infos, nicht klickbar).
+ * links (erster Datums-Kindknoten, „Termin: dd.MM.yyyy" bzw. „kein Termin", rot wenn überfällig;
+ * Langdruck löscht ihn wirklich), rechtsbündig die vier Prio-Kreise ([PriorityDots] mit „Prio:"-
+ * Label). Termin und bunte Hand-Prio schließen sich in der Anzeige aus: eine bunte Prio maskiert
+ * den Termin (der Knoten bleibt erhalten, [masked] blendet ihn nur aus — zurück auf weiß zeigt
+ * ihn wieder). Zeile 2 = Wiederholungsregel als Kurztext („keine Wiederholung" ohne Regel).
+ * Chips öffnen ihre Editoren (readOnly: nur vorhandene Infos, nicht klickbar).
  */
 @Composable
 fun ReminderBox(
@@ -79,9 +82,14 @@ fun ReminderBox(
     onEditDue: () -> Unit,
     onEditRepeat: () -> Unit,
     onRemoveRepeat: (() -> Unit)?,
+    onDeleteDue: (() -> Unit)?,
     onPickPrio: (Int) -> Unit,
 ) {
     if (readOnly && due == null && ruleSummary == null && prio == PrioBand.NONE) return
+    // Bunte Hand-Prio maskiert den Termin: der Datumsknoten bleibt bestehen, wird aber ausgeblendet
+    // (wieder sichtbar, sobald die Prio auf weiß steht — siehe PrioritySort.dueDriven).
+    val masked = prio != PrioBand.NONE
+    var confirmDelete by remember { mutableStateOf(false) }
     Card(
         Modifier.fillMaxWidth().padding(vertical = 8.dp).tag("box:reminder"),
         colors = containerColor
@@ -101,27 +109,24 @@ fun ReminderBox(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val error = MaterialTheme.colorScheme.error
-                AssistChip(
-                    onClick = onEditDue,
+                DueChip(
+                    label = when {
+                        masked -> "kein Termin"
+                        dueDay != null -> "Termin: " + dueDay.format(DUE_FMT)
+                        due != null -> "Termin: " + due.title
+                        else -> "kein Termin"
+                    },
+                    overdue = overdue && !masked,
                     enabled = !readOnly,
-                    label = {
-                        Text(
-                            when {
-                                dueDay != null -> "Termin: " + dueDay.format(DUE_FMT)
-                                due != null -> "Termin: " + due.title
-                                else -> "kein Termin"
-                            },
-                        )
-                    },
-                    leadingIcon = { Icon(Icons.Filled.Event, contentDescription = "Termin") },
-                    colors = if (overdue) {
-                        AssistChipDefaults.assistChipColors(labelColor = error, leadingIconContentColor = error)
+                    onClick = onEditDue,
+                    // Langdruck = Termin wirklich löschen (nur wenn ein sichtbarer Termin da ist).
+                    onLongClick = if (!readOnly && due != null && !masked && onDeleteDue != null) {
+                        { confirmDelete = true }
                     } else {
-                        AssistChipDefaults.assistChipColors()
+                        null
                     },
-                    modifier = Modifier.tag("field:due"),
                 )
+                Spacer(Modifier.weight(1f))
                 Text("Prio:", style = MaterialTheme.typography.labelLarge)
                 PriorityDots(current = prio, enabled = !readOnly, onPick = onPickPrio)
             }
@@ -135,6 +140,49 @@ fun ReminderBox(
                     )
                 }
             }
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Termin löschen?") },
+            text = { Text("Der Fälligkeitstermin dieser Aufgabe wird entfernt.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDeleteDue?.invoke() }) { Text("Löschen") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Abbrechen") } },
+        )
+    }
+}
+
+/**
+ * Termin-Chip in der Optik eines AssistChip, aber mit Langdruck: Kurzklick öffnet den Datums-
+ * Editor, Langdruck (falls gesetzt) löscht den Termin. Rot, wenn überfällig.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DueChip(
+    label: String,
+    overdue: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+) {
+    val fg = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.tag("field:due"),
+    ) {
+        Row(
+            Modifier
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick, enabled = enabled)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Event, contentDescription = "Termin", tint = fg, modifier = Modifier.size(18.dp))
+            Text(label, color = fg, modifier = Modifier.padding(start = 6.dp))
         }
     }
 }

@@ -70,9 +70,15 @@ class PrioritySortTest {
         assertEquals(PrioBand.NONE, PrioritySort.bandOf(n, null, now))
     }
 
-    @Test fun bandOf_dueBeatsHandPrio() {
+    @Test fun bandOf_handPrioMasksDue() {
         val n = st("t", ext = mapOf(Priority.KEY_PRIO to "1"))
-        // Due morgen = RED, obwohl Hand-Prio nur GELB.
+        // Bunte Hand-Prio maskiert den Termin: GELB (Prio), nicht RED (Due morgen).
+        assertEquals(PrioBand.YELLOW, PrioritySort.bandOf(n, DueMoment(now.toLocalDate().plusDays(1), null), now))
+    }
+
+    @Test fun bandOf_dueWhenNoHandPrio() {
+        val n = st("t")
+        // Ohne Hand-Prio leitet der Termin das Band ab: Due morgen = RED.
         assertEquals(PrioBand.RED, PrioritySort.bandOf(n, DueMoment(now.toLocalDate().plusDays(1), null), now))
     }
 

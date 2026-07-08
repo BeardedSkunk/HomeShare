@@ -36,12 +36,21 @@ object PrioritySort {
     }
 
     /**
+     * Termin-getriebene Zeile: sichtbarer Due-Termin OHNE bunte Hand-Prio. Eine bunte Hand-Prio
+     * **maskiert** den Termin — der Datumsknoten bleibt erhalten, zählt aber nicht fürs Band (die
+     * UI blendet ihn aus), bis die Prio wieder auf weiß steht.
+     */
+    private fun dueDriven(n: NodeState, due: DueMoment?): Boolean =
+        due != null && Priority.handBand(n.ext) == PrioBand.NONE
+
+    /**
      * Effektives Band einer Zeile. Erledigte und Nicht-TODO-Zeilen sind immer [PrioBand.NONE];
-     * ein vorhandenes Due-Date schlägt die Hand-Prio.
+     * eine bunte Hand-Prio schlägt den Termin (maskiert ihn), sonst leitet ein vorhandenes
+     * Due-Date das Band ab.
      */
     fun bandOf(n: NodeState, due: DueMoment?, now: LocalDateTime): PrioBand = when {
         n.kind != NodeKind.TODO || n.done -> PrioBand.NONE
-        due != null -> Priority.dueBand(due.day, due.time, now)
+        dueDriven(n, due) -> Priority.dueBand(due!!.day, due.time, now)
         else -> Priority.handBand(n.ext)
     }
 
@@ -49,7 +58,7 @@ object PrioritySort {
         n.nodeId,
         bandOf(n, due, now),
         OrderKeys.effective(n.orderKey, n.created),
-        flexible = n.kind == NodeKind.TODO && !n.done && due == null,
+        flexible = n.kind == NodeKind.TODO && !n.done && !dueDriven(n, due),
     )
 
     /**
@@ -72,8 +81,7 @@ object PrioritySort {
             val band = ranked.filter { it.band.level == level }
             val (dueBlock, rest) = band.partition {
                 val n = byId.getValue(it.nodeId)
-                val m = dues[it.nodeId]
-                m != null && !n.done && n.kind == NodeKind.TODO
+                !n.done && n.kind == NodeKind.TODO && dueDriven(n, dues[it.nodeId])
             }
             out += dueBlock.sortedBy { Priority.dueSortInstant(dues.getValue(it.nodeId).day, dues.getValue(it.nodeId).time) }
             out += rest
