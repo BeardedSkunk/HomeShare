@@ -191,4 +191,52 @@ class TaskRepeatTest {
         val plain = st("task3", "list")
         assertNull(TaskRepeat.plan(plain, childrenOf(listOf(plain)), "occ", LocalDate.parse("2026-07-07"), "8"))
     }
+
+    // ---- Vorkommens-Schlüssel & Due-Date-Konflikt-Merge (Sync-Konvergenz) ----
+
+    @Test
+    fun occurrenceKey_prefersDueDate_fallsBackToHeadVersion() {
+        val due = st("due", "task", type = NodeType.CALENDAR, text = dueText("2026-07-06"))
+        // Mit Due Date: der Kalendertag — geräteübergreifend gleich, egal welcher Trigger.
+        assertEquals("2026-07-06", TaskRepeat.occurrenceKey(listOf(due, st("sub", "task")), "head-1"))
+        // Ohne (bzw. nur gelöschtes) Due Date: Head vor dem Abhaken.
+        assertEquals("head-1", TaskRepeat.occurrenceKey(listOf(st("sub", "task")), "head-1"))
+    }
+
+    @Test
+    fun mergeDueTexts_earlierDateWins_bothOrders() {
+        val a = dueText("2026-07-10")
+        val b = dueText("2026-07-14")
+        assertEquals(a, TaskRepeat.mergeDueTexts(a, b))
+        assertEquals(a, TaskRepeat.mergeDueTexts(b, a))
+    }
+
+    @Test
+    fun mergeDueTexts_keepsTimeAndZoneOfWinner() {
+        val a = EventCodec.encode(
+            EventData(
+                title = "Fällig", allDay = false,
+                start = "2026-07-10T09:30+02:00[Europe/Berlin]",
+                end = "2026-07-10T10:00+02:00[Europe/Berlin]",
+            ),
+        )
+        val b = EventCodec.encode(
+            EventData(
+                title = "Fällig", allDay = false,
+                start = "2026-07-17T09:30+02:00[Europe/Berlin]",
+                end = "2026-07-17T10:00+02:00[Europe/Berlin]",
+            ),
+        )
+        assertEquals(a, TaskRepeat.mergeDueTexts(b, a))
+    }
+
+    @Test
+    fun mergeDueTexts_rejectsNonDateDifferences() {
+        // Nur Start/Ende dürfen abweichen — sonst ist es KEIN reiner Doppel-Spawn-Konflikt.
+        assertNull(TaskRepeat.mergeDueTexts(dueText("2026-07-10"), EventCodec.encode(
+            EventData(title = "Anders", start = "2026-07-14", end = "2026-07-14", allDay = true),
+        )))
+        // Kein Termin-Text -> kein Auto-Merge.
+        assertNull(TaskRepeat.mergeDueTexts("nur Text", dueText("2026-07-10")))
+    }
 }

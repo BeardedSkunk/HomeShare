@@ -221,6 +221,49 @@ class PostConflictTest {
     }
 
     @Test
+    fun autoMerge_repeatSpawnedMarker_resolvesLastWriterWins() {
+        // Doppel-Spawn nach Offline-Phase: beide Geräte setzen (verschiedene) Spawn-Marker auf
+        // das Original -> kein manueller Konflikt; wie beim orderKey gewinnt der spätere Editor.
+        val post = Node(postId)
+        val base = v(emptySet(), "A", 1, "Wocheneinkauf")
+        val onA = NodeVersion(
+            postId, setOf(base.versionId), "A", Hlc(2, 0),
+            NodeContent(text = "Wocheneinkauf", done = true, ext = mapOf(MetaKey.REPEAT_SPAWNED to "kopie-a")),
+        )
+        val onB = NodeVersion(
+            postId, setOf(base.versionId), "B", Hlc(3, 0),
+            NodeContent(text = "Wocheneinkauf", done = true, ext = mapOf(MetaKey.REPEAT_SPAWNED to "kopie-b")),
+        )
+        listOf(base, onA, onB).forEach { post.ingest(it) }
+
+        val merged = post.autoMergeContent()
+        assertNotNull("Marker-Konflikt muss automatisch aufgehen", merged)
+        assertEquals("kopie-b", merged!!.ext[MetaKey.REPEAT_SPAWNED])
+        assertTrue(merged.done)
+    }
+
+    @Test
+    fun autoMerge_repeatSpawnedRemovedVsChanged_lastWriterWins() {
+        // Enthaken (Marker weg) gegen erneuten Spawn (anderer Marker): der spätere Editor
+        // gewinnt auch hier — entfernt der Spätere, bleibt der Key im Merge weg.
+        val post = Node(postId)
+        val base = NodeVersion(
+            postId, emptySet(), "A", Hlc(1, 0),
+            NodeContent(text = "t", ext = mapOf(MetaKey.REPEAT_SPAWNED to "alt")),
+        )
+        val unspawn = NodeVersion(postId, setOf(base.versionId), "A", Hlc(3, 0), NodeContent(text = "t"))
+        val respawn = NodeVersion(
+            postId, setOf(base.versionId), "B", Hlc(2, 0),
+            NodeContent(text = "t", ext = mapOf(MetaKey.REPEAT_SPAWNED to "neu")),
+        )
+        listOf(base, unspawn, respawn).forEach { post.ingest(it) }
+
+        val merged = post.autoMergeContent()
+        assertNotNull(merged)
+        assertNull(merged!!.ext[MetaKey.REPEAT_SPAWNED])
+    }
+
+    @Test
     fun ingest_isIdempotent_andOrderIndependent() {
         val base = v(emptySet(), "A", 1, "x")
         val onA = v(setOf(base.versionId), "A", 2, "xa")

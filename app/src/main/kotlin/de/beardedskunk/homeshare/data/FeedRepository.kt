@@ -273,8 +273,10 @@ class FeedRepository(
             hc.ext[TaskRepeat.KEY_SPAWNED] == null
         val source = if (wantsSpawn) getNode(nodeId) else null
         val plan = source?.let {
-            // Vorkommens-Schlüssel = Head vor dem Abhaken: eindeutig pro Abhak-Zyklus.
-            TaskRepeat.plan(it, ::children, it.headVersionId, LocalDate.now(), orderKeyAfter(it))
+            // Vorkommens-Schlüssel: altes Due-Datum, falls vorhanden (geräteübergreifend gleiche
+            // Kopie-Id -> kein Duplikat nach Offline-Phasen), sonst Head vor dem Abhaken.
+            val key = TaskRepeat.occurrenceKey(children(it.nodeId), it.headVersionId)
+            TaskRepeat.plan(it, ::children, key, LocalDate.now(), orderKeyAfter(it))
         } ?: return editNode(nodeId, hc.copy(done = true)) // keine/erschöpfte Regel -> nur abhaken
         return executeSpawn(nodeId, hc.copy(done = true), plan)
     }
@@ -473,8 +475,35 @@ class FeedRepository(
             if (it.moveToFirst()) it.getString(0) else null
         } ?: return
         if (isForeignRoot(rootId)) return
-        val merged = runCatching { loadNode(nodeId).autoMergeContent() }.getOrNull() ?: return
+        val merged = runCatching {
+            val node = loadNode(nodeId)
+            node.autoMergeContent() ?: mergeRepeatDue(node)
+        }.getOrNull() ?: return
         author(nodeId, currentHeads(nodeId), merged)
+    }
+
+    /**
+     * Fallback nach gescheitertem Core-Automerge: Due-Date-Konflikt einer Repeater-Kopie.
+     * Signatur des Doppel-Spawns = zwei Heads OHNE gemeinsamen Vorfahren (beide Geräte haben
+     * denselben Datumsknoten deterministisch erzeugt, nur mit anders berechnetem neuen Datum).
+     * Nur wenn sich die Fassungen ausschließlich im Termin-Text unterscheiden, der Elternknoten
+     * eine Repeater-Kopie ist ([TaskRepeat.KEY_OF]) und beide Texte bis auf Start/Ende gleiche
+     * Termine sind, gewinnt das frühere Datum ([TaskRepeat.mergeDueTexts]); sonst null ->
+     * manueller Konflikt. Hand-verschobene normale Termine haben einen gemeinsamen Vorfahren
+     * und laufen hier nie durch.
+     */
+    private fun mergeRepeatDue(node: Node): NodeContent? {
+        val h = node.heads()
+        if (h.size != 2 || !node.hasContentConflict() || node.hasMissingAncestors()) return null
+        val (x, y) = h.sortedBy { it.versionId }
+        val a = x.content; val b = y.content
+        if (a.deleted || b.deleted || a.type != NodeType.CALENDAR) return null
+        if (node.lowestCommonAncestor(x.versionId, y.versionId) != null) return null
+        if (a.copy(text = "") != b.copy(text = "")) return null // nur der Termin darf abweichen
+        val parentExt = a.parentId?.let { headContent(it) }?.ext ?: return null
+        if (parentExt[TaskRepeat.KEY_OF] == null) return null
+        val text = TaskRepeat.mergeDueTexts(a.text, b.text) ?: return null
+        return a.copy(text = text)
     }
 
     override fun versionVector(): Map<String, PeerState> {

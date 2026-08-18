@@ -113,6 +113,12 @@ class Node(val nodeId: String) {
                     bbm[k]?.let { MetaListCodec.decode(it) } ?: emptyList(),
                 )
                 if (t.isNotEmpty()) merged[k] = MetaListCodec.encode(t)
+            } else if (k == MetaKey.REPEAT_SPAWNED) {
+                // Spawn-Sperre: beide Seiten haben (unterschiedlich) gespawnt bzw. eine hat
+                // den Marker entfernt -> Last-Writer-Wins wie beim orderKey; die Kette läuft
+                // ohnehin über die Kopie weiter, ein manueller Konflikt wäre hier nur lästig.
+                val w = (if (headOrder.compare(x, y) >= 0) am else bbm)[k]
+                if (w != null) merged[k] = w
             } else {
                 return null // unauflösbarer Meta-Konflikt -> Mensch entscheidet
             }

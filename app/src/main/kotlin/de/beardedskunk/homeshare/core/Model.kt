@@ -41,6 +41,12 @@ object MetaKey {
     const val BLOB = "blob"
     const val FILE = "file"
     const val MIME = "mime"
+
+    /** Spawn-Sperre wiederholender Aufgaben (siehe data/TaskRepeat.KEY_SPAWNED). Bewusst NICHT
+     *  in [KNOWN] (kein typisiertes Feld, bleibt in ext) — hier nur, damit der Automerge
+     *  (Node.autoMergeContent) den Key per Last-Writer-Wins auflösen kann. */
+    const val REPEAT_SPAWNED = "repeatSpawned"
+
     val KNOWN = setOf(CHILD_DEFAULT, COLOR, TAGS, DONE, BLOB, FILE, MIME)
 }
 

@@ -1,6 +1,7 @@
 package de.beardedskunk.homeshare.data
 
 import de.beardedskunk.homeshare.core.Hashing
+import de.beardedskunk.homeshare.core.MetaKey
 import de.beardedskunk.homeshare.core.NodeContent
 import de.beardedskunk.homeshare.core.NodeKind
 import de.beardedskunk.homeshare.core.NodeType
@@ -30,7 +31,7 @@ import java.time.temporal.ChronoUnit
 object TaskRepeat {
     const val KEY_RULE = "repeat"
     const val KEY_MODE = "repeatMode"
-    const val KEY_SPAWNED = "repeatSpawned"
+    const val KEY_SPAWNED = MetaKey.REPEAT_SPAWNED // Alias: Core kennt den Key für den LWW-Automerge
     const val KEY_OF = "repeatOf"
     const val MODE_DONE = "done"
     const val MODE_DUE = "due"
@@ -69,6 +70,32 @@ object TaskRepeat {
             append(hex, 0, 8); append('-'); append(hex, 8, 12); append('-'); append(hex, 12, 16)
             append('-'); append(hex, 16, 20); append('-'); append(hex, 20, 32)
         }
+    }
+
+    /**
+     * Vorkommens-Schlüssel eines Spawns: bevorzugt das alte Due-Datum (geräteübergreifend gleich
+     * -> beide Geräte erzeugen DIESELBE Kopie-Id, egal ob per Abhaken oder Fälligkeits-Sweep
+     * getriggert), sonst — Aufgabe ohne Due Date, nur Mode done — die Head-versionId vor dem
+     * Abhaken (eindeutig pro Abhak-Zyklus).
+     */
+    fun occurrenceKey(children: List<NodeState>, headVersionId: String): String =
+        dueChild(children)?.let { dueDate(it) }?.toString() ?: headVersionId
+
+    /**
+     * Auto-Auflösung des Due-Date-Konflikts einer Repeater-Kopie: spawnen zwei Geräte dieselbe
+     * Wiederholung (gleiche Kopie-Id), aber mit unterschiedlich berechnetem neuem Datum
+     * (verschiedene Abhak-/Sweep-Tage), kollidieren zwei wurzellose Fassungen des Datumsknotens.
+     * Sind beide bis auf Start/Ende identische Termine, gewinnt das FRÜHERE Datum (die nächste
+     * tatsächlich anstehende Fälligkeit; die spätere ist nur ein weitergesprungener Catch-up).
+     * null, wenn die Fassungen anders abweichen -> normaler manueller Konflikt.
+     */
+    fun mergeDueTexts(a: String, b: String): String? {
+        val ea = EventCodec.parse(a) ?: return null
+        val eb = EventCodec.parse(b) ?: return null
+        if (ea.copy(start = "", end = "") != eb.copy(start = "", end = "")) return null
+        val da = runCatching { LocalDate.parse(ea.start.trim().take(10)) }.getOrNull() ?: return null
+        val db = runCatching { LocalDate.parse(eb.start.trim().take(10)) }.getOrNull() ?: return null
+        return if (!db.isBefore(da)) a else b
     }
 
     /** Fertig geplante Kopie: (nodeId, Inhalt) in Erzeugungsreihenfolge (Eltern vor Kindern). */
