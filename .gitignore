@@ -16,3 +16,9 @@
 
 # MCP-Server-Konfiguration (lokales Dev-Tooling, nicht eingecheckt)
 .mcp.json
+
+# Persönliche Claude-Arbeitsanleitung (nicht eingecheckt)
+CLAUDE.local.md
+
+# CodeGraph-Index (lokales Dev-Tooling, wird pro Rechner neu gebaut)
+.codegraph/
