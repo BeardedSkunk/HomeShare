@@ -4,6 +4,12 @@ Persönliche Android-App (Kotlin, Compose, minSdk 29): **Verzeichnisbaum aus Lis
 Notizen, Aufgaben, Terminen und Anhängen, **LAN-Sync zwischen eigenen Geräten** (kein Cloud/Login),
 git-artige Versionierung pro Knoten. Features aus Nutzersicht: `README.md`; Design-Dokumente: `docs/`.
 
+**Repo:** `https://github.com/BeardedSkunk/HomeShare.git` — **öffentlich**. Lizenz **PolyForm
+Noncommercial 1.0.0**: source-available, bewusst **kein** OSI-Open-Source. Die Git-Identität ist
+repo-lokal gesetzt (`22100243+BeardedSkunk@users.noreply.github.com`). Weil das Repo öffentlich ist:
+**keine Zugangsdaten in committete Dateien** — Passphrasen und FTP-Zugänge stehen in
+`CLAUDE.local.md` (gitignored).
+
 Diese Datei ist eine **Landkarte**, keine zweite Fassung des Codes: wo etwas steht, warum es so
 gebaut ist, und was einen sonst in die Falle laufen lässt. Der Code ist dicht kommentiert — er
 erklärt das Wie. **Gehen Datei und Code auseinander, gilt der Code**, und die Datei gehört korrigiert.
@@ -20,6 +26,8 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
   `org.gradle.java.home`; auf manchen Rechnern heißt die Installation „Android Studio**1**".
   Dann pro Aufruf übersteuern (`JAVA_HOME=…` **und** `-Dorg.gradle.java.home=…`), **nie** die
   Datei committen — sie ist auf mehreren Rechnern ausgecheckt.
+- `gradlew` trägt noch einen AF_UNIX-Workaround auf `D:/tmp/jsock` (anderer Rechner). Das Laufwerk
+  gibt es hier nicht, der Build läuft trotzdem — folgenlos, nicht darüber stolpern.
 - Toolchain: AGP 9.0.1, Gradle 9.1.0, Kotlin 2.3.20, JDK 21, compileSdk/targetSdk 36, JVM-Target 17.
   `android.builtInKotlin=false` + `android.newDsl=false` (klassische DSL), `kotlin.incremental=false`
   (Virenscanner sperrt die Caches). R8/minify **auch im Debug** — Debug-APKs werden ausgerollt und
@@ -35,7 +43,8 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
 - **Pixel 8 Pro** (`45111FDJG0002R`, `192.168.178.3`, Wireless Debugging/TLS) = Alltagsgerät des
   Nutzers → nur fertige Stände. Nicht sichtbar? `adb kill-server && adb start-server`, dann
   erscheint es per mDNS als `adb-45111FDJG0002R-….._adb-tls-connect._tcp` (Port 5555 ist im
-  TLS-Modus zu, `adb connect` ist der falsche Weg).
+  TLS-Modus zu, `adb connect` ist der falsche Weg). Die Wireless-Debugging-Freigabe gilt **pro
+  SSID** — beim ersten Wechsel in ein anderes Heim-WLAN muss das Pixel neu bestätigen.
 - **Armor 8** (`3090RH2001013207`, `192.168.178.1:5555`) und **Lenovo-Tablet** (`HA14C5M2`,
   `192.168.178.4:5555`) für Zwei-Geräte-Sync-Tests. **Cubot Max** ist Android 6 → App läuft dort nicht.
 - **Der Nutzer testet UI-Änderungen selbst.** Nach Build + Install + Start aufhören — keine
@@ -44,6 +53,9 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
   (Konvention komplett in `ui/TestTags.kt`). **In Dialog-Fenstern fehlen die IDs** (eigene
   Composition ohne das Flag) → dort per `text="…"` matchen. Screenshots vor dem Ansehen auf 1/3
   verkleinern, Tap-Koordinaten ×3 zurückrechnen. `adb input text` kann keine Leerzeichen (`%s`).
+- Prefs auf ein Gerät spielen:
+  `adb -s <d> shell "run-as de.beardedskunk.homeshare sh -c 'cat > shared_prefs/x.xml'" < lokal.xml`
+  — das ganze Remote-Kommando quoten, damit `>` innerhalb von run-as umleitet, nicht beim Shell-User.
 
 ## Datenmodell (der Kern, alles hängt daran)
 
@@ -104,6 +116,12 @@ im git-revert-Stil und synct über die normale Head-Mechanik. Ketten liegen pro 
 die betroffenen Einträge. Hintergrund-Schreiber (CalendarSync, WebServer, Fälligkeits-Sweep) ohne
 Anker werden bewusst nicht aufgezeichnet.
 
+Zwei Abweichungen vom Plan-Pseudocode sind **Absicht** (bei strikter Umsetzung Bugs): Nach einem
+Undo ziehen Nachbar-Einträge desselben Knotens ihr doneHead/undoneHead auf die Restore-Op nach
+(Retargeting im `UndoManager`), und der Kein-Änderung-Guard in `editNode` ignoriert den
+restore-Marker auf **beiden** Seiten — sonst erzeugt ein unveränderter Save direkt nach einem Undo
+eine Op und kappt das Redo (on-device nachgestellt, Commit 1f8d77b).
+
 ## Sync (das schwierigste Stück — hier steckt die meiste Erfahrung)
 
 - **Discovery dreigleisig** (`sync/SyncManager.kt`): UDP-Broadcast-Beacon ist der Hauptweg (global
@@ -163,6 +181,8 @@ Navigations-Stack ist `rememberSaveable` als nodeId-Liste, damit Drehen ihn nich
 - UI darf restriktiver sein als das Backend (`KindRules`): sinnlose Knoten-Kombinationen weder
   anlegen noch anzeigen. Wurzelebene: nur Listen.
 - Beim Editieren NIE `type` überschreiben (der Editor bearbeitet TEXT-, LIST- und TODO-Knoten).
+- **`AndroidManifest.xml` darf ohne Rückfrage angepasst werden** (ausdrücklich erlaubt, z. B. für
+  neue Permissions).
 - Löschen = `deleted`-Flag (Op-Log behält alles); Tonnen-Löschen fragt bewusst nicht nach.
 
 ## Fallstricke (teuer gelernt)
@@ -196,14 +216,20 @@ Drag-Sortierung · Swipe-Löschen · testTags · Cross-Group-Sharing (#10, E2E v
 Tag-System (Zeile, Picker, UND-Suche) · Undo/Redo · wiederholende Aufgaben (RRULE-Untermenge,
 Tages-Granularität) · Prioritäts-Farben + Auto-Sortierung · Erinnerungs-Kasten.
 
-**Uncommitted im Arbeitsbaum** (liegt seit 2026-07-08, Tests grün): Repeater-Due-Automerge —
-`TaskRepeat.occurrenceKey`/`mergeDueTexts`, `FeedRepository.mergeRepeatDue`, `MetaKey.REPEAT_SPAWNED`
-im Core-Automerge. Löst den Doppel-Spawn nach Offline-Phasen. Dazu untracked `docs/tag-system-plan.md`
-und `.codegraph/`. **`gradle.properties` ist lokal auf diesem Rechner angepasst und darf nicht mit
-rein** — nie `git add .` oder `-A`.
+**Arbeitsbaum sauber** (seit 18.08.2026): der Repeater-Due-Automerge ist als `c05f58f` committet,
+der Tag-System-Plan als `e377abe`. Einzige lokale Änderung ist `gradle.properties` — die ist
+maschinenspezifisch und **darf nie mit rein**: nie `git add .` oder `-A`, immer gezielt stagen.
 
 **Offen:** On-Device-Verifikation von Prioritäten und Undo/Redo (Zwei-Geräte-Sync des `prioSort`-Flags,
 Drag-/Tag-/Kalender-Undo) · Zeilen-Drag ohne Live-Preview · Knoten verschieben (`moveNode` existiert
 im Backend, keine UI) · 15-MiB-Blob-Limit (`docs/large-file-streaming-plan.md`) · History-Browser ·
 Op-Log-Kompaktierung · Eviction wieder verdrahten · Web-UI · Dialog-Fenster ohne testTag-resource-ids ·
-Suche in der gerenderten Ansicht (#5) · Cursor-Autoscroll über der Tastatur (#9).
+Suche in der gerenderten Ansicht (#5) · Cursor-Autoscroll über der Tastatur (#9) ·
+**W7**: ob der Armor 8 wieder über LAN synct, wurde nach dem Foreground-Service-Fix nie verifiziert
+(er lief zeitweise nur über die Box) ·
+**W3-Rest**: Wunsch, dass ein einmal aufgelöster Konflikt auf keinem Gerät erneut fragt — der
+Teilfix ist drin (inhaltsgleiche Heads = kein Konflikt), der volle Auto-Resolve auf passiven
+Geräten braucht eine Nutzer-Entscheidung ·
+der Detail-/Diff-Merge kann einzelne Zeichen verstümmeln (2026-06 beobachtet, nie behoben) ·
+ListScreen-Drag driftet beim langsamen Hochziehen des untersten Items (toleriert: „kann erstmal
+so bleiben").
